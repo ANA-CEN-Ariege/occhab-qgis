@@ -28,7 +28,7 @@ class _FormDialog(QDialog):
         self.form = form
         layout = QVBoxLayout(self)
         layout.addWidget(form)
-        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
         buttons.accepted.connect(self._on_ok)
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
@@ -103,7 +103,7 @@ class StationDialog(QDialog):
         layout.addWidget(self.station_form)
 
         separator = QFrame()
-        separator.setFrameShape(QFrame.HLine)
+        separator.setFrameShape(QFrame.Shape.HLine)
         layout.addWidget(separator)
 
         layout.addWidget(QLabel("Habitats de la station (double-clic pour éditer) :"))
@@ -125,7 +125,7 @@ class StationDialog(QDialog):
         row.addStretch(1)
         layout.addLayout(row)
 
-        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
         buttons.accepted.connect(self._on_ok)
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
@@ -148,7 +148,7 @@ class StationDialog(QDialog):
 
     def add_habitat(self):
         dialog = _FormDialog(self._new_habitat_form(), "Nouvel habitat", self)
-        if dialog.exec_():
+        if dialog.exec():
             data = dialog.get_data()
             self.habitats.append(data)
             self.list_habitats.addItem(self._habitat_label(data))
@@ -159,7 +159,7 @@ class StationDialog(QDialog):
         form = self._new_habitat_form()
         form.set_data(self.habitats[row])
         dialog = _FormDialog(form, "Modifier l'habitat", self)
-        if dialog.exec_():
+        if dialog.exec():
             edited = dialog.get_data()
             # Préserver les identifiants serveur pour une synchro en mise à jour.
             for key in _HAB_KEEP_KEYS:
@@ -179,7 +179,7 @@ class StationDialog(QDialog):
             "Retirer l'habitat « %s » de la station ?"
             % self._habitat_label(self.habitats[row]),
         )
-        if confirm != QMessageBox.Yes:
+        if confirm != QMessageBox.StandardButton.Yes:
             return
         self.list_habitats.takeItem(row)
         del self.habitats[row]

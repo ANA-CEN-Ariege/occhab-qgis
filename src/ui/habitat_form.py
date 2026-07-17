@@ -73,8 +73,8 @@ class HabitatForm(QWidget):
             self.edit_nom_cite.setPlaceholderText("Tapez le nom (ou code) de l'habitat…")
             self._hab_model = QStandardItemModel(self)
             completer = QCompleter(self._hab_model, self)
-            completer.setCompletionMode(QCompleter.UnfilteredPopupCompletion)
-            completer.setCaseSensitivity(Qt.CaseInsensitive)
+            completer.setCompletionMode(QCompleter.CompletionMode.UnfilteredPopupCompletion)
+            completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
             completer.activated[QModelIndex].connect(self._on_habitat_chosen)
             self.edit_nom_cite.setCompleter(completer)
             self.edit_nom_cite.textEdited.connect(self._on_nom_cite_edited)
@@ -100,7 +100,7 @@ class HabitatForm(QWidget):
         # (OccHab stocke ce champ en texte, pas en lien utilisateur).
         self.combo_determiner = QComboBox()
         self.combo_determiner.setEditable(True)
-        self.combo_determiner.setInsertPolicy(QComboBox.NoInsert)
+        self.combo_determiner.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
         self.combo_determiner.addItem("")
         self.combo_determiner.addItems(self._user_names)
         self.combo_determiner.setCurrentText(self._default_determiner or "")
@@ -176,13 +176,13 @@ class HabitatForm(QWidget):
             typo = item.get("lb_nom_typo") or self._typo_names.get(item.get("cd_typo"), "")
             label = ("%s %s" % (typo, name)).strip()  # ex. « CORINE_biotopes 41.2 - Chênaies-charmaies »
             row = QStandardItem(label)
-            row.setData(item, Qt.UserRole)
+            row.setData(item, Qt.ItemDataRole.UserRole)
             self._hab_model.appendRow(row)
         if self._hab_model.rowCount():
             self.edit_nom_cite.completer().complete()
 
     def _on_habitat_chosen(self, index):
-        data = index.data(Qt.UserRole)
+        data = index.data(Qt.ItemDataRole.UserRole)
         if not isinstance(data, dict):
             return
         cd_hab = data.get("cd_hab")

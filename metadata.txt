@@ -1,6 +1,6 @@
 [general]
 name=OccHab GeoNature
-qgisMinimumVersion=3.16
+qgisMinimumVersion=3.28
 qgisMaximumVersion=3.99
 description=Offline-first data entry for GeoNature's OccHab module (habitat stations) from QGIS, with local SQLite storage and synchronisation to the GeoNature REST API.
 version=0.1.0

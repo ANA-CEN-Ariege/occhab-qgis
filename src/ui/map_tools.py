@@ -32,9 +32,9 @@ from qgis.gui import QgsMapToolCapture, QgsMapToolDigitizeFeature
 from ..processing.geometry import geometry_to_wkt_4326
 
 _CAPTURE_MODE = {
-    "point": QgsMapToolCapture.CapturePoint,
-    "line": QgsMapToolCapture.CaptureLine,
-    "polygon": QgsMapToolCapture.CapturePolygon,
+    "point": QgsMapToolCapture.CaptureMode.CapturePoint,
+    "line": QgsMapToolCapture.CaptureMode.CaptureLine,
+    "polygon": QgsMapToolCapture.CaptureMode.CapturePolygon,
 }
 _WKB_TYPE = {"point": "Point", "line": "LineString", "polygon": "Polygon"}
 
@@ -272,7 +272,7 @@ class GeometryEditController(QObject):
         btn_cancel.clicked.connect(self.cancel)
         widget.layout().addWidget(btn_ok)
         widget.layout().addWidget(btn_cancel)
-        self._msg_item = bar.pushWidget(widget, Qgis.Info)
+        self._msg_item = bar.pushWidget(widget, Qgis.MessageLevel.Info)
 
     def _teardown(self):
         if self._msg_item is not None:

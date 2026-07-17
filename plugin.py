@@ -64,7 +64,7 @@ class OccHabPlugin:
 
             self.dock_widget = OccHabDockWidget(self.iface, self.config, self.logger)
             self.dock_widget.visibilityChanged.connect(self._on_visibility)
-            self.iface.addDockWidget(Qt.RightDockWidgetArea, self.dock_widget)
+            self.iface.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.dock_widget)
         else:
             self.dock_widget.setVisible(not self.dock_widget.isVisible())
 

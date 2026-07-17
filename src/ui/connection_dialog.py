@@ -53,8 +53,8 @@ class ConnectionDialog(QDialog):
         hint.setEnabled(False)
         form.addRow(hint)
 
-        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-        buttons.button(QDialogButtonBox.Ok).setText("Se connecter")
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        buttons.button(QDialogButtonBox.StandardButton.Ok).setText("Se connecter")
         buttons.accepted.connect(self._on_connect)
         buttons.rejected.connect(self.reject)
         form.addRow(buttons)

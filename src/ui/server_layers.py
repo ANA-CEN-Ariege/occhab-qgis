@@ -133,5 +133,5 @@ class ServerStationLayerManager:
             symbol.setColor(QColor(_COLOR))
             symbol.setOpacity(0.55)
             layer.setRenderer(QgsSingleSymbolRenderer(symbol))
-        except Exception:  # noqa: BLE001 - le style ne doit pas bloquer l'affichage
+        except Exception:  # noqa: BLE001 - le style ne doit pas bloquer l'affichage  # nosec B110
             pass

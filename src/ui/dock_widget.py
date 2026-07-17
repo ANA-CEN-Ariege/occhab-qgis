@@ -94,12 +94,12 @@ class OccHabDockWidget(QDockWidget):
         self.combo_jdd.setEnabled(False)
         # Éditable + autocomplétion « contient » (utile quand les JDD sont nombreux).
         self.combo_jdd.setEditable(True)
-        self.combo_jdd.setInsertPolicy(QComboBox.NoInsert)
+        self.combo_jdd.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
         self.combo_jdd.lineEdit().setPlaceholderText("Rechercher un JDD…")
         jdd_completer = self.combo_jdd.completer()
-        jdd_completer.setCompletionMode(QCompleter.PopupCompletion)
-        jdd_completer.setFilterMode(Qt.MatchContains)
-        jdd_completer.setCaseSensitivity(Qt.CaseInsensitive)
+        jdd_completer.setCompletionMode(QCompleter.CompletionMode.PopupCompletion)
+        jdd_completer.setFilterMode(Qt.MatchFlag.MatchContains)
+        jdd_completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
         jdd_completer.setMaxVisibleItems(15)
         # Popup plus lisible : lignes aérées (le nom complet est cadré dans
         # _fit_jdd_popup_width une fois les JDD chargés).
@@ -132,10 +132,10 @@ class OccHabDockWidget(QDockWidget):
         # Tableau (une station = un ou plusieurs habitats ; l'id local est en donnée cachée)
         self.table = QTableWidget(0, 4)
         self.table.setHorizontalHeaderLabels(["Habitat(s)", "Date", "Observateur(s)", "État"])
-        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
-        self.table.setEditTriggers(QTableWidget.NoEditTriggers)
-        self.table.setSelectionBehavior(QTableWidget.SelectRows)
-        self.table.setSelectionMode(QTableWidget.SingleSelection)
+        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self.table.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
         self.table.cellDoubleClicked.connect(lambda _r, _c: self.edit_station())
         layout.addWidget(self.table)
 
@@ -224,7 +224,7 @@ class OccHabDockWidget(QDockWidget):
     # ------------------------------------------------------- connexion
     def open_connection(self):
         dialog = ConnectionDialog(self.config, parent=self)
-        if not dialog.exec_():
+        if not dialog.exec():
             return
         self.client = dialog.client
         self.label_conn.setText("Connecté : %s" % dialog.user_label())
@@ -718,7 +718,7 @@ class OccHabDockWidget(QDockWidget):
                 calc.setEllipsoid(QgsProject.instance().ellipsoid() or "WGS84")
                 area = calc.convertAreaMeasurement(
                     calc.measureArea(QgsGeometry.fromWkt(wkt)),
-                    QgsUnitTypes.AreaSquareMeters,
+                    QgsUnitTypes.AreaUnit.AreaSquareMeters,
                 )
                 metrics["area"] = int(round(area))
             except Exception as exc:  # noqa: BLE001
@@ -765,7 +765,7 @@ class OccHabDockWidget(QDockWidget):
             default_determiner=self._current_user_name(),
             parent=self,
         )
-        if not dialog.exec_():
+        if not dialog.exec():
             return
         station, habitats = dialog.get_result()
         observers = station.pop("_observers", [])
@@ -812,7 +812,7 @@ class OccHabDockWidget(QDockWidget):
             default_determiner=self._current_user_name(),
             parent=self,
         )
-        if not dialog.exec_():
+        if not dialog.exec():
             return
         station, habitats = dialog.get_result()
         observers = station.pop("_observers", [])
@@ -857,7 +857,7 @@ class OccHabDockWidget(QDockWidget):
             for col, value in enumerate(values):
                 item = QTableWidgetItem(value)
                 if col == 0:  # id local en donnée cachée pour la sélection
-                    item.setData(Qt.UserRole, station["id"])
+                    item.setData(Qt.ItemDataRole.UserRole, station["id"])
                 self.table.setItem(row, col, item)
         try:
             self.layers.refresh(stations)
@@ -934,7 +934,7 @@ class OccHabDockWidget(QDockWidget):
         if row < 0:
             return None
         item = self.table.item(row, 0)
-        return item.data(Qt.UserRole) if item else None
+        return item.data(Qt.ItemDataRole.UserRole) if item else None
 
     # --------------------------------------------------------- stockage
     def _open_db_folder(self):
@@ -1004,7 +1004,7 @@ class OccHabDockWidget(QDockWidget):
         #     y compris pour une station d'un autre utilisateur).
         #   • Supprimer sur GeoNature : marque « à supprimer » (uniquement vos données).
         box = QMessageBox(self)
-        box.setIcon(QMessageBox.Question)
+        box.setIcon(QMessageBox.Icon.Question)
         box.setWindowTitle("Supprimer")
         box.setText("« %s » est déjà enregistrée sur GeoNature." % label)
         info = (
@@ -1013,24 +1013,24 @@ class OccHabDockWidget(QDockWidget):
         )
         if full.get("sync_status") == "pending":
             info += " ⚠ Vos modifications locales non synchronisées seront perdues."
-        btn_local = box.addButton("Retirer de ma base locale", QMessageBox.AcceptRole)
+        btn_local = box.addButton("Retirer de ma base locale", QMessageBox.ButtonRole.AcceptRole)
         btn_server = None
         if full.get("mine", 1):
             info += (
                 "\n« Supprimer sur GeoNature » la marquera pour suppression à la "
                 "prochaine synchronisation (réversible d'ici là)."
             )
-            btn_server = box.addButton("Supprimer sur GeoNature", QMessageBox.DestructiveRole)
+            btn_server = box.addButton("Supprimer sur GeoNature", QMessageBox.ButtonRole.DestructiveRole)
         else:
             info += (
                 "\nCette station n'a pas été créée par vous : vous ne pouvez pas la "
                 "supprimer de GeoNature."
             )
-        btn_cancel = box.addButton("Annuler", QMessageBox.RejectRole)
+        btn_cancel = box.addButton("Annuler", QMessageBox.ButtonRole.RejectRole)
         box.setInformativeText(info)
         box.setDefaultButton(btn_cancel)  # éviter un geste destructeur par inadvertance
         box.setEscapeButton(btn_cancel)
-        box.exec_()
+        box.exec()
         clicked = box.clickedButton()
         if clicked is btn_local:
             self.db.delete_station(station_id)
@@ -1043,8 +1043,8 @@ class OccHabDockWidget(QDockWidget):
         """Confirmation Oui/Non (défaut Non, pour éviter une validation par inadvertance)."""
         return (
             QMessageBox.question(self, title, message,
-                                 QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
-            == QMessageBox.Yes
+                                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, QMessageBox.StandardButton.No)
+            == QMessageBox.StandardButton.Yes
         )
 
     # ----------------------------------------------------- synchronisation

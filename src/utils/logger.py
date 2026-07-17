@@ -18,10 +18,10 @@ def _qgis_level(levelno):
     if Qgis is None:
         return None
     if levelno >= logging.ERROR:
-        return Qgis.Critical
+        return Qgis.MessageLevel.Critical
     if levelno >= logging.WARNING:
-        return Qgis.Warning
-    return Qgis.Info
+        return Qgis.MessageLevel.Warning
+    return Qgis.MessageLevel.Info
 
 
 class _QgisLogHandler(logging.Handler):
@@ -32,7 +32,7 @@ class _QgisLogHandler(logging.Handler):
             return
         try:
             QgsMessageLog.logMessage(self.format(record), TAG, _qgis_level(record.levelno))
-        except Exception:  # pragma: no cover - ne jamais casser sur un log
+        except Exception:  # pragma: no cover - ne jamais casser sur un log  # nosec B110
             pass
 
 
@@ -58,7 +58,7 @@ def setup_logger(name="occhab", config=None):
             file_handler = logging.FileHandler(str(log_path), encoding="utf-8")
             file_handler.setFormatter(fmt)
             logger.addHandler(file_handler)
-        except Exception:  # pragma: no cover
+        except Exception:  # pragma: no cover  # nosec B110
             pass
 
     return logger

@@ -97,14 +97,14 @@ class StationLayerManager:
             options.driverName = "GPKG"
             options.layerName = layer.name()
             options.actionOnExistingFile = (
-                QgsVectorFileWriter.CreateOrOverwriteFile
+                QgsVectorFileWriter.ActionOnExistingFile.CreateOrOverwriteFile
                 if index == 0
-                else QgsVectorFileWriter.CreateOrOverwriteLayer
+                else QgsVectorFileWriter.ActionOnExistingFile.CreateOrOverwriteLayer
             )
             result = QgsVectorFileWriter.writeAsVectorFormatV3(
                 layer, path, context, options
             )
-            if result[0] != QgsVectorFileWriter.NoError:
+            if result[0] != QgsVectorFileWriter.WriterError.NoError:
                 raise RuntimeError(result[1])
             total += layer.featureCount()
         return total

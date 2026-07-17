@@ -160,8 +160,10 @@ class OccHabDatabase:
         self.connect()
         cursor = self.connection.cursor()
         cols = list(data.keys())
+        # Noms de colonnes issus d'une whitelist figée (STATION_COLS) ; valeurs
+        # toujours paramétrées (?). Aucune donnée utilisateur dans le SQL.
         cursor.execute(
-            "INSERT INTO t_stations (%s) VALUES (%s)"
+            "INSERT INTO t_stations (%s) VALUES (%s)"  # nosec B608
             % (", ".join(cols), ", ".join(["?"] * len(cols))),
             [data[c] for c in cols],
         )
@@ -223,8 +225,10 @@ class OccHabDatabase:
         self.connect()
         cursor = self.connection.cursor()
         assignments = ", ".join("%s = ?" % k for k in data)
+        # Colonnes (assignments) issues d'une whitelist figée (STATION_COLS) ;
+        # valeurs paramétrées (?). Aucune donnée utilisateur dans le SQL.
         cursor.execute(
-            "UPDATE t_stations SET %s WHERE id = ?" % assignments,
+            "UPDATE t_stations SET %s WHERE id = ?" % assignments,  # nosec B608
             list(data.values()) + [station_id],
         )
         self.connection.commit()
@@ -262,8 +266,10 @@ class OccHabDatabase:
         data["id_station_local"] = id_station_local
         data.setdefault("sync_status", "pending")
         cols = list(data.keys())
+        # Noms de colonnes issus d'une whitelist figée (HABITAT_COLS) ; valeurs
+        # toujours paramétrées (?). Aucune donnée utilisateur dans le SQL.
         cursor.execute(
-            "INSERT INTO t_habitats (%s) VALUES (%s)"
+            "INSERT INTO t_habitats (%s) VALUES (%s)"  # nosec B608
             % (", ".join(cols), ", ".join(["?"] * len(cols))),
             [data[c] for c in cols],
         )

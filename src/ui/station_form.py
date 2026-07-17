@@ -180,9 +180,9 @@ class StationForm(QWidget):
 
     def _add_observer_item(self, id_role, name, checked):
         item = QListWidgetItem(name or str(id_role))
-        item.setData(Qt.UserRole, id_role)
-        item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
-        item.setCheckState(Qt.Checked if checked else Qt.Unchecked)
+        item.setData(Qt.ItemDataRole.UserRole, id_role)
+        item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+        item.setCheckState(Qt.CheckState.Checked if checked else Qt.CheckState.Unchecked)
         self.list_observers.addItem(item)
 
     def _filter_observers(self, text):
@@ -195,9 +195,9 @@ class StationForm(QWidget):
         result = []
         for i in range(self.list_observers.count()):
             item = self.list_observers.item(i)
-            if item.checkState() == Qt.Checked:
+            if item.checkState() == Qt.CheckState.Checked:
                 result.append(
-                    {"id_role": item.data(Qt.UserRole), "observer_name": item.text()}
+                    {"id_role": item.data(Qt.ItemDataRole.UserRole), "observer_name": item.text()}
                 )
         return result
 
@@ -211,9 +211,9 @@ class StationForm(QWidget):
         present = set()
         for i in range(self.list_observers.count()):
             item = self.list_observers.item(i)
-            id_role = item.data(Qt.UserRole)
+            id_role = item.data(Qt.ItemDataRole.UserRole)
             present.add(id_role)
-            item.setCheckState(Qt.Checked if id_role in wanted else Qt.Unchecked)
+            item.setCheckState(Qt.CheckState.Checked if id_role in wanted else Qt.CheckState.Unchecked)
         for id_role, name in wanted.items():
             if id_role not in present:
                 self._add_observer_item(id_role, name, True)

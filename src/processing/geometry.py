@@ -38,7 +38,7 @@ def wkt_to_geojson(wkt):
 def geom_type_name(geometry):
     """Renvoyer 'point' | 'line' | 'polygon' pour une QgsGeometry."""
     return {
-        QgsWkbTypes.PointGeometry: "point",
-        QgsWkbTypes.LineGeometry: "line",
-        QgsWkbTypes.PolygonGeometry: "polygon",
+        QgsWkbTypes.GeometryType.PointGeometry: "point",
+        QgsWkbTypes.GeometryType.LineGeometry: "line",
+        QgsWkbTypes.GeometryType.PolygonGeometry: "polygon",
     }.get(geometry.type(), "point")
