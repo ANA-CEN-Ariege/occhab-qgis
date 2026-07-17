@@ -69,20 +69,37 @@ plugin gère un petit fichier local automatiquement.
 
 ## 3. Installation
 
-### Méthode A — depuis un fichier ZIP (recommandée)
+### Méthode A — depuis le dépôt d'extensions QGIS (recommandée)
 
-1. Récupérez le fichier **`occhab.zip`** de l'extension (fourni par l'ANA-CEN
-   Ariège ou téléchargé depuis le dépôt).
-2. Dans QGIS : menu **Extensions ▸ Installer/Gérer les extensions**.
-3. Onglet **Installer depuis un ZIP**, choisissez le fichier, cliquez
-   **Installer l'extension**.
-4. Onglet **Installées** : vérifiez que **OccHab GeoNature** est **coché**.
+L'installation la plus simple, avec **mises à jour automatiques** proposées par
+QGIS :
 
-> L'extension est marquée « expérimentale ». Si elle n'apparaît pas, allez dans
-> **Paramètres** (dans le gestionnaire d'extensions) et cochez **« Afficher aussi
-> les extensions expérimentales »**.
+1. Dans QGIS : menu **Extensions ▸ Installer/Gérer les extensions**.
+2. Comme l'extension est marquée « expérimentale », ouvrez d'abord l'onglet
+   **Paramètres** et cochez **« Afficher aussi les extensions expérimentales »**.
+3. Onglet **Toutes**, tapez **`OccHab GeoNature`** dans la recherche.
+4. Sélectionnez-la et cliquez **Installer l'extension**.
+5. Onglet **Installées** : vérifiez qu'elle est **cochée**.
 
-### Méthode B — copie manuelle du dossier
+> Quand une nouvelle version est publiée, QGIS vous propose la **mise à jour**
+> automatiquement (onglet *Mises à jour*).
+
+### Méthode B — depuis un fichier ZIP
+
+Utile hors ligne, en avant-première, ou si le dépôt QGIS n'est pas accessible :
+
+1. Téléchargez le ZIP de la **dernière version** :
+   **https://github.com/ANA-CEN-Ariege/occhab-qgis/releases/latest**
+   → dans la section *Assets*, cliquez sur **`occhab-x.y.z.zip`**.
+   *(lien direct de la dernière release : `…/releases/latest`)*
+2. Dans QGIS : **Extensions ▸ Installer/Gérer les extensions ▸ Installer depuis un
+   ZIP**, choisissez le fichier téléchargé, cliquez **Installer l'extension**.
+3. Onglet **Installées** : vérifiez que **OccHab GeoNature** est **coché**.
+
+> Si elle n'apparaît pas, cochez **« Afficher aussi les extensions
+> expérimentales »** dans l'onglet *Paramètres*.
+
+### Méthode C — copie manuelle du dossier
 
 1. Copiez le dossier **`occhab`** dans le répertoire des extensions de votre
    profil QGIS :
