@@ -1,0 +1,1 @@
+"""Utilitaires : configuration, journalisation."""

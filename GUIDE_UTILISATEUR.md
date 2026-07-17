@@ -1,0 +1,448 @@
+# Guide utilisateur — OccHab GeoNature (extension QGIS)
+
+Ce guide s'adresse aux **utilisateurs** de l'ANA-CEN Ariège qui
+saisissent des données d'habitats dans le module **OccHab** de GeoNature depuis
+QGIS. Il couvre l'installation, la première configuration et l'usage quotidien.
+
+> Vous cherchez les détails techniques (modèle de données, API, architecture) ?
+> Voir le [README](README.md).
+
+---
+
+## Sommaire
+
+1. [À quoi sert le plugin](#1-à-quoi-sert-le-plugin)
+2. [Prérequis](#2-prérequis)
+3. [Installation](#3-installation)
+4. [Première configuration (connexion)](#4-première-configuration-connexion)
+5. [Découvrir l'interface](#5-découvrir-linterface)
+6. [Saisir une station et ses habitats](#6-saisir-une-station-et-ses-habitats)
+7. [Modifier une station](#7-modifier-une-station)
+8. [Récupérer des stations depuis le serveur](#8-récupérer-des-stations-depuis-le-serveur)
+9. [Synchroniser avec GeoNature](#9-synchroniser-avec-geonature)
+10. [Supprimer : base locale ou serveur](#10-supprimer--base-locale-ou-serveur)
+11. [Travailler hors-ligne](#11-travailler-hors-ligne)
+12. [Sauvegarde et export des données](#12-sauvegarde-et-export-des-données)
+13. [Les champs « enjeu / état / recouvrement »](#13-les-champs-enjeu--état--recouvrement)
+14. [Dépannage (FAQ)](#14-dépannage-faq)
+15. [Glossaire](#15-glossaire)
+
+---
+
+## 1. À quoi sert le plugin
+
+L'extension **OccHab GeoNature** permet de saisir, **même sans
+connexion Internet**, des **stations** (objets géographiques : point, ligne ou
+polygone) et les **habitats** qui s'y trouvent, puis de les **envoyer vers
+GeoNature** une fois de retour au bureau (ou dès qu'une connexion est
+disponible).
+
+Concrètement, vous pouvez :
+
+- **dessiner** une station directement sur la carte QGIS et laisser le plugin
+  calculer sa **surface** et son **altitude** ;
+- **décrire un ou plusieurs habitats** par station, avec recherche assistée dans
+  le référentiel **HABREF** (Corine Biotopes, EUNIS…) ;
+- renseigner des champs métier ANA — **niveau d'enjeu**, **état de conservation**,
+  **recouvrement** ;
+- **synchroniser** vos saisies avec GeoNature (création, modification,
+  suppression) ;
+- **consulter** les stations déjà présentes sur le serveur pour vous repérer et
+  éviter les doublons.
+
+---
+
+## 2. Prérequis
+
+- **QGIS 3.16 ou plus récent** (Windows, Linux ou macOS).
+- Un **compte GeoNature** de votre instance (ex. celle de l'ANA-CEN Ariège), avec
+  les **droits sur le module OccHab** (au minimum *Lire* et *Créer* ; *Modifier*
+  et *Supprimer* pour éditer/effacer vos données). Voir §14 si vous obtenez une
+  erreur de permissions.
+- L'**URL de l'API GeoNature** de votre instance (elle ressemble à
+  `https://votre-serveur/geonature/api`). Demandez-la à votre administrateur.
+
+Aucune installation de base de données n'est nécessaire côté utilisateur : le
+plugin gère un petit fichier local automatiquement.
+
+---
+
+## 3. Installation
+
+### Méthode A — depuis un fichier ZIP (recommandée)
+
+1. Récupérez le fichier **`occhab.zip`** de l'extension (fourni par l'ANA-CEN
+   Ariège ou téléchargé depuis le dépôt).
+2. Dans QGIS : menu **Extensions ▸ Installer/Gérer les extensions**.
+3. Onglet **Installer depuis un ZIP**, choisissez le fichier, cliquez
+   **Installer l'extension**.
+4. Onglet **Installées** : vérifiez que **OccHab GeoNature** est **coché**.
+
+> L'extension est marquée « expérimentale ». Si elle n'apparaît pas, allez dans
+> **Paramètres** (dans le gestionnaire d'extensions) et cochez **« Afficher aussi
+> les extensions expérimentales »**.
+
+### Méthode B — copie manuelle du dossier
+
+1. Copiez le dossier **`occhab`** dans le répertoire des extensions de votre
+   profil QGIS :
+   - Windows : `…\AppData\Roaming\QGIS\QGIS3\profiles\default\python\plugins\`
+   - Linux : `~/.local/share/QGIS/QGIS3/profiles/default/python/plugins/`
+   - macOS : `~/Library/Application Support/QGIS/QGIS3/profiles/default/python/plugins/`
+2. Redémarrez QGIS.
+3. **Extensions ▸ Installer/Gérer les extensions ▸ Installées** → cochez
+   **OccHab GeoNature**.
+
+### Ouvrir le plugin
+
+Une fois activé, cliquez sur son **icône dans la barre d'outils** (ou via le menu
+**Extensions**) pour afficher le **panneau (dock)** « OccHab GeoNature », en
+général ancré à droite de la fenêtre QGIS.
+
+---
+
+## 4. Première configuration (connexion)
+
+L'authentification passe par le **système d'authentification de QGIS** (vos
+identifiants sont **chiffrés** par QGIS ; le plugin ne stocke jamais votre mot de
+passe).
+
+### Étape 1 — Créer une configuration d'authentification (une seule fois)
+
+1. Cliquez sur **« Connexion GeoNature… »** dans le dock.
+2. Renseignez l'**URL de l'API** GeoNature (ex.
+   `https://votre-serveur/geonature/api`).
+3. En face de **Configuration d'authentification**, cliquez sur **« + »** pour en
+   créer une :
+   - **Type** : *Authentification de base* (*Basic*).
+   - **Nom** : par ex. `GeoNature ANA`.
+   - **Nom d'utilisateur** / **Mot de passe** : vos identifiants GeoNature.
+   - Enregistrez. (QGIS peut demander de définir un **mot de passe principal**
+     la première fois — c'est le coffre-fort qui chiffre vos identifiants.)
+4. Sélectionnez cette configuration, puis **validez**.
+
+### Étape 2 — Se connecter
+
+Après validation, l'en-tête du dock affiche **« Connecté : Prénom Nom
+(identifiant, id_role=…) »**. Le chargement des **JDD**, des listes déroulantes
+(nomenclatures), du référentiel HABREF, des observateurs et de la couche serveur
+se fait automatiquement.
+
+> Les prochaines fois, il suffit de cliquer **« Connexion GeoNature… »** puis de
+> valider : l'URL et la configuration d'auth sont mémorisées.
+
+---
+
+## 5. Découvrir l'interface
+
+Le dock est organisé en **deux blocs**, pour bien distinguer ce qui concerne
+**votre poste** de ce qui concerne **GeoNature** :
+
+```
+┌─────────────────────────────────────────────────────────┐
+│ [Connexion GeoNature…]   Connecté : Roy Cédric (…)        │
+│ JDD :  [ Rechercher un JDD…                           ▾ ] │
+│ [ ] mes stations                    Serveur : 12 station(s)│
+│─────────────────────────────────────────────────────────│
+│ Mes stations (local)                                      │
+│  ┌─────────────┬──────────┬───────────────┬────────────┐  │
+│  │ Habitat(s)  │ Date     │ Observateur(s)│ État       │  │
+│  └─────────────┴──────────┴───────────────┴────────────┘  │
+│  [＋ Nouvelle station]  géométrie: [x] numériser [Polygone▾]│
+│  [Éditer] [Modifier la géométrie] [Supprimer] [Zoom]      │
+│─────────────────────────────────────────────────────────│
+│ Serveur                                                   │
+│  [Récupérer du serveur] [Rafraîchir] [Synchroniser]       │
+│─────────────────────────────────────────────────────────│
+│ Base locale : occhab_local.db          [Base locale…]     │
+└─────────────────────────────────────────────────────────┘
+```
+
+- **Ligne JDD** : sélectionne le jeu de données de travail. La combo est
+  **cherchable** : tapez quelques lettres pour filtrer.
+- **Ligne « mes stations » / compteur serveur** : la case restreint la couche
+  serveur à *vos* stations ; le compteur indique le nombre de stations serveur du
+  JDD.
+- **Bloc « Mes stations (local) »** : le tableau de **vos** saisies + les boutons
+  qui agissent sur la **ligne sélectionnée** (Éditer, Géométrie, Supprimer, Zoom)
+  et la création d'une nouvelle station.
+- **Bloc « Serveur »** : récupérer des stations depuis GeoNature, rafraîchir,
+  synchroniser.
+
+### Les couches sur la carte
+
+- **OccHab (local)** : vos stations, **colorées selon leur état** :
+  - *À synchroniser* (pas encore envoyées ou modifiées),
+  - *Synchronisée* (à jour sur GeoNature),
+  - *À supprimer* (marquée pour effacement),
+- **OccHab (serveur)** : les stations déjà sur GeoNature pour le JDD choisi, en
+  **bleu** et en **lecture seule** (contexte, non modifiable directement).
+
+### La colonne « État »
+
+| État affiché       | Signification                                              |
+|--------------------|------------------------------------------------------------|
+| **À synchroniser** | Créée ou modifiée localement, pas encore envoyée à GeoNature |
+| **Synchronisée**   | Identique à la version GeoNature                           |
+| **À supprimer**    | Marquée pour suppression au prochain envoi (réversible)    |
+
+---
+
+## 6. Saisir une station et ses habitats
+
+### Étape 1 — Créer la station et sa géométrie
+
+1. Choisissez le **type de géométrie** (Polygone, Ligne ou Point) et laissez
+   **« numériser »** coché.
+2. Cliquez **« ＋ Nouvelle station »**.
+3. **Dessinez sur la carte** :
+   - clic gauche pour poser les sommets (l'**accrochage** QGIS est actif, pratique
+     pour se caler sur des objets existants) ;
+   - **clic droit** pour terminer.
+4. Le formulaire de la station s'ouvre. Pour un **polygone**, la **surface** (m²)
+   et l'**altitude min/max** sont déjà remplies automatiquement.
+
+> Vous préférez saisir sans dessiner ? Décochez **« numériser »** avant de cliquer
+> « ＋ Nouvelle station » : vous pourrez ajouter la géométrie plus tard avec
+> **« Modifier la géométrie »**.
+
+### Étape 2 — Renseigner la station
+
+Champs principaux :
+
+- **Jeu de données (JDD)** — *obligatoire*.
+- **Nom de la station**, **dates** (début / fin).
+- **Observateur(s)** — liste à cocher, avec filtre ; l'utilisateur connecté est
+  pré-coché.
+- **Altitude**, **profondeur**, **surface**, **exposition**, **type de sol**,
+  **type de mosaïque**, **nature d'objet géographique**.
+- **Niveau d'enjeu** / **état de conservation** (voir §13).
+- **Commentaire**.
+
+> Certains champs (type de sol, mosaïque…) ne s'affichent que si votre instance
+> GeoNature les propose.
+
+### Étape 3 — Ajouter un ou plusieurs habitats
+
+Dans le formulaire, ajoutez au moins un habitat :
+
+- **Nom cité** — commencez à taper le nom (ou le code) de l'habitat : une
+  **liste HABREF** apparaît, préfixée par la typologie (« CORINE biotopes 41.2 -
+  Chênaies-charmaies »). En choisissant une proposition, le **code `cd_hab`** est
+  rempli automatiquement. Le nom cité reste ensuite librement modifiable.
+- **Filtre typologie** — pour cibler la recherche (Corine, EUNIS…).
+- **Déterminateur** — utilisateur connecté par défaut, saisie libre possible.
+- **Technique de collecte** — **« In situ » par défaut**.
+- **Recouvrement (%)** — pré-sélectionne automatiquement la classe d'**abondance**.
+- **Sensibilité** — **« Non sensible » par défaut**.
+- **Type de détermination**, **abondance**, **intérêt communautaire**.
+- **Niveau d'enjeu** / **état de conservation** de l'habitat (voir §13).
+
+Répétez pour chaque habitat de la station. Un garde-fou demande confirmation avant
+de **retirer** un habitat.
+
+### Étape 4 — Enregistrer
+
+Validez le formulaire : la station apparaît dans le tableau **« Mes stations
+(local) »**, identifiée par son premier habitat (ex. « 41.2 - Chênaies-charmaies
+(+2) » = 3 habitats), en état **À synchroniser**.
+
+---
+
+## 7. Modifier une station
+
+- **Éditer les attributs / habitats** : sélectionnez la station dans le tableau et
+  cliquez **« Éditer »** (ou double-cliquez sur la ligne). Vous pouvez modifier la
+  station, ajouter/retirer des habitats.
+- **Modifier la géométrie** : sélectionnez la station, cliquez **« Modifier la
+  géométrie »**, déplacez/ajoutez/supprimez les sommets sur la carte, puis
+  **Valider** (ou **Annuler**) via les boutons de la barre de message.
+
+Toute modification repasse la station en **À synchroniser**.
+
+---
+
+## 8. Récupérer des stations depuis le serveur
+
+Utile pour **corriger une station déjà envoyée**, **repartir d'un autre poste**,
+ou **restaurer** une base locale perdue.
+
+1. Assurez-vous d'avoir choisi le bon **JDD** : la couche **« OccHab (serveur) »**
+   affiche ses stations.
+2. Avec l'**outil de sélection de QGIS**, sélectionnez une ou plusieurs stations
+   **sur la carte** (dans la couche serveur).
+3. Cliquez **« Récupérer du serveur »** : elles sont copiées dans votre base
+   locale et deviennent **éditables**.
+
+> Si une station sélectionnée est **déjà** dans votre base locale, le plugin
+> propose de **remplacer la copie locale par la version du serveur** (utile pour
+> restaurer). Vos modifications locales non synchronisées de ces stations seraient
+> alors écrasées : lisez bien le message.
+
+Ensuite : éditez comme d'habitude (§7), puis **synchronisez** (§9).
+
+---
+
+## 9. Synchroniser avec GeoNature
+
+Cliquez **« Synchroniser »** (vous devez être connecté). Le plugin :
+
+1. **applique les suppressions** marquées *À supprimer* (`DELETE` sur GeoNature) ;
+2. **envoie les créations et modifications** (les stations *À synchroniser*).
+
+Un **récapitulatif** s'affiche (« X envoyée(s), Y supprimée(s), Z échec(s) »), et
+la couche serveur est rechargée.
+
+### Garde-fous suppression
+
+Pour éviter les effacements accidentels en masse :
+
+- confirmation listant le **nombre** et les **libellés** des stations à supprimer ;
+- au-delà de **3 suppressions**, il faut **taper `SUPPRIMER`** (en majuscules) ;
+- seules **vos** données peuvent être supprimées côté serveur (selon vos
+  permissions GeoNature).
+
+---
+
+## 10. Supprimer : base locale ou serveur
+
+Le bouton **« Supprimer »** distingue **deux gestes différents** :
+
+- **Station non synchronisée** → **suppression locale immédiate** (après
+  confirmation). Elle n'a jamais existé sur GeoNature.
+- **Station déjà sur le serveur** → une fenêtre propose :
+  - **« Retirer de ma base locale »** : enlève **seulement** la copie locale.
+    **GeoNature n'est pas touché** ; vous pourrez la re-récupérer plus tard.
+    *Toujours disponible*, y compris pour une station créée par **quelqu'un
+    d'autre**.
+  - **« Supprimer sur GeoNature »** : marque la station *À supprimer* (réversible
+    en re-cliquant), effacée du serveur à la prochaine **synchronisation**.
+    *Uniquement pour vos propres données.*
+
+**En résumé** : importer la station d'un collègue pour la consulter, puis la
+« retirer de ma base locale » n'a **aucun effet** sur GeoNature.
+
+---
+
+## 11. Travailler hors-ligne
+
+Le plugin est **hors-ligne par défaut** : toutes vos saisies sont écrites dans une
+base locale (`occhab_local.db`), **connecté ou non**.
+
+- **Sans réseau** : créez et éditez vos stations/habitats
+  normalement. Elles restent en état **À synchroniser**.
+- **De retour au bureau** : connectez-vous et cliquez **« Synchroniser »**.
+
+Quelques listes (JDD, HABREF, observateurs, nomenclatures) et le calcul
+d'altitude nécessitent d'être **connecté**. Hors-ligne, certaines listes peuvent
+être vides ; elles seront complétées à la synchronisation (ex. la technique de
+collecte est fixée à « In situ » à l'envoi si elle n'a pas pu être renseignée).
+
+---
+
+## 12. Sauvegarde et export des données
+
+Bouton **« Base locale… »** (en bas du dock) :
+
+- **Ouvrir le dossier** — accéder au fichier `occhab_local.db` (pour le copier,
+  l'archiver…).
+- **Sauvegarder (copie .db)…** — enregistrer une **copie de sauvegarde** de votre
+  base locale.
+- **Exporter en GeoPackage…** — exporter vos stations dans un **`.gpkg`**
+  réutilisable dans QGIS ou un autre outil.
+
+> Pensez à **sauvegarder** régulièrement votre base locale, surtout avant une
+> synchronisation importante.
+
+---
+
+## 13. Les champs « enjeu / état / recouvrement »
+
+Le module OccHab de GeoNature n'a pas de champ dédié pour le **niveau d'enjeu**,
+l'**état de conservation** et le **recouvrement**. Le plugin les enregistre de
+façon **normalisée**, **encodés dans les champs de commentaire** d'OccHab (au
+niveau station et/ou habitat), sans détruire le texte libre que vous y mettez.
+
+- **Niveau d'enjeu** : Faible / Moyen / Fort / Majeur.
+- **État de conservation** : Bon / Moyen (altéré) / Mauvais (dégradé) / Non
+  déterminé.
+- **Recouvrement (%)** : de 0 à 100 ; il **pré-sélectionne** aussi la classe
+  d'**abondance** de l'habitat.
+
+Vous les saisissez via des listes déroulantes ; à la relecture (édition), le
+plugin les ré-affiche automatiquement. Côté GeoNature, ces valeurs restent
+ré-extractibles (voir README §6 pour les administrateurs).
+
+---
+
+## 14. Dépannage (FAQ)
+
+### « Je ne vois pas l'extension dans le gestionnaire »
+Cochez **« Afficher aussi les extensions expérimentales »** dans les paramètres du
+gestionnaire d'extensions.
+
+### La connexion échoue (400 / 401)
+- Vérifiez l'**URL de l'API** (elle doit finir par `…/geonature/api`).
+- Vérifiez vos **identifiants** dans la configuration d'authentification QGIS
+  (méthode *Basic*).
+
+### « User … has no permissions to R in OCCHAB » (403)
+Vous êtes bien connecté, mais votre compte n'a pas le droit de **lecture** sur
+OccHab. Points à vérifier avec votre **administrateur GeoNature** :
+- vous appartenez bien au **groupe** qui porte les droits OccHab (et pas à un
+  autre) ;
+- il n'y a pas de **droit en double** (même droit défini à la fois sur le groupe
+  **et** directement sur votre compte) — dans GeoNature, deux permissions
+  identiques peuvent s'**annuler** ;
+- le droit est **validé** et **non expiré**.
+Après un changement de droits, **reconnectez-vous**.
+
+### « Nomenclature TYPE_SOL non trouvée » (404) dans le journal
+Ce n'est **pas une erreur** : votre instance GeoNature ne fournit pas cette liste.
+Le champ correspondant (« Type de sol ») est simplement **masqué**. Rien à faire.
+
+### « Pas de couche vectorielle active » / la numérisation ne démarre pas
+Cliquez d'abord **« ＋ Nouvelle station »** (avec « numériser » coché) : le plugin
+prépare lui-même la couche de dessin. Ne créez pas de couche à la main.
+
+### Les stations serveur ne s'affichent pas
+- Vous devez être **connecté** et avoir choisi un **JDD précis** (pas « Tous les
+  JDD »).
+- Vérifiez le **compteur « Serveur : N station(s) »**. S'il indique 0, il n'y a pas
+  de station pour ce JDD (ou vos permissions ne vous en montrent aucune).
+
+### J'ai modifié une géométrie côté serveur mais je ne la vois pas mise à jour
+Après **Synchroniser**, la couche serveur est rechargée. Sinon, cliquez
+**« Rafraîchir »**.
+
+### J'ai perdu ma base locale
+Reconnectez-vous, sélectionnez vos stations dans la couche serveur et
+**« Récupérer du serveur »** (voir §8) : elles sont restaurées en local.
+
+---
+
+## 15. Glossaire
+
+- **Station** : objet géographique (point, ligne, polygone) décrivant un lieu
+  d'observation. Porte 1 à N habitats.
+- **Habitat** : description d'un milieu au sein d'une station (non géographique),
+  identifié par un **`cd_hab`** HABREF.
+- **JDD (jeu de données)** : cadre GeoNature auquel se rattachent les stations
+  (obligatoire).
+- **HABREF** : référentiel national des habitats (typologies Corine Biotopes,
+  EUNIS, etc.). Le plugin y recherche le `cd_hab` à partir du nom.
+- **`cd_hab`** : code d'un habitat dans HABREF.
+- **Nomenclature** : liste de valeurs standardisées GeoNature/SINP (technique de
+  collecte, abondance, exposition…).
+- **CRUVED** : les 6 droits GeoNature — **C**réer, **R**ead (lire), **U**pdate
+  (modifier), **V**alider, **E**xporter, **D**elete (supprimer).
+- **Synchroniser** : envoyer vos saisies locales vers GeoNature.
+- **Hors-ligne (offline-first)** : tout est d'abord stocké localement, puis
+  envoyé au serveur à la demande.
+- **id_digitiser** : identifiant de l'utilisateur qui a **numérisé** (créé) une
+  station ; sert à savoir ce qui est « à vous ».
+
+---
+
+*Extension développée par l'ANA-CEN Ariège — contact : it@ariegenature.fr.
+Licence GPL-3.0. Pour les aspects techniques, voir le [README](README.md).*

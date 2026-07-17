@@ -1,0 +1,32 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# Environnements virtuels
+.venv/
+venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# Bases locales / logs générés à l'exécution
+*.db
+*.sqlite
+*.sqlite3
+occhab.log
+
+# QGIS
+*.qgz
+*.qgs~
+
+# Tests
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Packaging (ZIP généré par package.py)
+dist/

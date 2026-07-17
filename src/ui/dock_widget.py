@@ -1,0 +1,1153 @@
+"""Dock principal du plugin OccHab : connexion, saisie et synchronisation."""
+import os
+
+from qgis.PyQt.QtCore import Qt, QUrl
+from qgis.PyQt.QtGui import QDesktopServices
+from qgis.PyQt.QtWidgets import (
+    QCheckBox,
+    QComboBox,
+    QCompleter,
+    QDockWidget,
+    QFileDialog,
+    QHBoxLayout,
+    QHeaderView,
+    QInputDialog,
+    QLabel,
+    QMenu,
+    QMessageBox,
+    QPushButton,
+    QTableWidget,
+    QTableWidgetItem,
+    QVBoxLayout,
+    QWidget,
+)
+
+from ..database.sqlite_local import OccHabDatabase
+from .connection_dialog import ConnectionDialog
+from .station_dialog import StationDialog
+from .station_layers import StationLayerManager
+from .server_layers import ServerStationLayerManager
+
+_GEOM_TYPES = [("Polygone", "polygon"), ("Ligne", "line"), ("Point", "point")]
+
+# Nomenclatures OccHab, par champ de formulaire → mnémonique GeoNature.
+STATION_NOMENCLATURES = {
+    "exposure": "EXPOSITION",
+    "surface_method": "METHOD_CALCUL_SURFACE",
+    "geo_object": "NAT_OBJ_GEO",
+    "type_sol": "TYPE_SOL",
+    "mosaique": "MOSAIQUE_HAB",
+}
+HABITAT_NOMENCLATURES = {
+    "technique": "TECHNIQUE_COLLECT_HAB",
+    "determination": "DETERMINATION_TYP_HAB",
+    "abundance": "ABONDANCE_HAB",
+    "sensitivity": "SENSIBILITE",
+    "community_interest": "HAB_INTERET_COM",
+}
+
+
+class OccHabDockWidget(QDockWidget):
+    """Widget d'ancrage : connexion GeoNature, tableau des stations, synchro."""
+
+    def __init__(self, iface, config, logger, parent=None):
+        super().__init__("OccHab GeoNature", parent)
+        self.iface = iface
+        self.config = config
+        self.logger = logger
+        self.db = OccHabDatabase(config.get("local_db.path"))
+        self.client = None
+        self.nomenclatures = {}
+        self.default_nomenclatures = {}
+        self.typologies = []
+        self.observers = []
+        self.layers = StationLayerManager(self.logger)
+        self.server_layers = ServerStationLayerManager(
+            str(config.user_config_dir / "server_stations.geojson"), self.logger
+        )
+        self._capture = None
+        self._capture_target = None  # None/"new" = nouvelle station ; int = id station à re-géométrer
+        self._geom_editor = None
+        self._edit_geom_station_id = None
+        self._build_ui()
+        self.refresh()
+
+    # ------------------------------------------------------------- UI
+    def _build_ui(self):
+        container = QWidget()
+        layout = QVBoxLayout(container)
+
+        # Connexion
+        conn = QHBoxLayout()
+        self.btn_connect = QPushButton("Connexion GeoNature…")
+        self.btn_connect.clicked.connect(self.open_connection)
+        self.label_conn = QLabel("Non connecté")
+        conn.addWidget(self.btn_connect)
+        conn.addWidget(self.label_conn)
+        conn.addStretch(1)
+        layout.addLayout(conn)
+
+        # JDD (filtre de la vue + JDD par défaut des nouvelles stations)
+        row_jdd = QHBoxLayout()
+        row_jdd.addWidget(QLabel("JDD :"))
+        self.combo_jdd = QComboBox()
+        self.combo_jdd.setEnabled(False)
+        # Éditable + autocomplétion « contient » (utile quand les JDD sont nombreux).
+        self.combo_jdd.setEditable(True)
+        self.combo_jdd.setInsertPolicy(QComboBox.NoInsert)
+        self.combo_jdd.lineEdit().setPlaceholderText("Rechercher un JDD…")
+        jdd_completer = self.combo_jdd.completer()
+        jdd_completer.setCompletionMode(QCompleter.PopupCompletion)
+        jdd_completer.setFilterMode(Qt.MatchContains)
+        jdd_completer.setCaseSensitivity(Qt.CaseInsensitive)
+        jdd_completer.setMaxVisibleItems(15)
+        # Popup plus lisible : lignes aérées (le nom complet est cadré dans
+        # _fit_jdd_popup_width une fois les JDD chargés).
+        jdd_completer.popup().setStyleSheet("QListView::item { padding: 4px 8px; }")
+        self.combo_jdd.currentIndexChanged.connect(self._on_jdd_changed)
+        row_jdd.addWidget(self.combo_jdd, 1)
+        layout.addLayout(row_jdd)
+
+        # Sous la ligne JDD : filtre « mes stations » + compteur de stations serveur.
+        row_srv_ctx = QHBoxLayout()
+        self.check_only_mine = QCheckBox("mes stations")
+        self.check_only_mine.setEnabled(False)  # activé une fois connecté (JDD chargés)
+        self.check_only_mine.setToolTip(
+            "N'afficher sur la carte serveur que les stations dont je suis le "
+            "numérisateur (id_digitiser)."
+        )
+        self.check_only_mine.stateChanged.connect(lambda _s: self._load_server_stations())
+        row_srv_ctx.addWidget(self.check_only_mine)
+        row_srv_ctx.addStretch(1)
+        self.label_server = QLabel("")  # nb de stations serveur (contexte)
+        self.label_server.setToolTip("Stations déjà présentes sur GeoNature pour ce JDD")
+        row_srv_ctx.addWidget(self.label_server)
+        layout.addLayout(row_srv_ctx)
+
+        # Section : saisies locales (à distinguer du contexte serveur en lecture seule)
+        label_local = QLabel("Mes stations (local)")
+        label_local.setStyleSheet("font-weight: bold;")
+        layout.addWidget(label_local)
+
+        # Tableau (une station = un ou plusieurs habitats ; l'id local est en donnée cachée)
+        self.table = QTableWidget(0, 4)
+        self.table.setHorizontalHeaderLabels(["Habitat(s)", "Date", "Observateur(s)", "État"])
+        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        self.table.setEditTriggers(QTableWidget.NoEditTriggers)
+        self.table.setSelectionBehavior(QTableWidget.SelectRows)
+        self.table.setSelectionMode(QTableWidget.SingleSelection)
+        self.table.cellDoubleClicked.connect(lambda _r, _c: self.edit_station())
+        layout.addWidget(self.table)
+
+        # ============== Actions sur MES stations (local) ==============
+        # Saisie : créer une station + comment numériser sa géométrie
+        row_new = QHBoxLayout()
+        self.btn_new = QPushButton("＋ Nouvelle station")
+        self.btn_new.clicked.connect(self.new_station)
+        row_new.addWidget(self.btn_new)
+        row_new.addWidget(QLabel("géométrie :"))
+        self.check_digitize = QCheckBox("numériser")
+        self.check_digitize.setChecked(True)
+        self.check_digitize.setToolTip("Dessiner la géométrie sur la carte à la création")
+        self.check_digitize.stateChanged.connect(
+            lambda _s: self.combo_geomtype.setEnabled(self.check_digitize.isChecked())
+        )
+        row_new.addWidget(self.check_digitize)
+        self.combo_geomtype = QComboBox()
+        for label, code in _GEOM_TYPES:
+            self.combo_geomtype.addItem(label, code)
+        row_new.addWidget(self.combo_geomtype)
+        row_new.addStretch(1)
+        layout.addLayout(row_new)
+
+        # Agir sur la station LOCALE sélectionnée dans le tableau ci-dessus
+        row_sel = QHBoxLayout()
+        self.btn_edit = QPushButton("Éditer")
+        self.btn_edit.setToolTip("Éditer la station sélectionnée dans « Mes stations (local) ».")
+        self.btn_edit.clicked.connect(self.edit_station)
+        self.btn_geom = QPushButton("Modifier la géométrie")
+        self.btn_geom.clicked.connect(self.edit_geometry)
+        self.btn_delete = QPushButton("Supprimer")
+        self.btn_delete.clicked.connect(self.delete_selected)
+        self.btn_zoom = QPushButton("Zoom")
+        self.btn_zoom.setToolTip(
+            "Zoomer sur la station sélectionnée ; sans sélection, sur l'emprise du "
+            "JDD (stations serveur, sinon locales)."
+        )
+        self.btn_zoom.clicked.connect(self.zoom_to_stations)
+        for btn in (self.btn_edit, self.btn_geom, self.btn_delete, self.btn_zoom):
+            row_sel.addWidget(btn)
+        layout.addLayout(row_sel)
+
+        # ===================== Contexte SERVEUR =====================
+        label_srv = QLabel("Serveur")
+        label_srv.setStyleSheet("font-weight: bold;")
+        layout.addWidget(label_srv)
+
+        row_srv = QHBoxLayout()
+        self.btn_import = QPushButton("Récupérer du serveur")
+        self.btn_import.setToolTip(
+            "Sélectionnez des stations dans la couche « OccHab — stations serveur » "
+            "(outil de sélection QGIS) puis cliquez ici pour les éditer localement."
+        )
+        self.btn_import.clicked.connect(self.import_server_stations)
+        self.btn_refresh = QPushButton("Rafraîchir")
+        self.btn_refresh.setToolTip("Recharger les stations locales et le contexte serveur.")
+        self.btn_refresh.clicked.connect(self.refresh)
+        self.btn_sync = QPushButton("Synchroniser")
+        self.btn_sync.setToolTip(
+            "Envoyer vos créations / modifications / suppressions vers GeoNature."
+        )
+        self.btn_sync.clicked.connect(self.synchronize)
+        for btn in (self.btn_import, self.btn_refresh, self.btn_sync):
+            row_srv.addWidget(btn)
+        layout.addLayout(row_srv)
+
+        # Footer : où sont stockées les données locales + sauvegarde/export
+        footer = QHBoxLayout()
+        db_path = str(self.db.db_path)
+        self.label_db = QLabel("Base locale : %s" % os.path.basename(db_path))
+        self.label_db.setToolTip(db_path)
+        footer.addWidget(self.label_db)
+        footer.addStretch(1)
+        btn_storage = QPushButton("Base locale…")
+        menu = QMenu(btn_storage)
+        menu.addAction("Ouvrir le dossier", self._open_db_folder)
+        menu.addAction("Sauvegarder (copie .db)…", self._backup_db)
+        menu.addAction("Exporter en GeoPackage…", self._export_geopackage)
+        btn_storage.setMenu(menu)
+        footer.addWidget(btn_storage)
+        layout.addLayout(footer)
+
+        self.setWidget(container)
+
+    # ------------------------------------------------------- connexion
+    def open_connection(self):
+        dialog = ConnectionDialog(self.config, parent=self)
+        if not dialog.exec_():
+            return
+        self.client = dialog.client
+        self.label_conn.setText("Connecté : %s" % dialog.user_label())
+        self.logger.info(
+            "Connecté à %s en tant que %s",
+            self.config.get("geonature.api_url"),
+            dialog.user_label(),
+        )
+        self._load_datasets()
+        self._load_reference_data()
+
+    def _load_datasets(self):
+        """Charger les JDD actifs rattachés au module OccHab.
+
+        On demande les modules de chaque JDD (fields=modules) et on filtre sur
+        l'association OccHab. Repli sur le filtre par permission (create=<module>)
+        si l'instance ne renvoie pas la liste des modules.
+        """
+        if self.client is None:
+            return
+        module_code = (
+            self.config.get("geonature.occhab_module_code", "OCCHAB") or "OCCHAB"
+        ).upper()
+
+        raw = self._fetch_datasets({"active": "true", "fields": "modules"})
+        if raw and any("modules" in ds for ds in raw):
+            datasets = [ds for ds in raw if self._has_module(ds, module_code)]
+        else:
+            # 'modules' non fourni : repli sur les JDD actifs créables en OccHab
+            datasets = self._fetch_datasets({"active": "true", "create": module_code})
+            if not datasets:
+                datasets = self._fetch_datasets({"active": "true"})
+
+        self.combo_jdd.blockSignals(True)
+        self.combo_jdd.clear()
+        self.combo_jdd.addItem("— Tous les JDD —", None)  # vue sans filtre
+        for dataset in datasets:
+            id_dataset = dataset.get("id_dataset")
+            name = dataset.get("dataset_name") or dataset.get("dataset_shortname") or id_dataset
+            if id_dataset is not None:
+                self.combo_jdd.addItem(str(name), id_dataset)
+        if self.combo_jdd.count() > 1:
+            self.combo_jdd.setCurrentIndex(1)  # premier JDD réel par défaut
+        self.combo_jdd.blockSignals(False)
+        self.combo_jdd.setEnabled(self.combo_jdd.count() > 1)
+        self.check_only_mine.setEnabled(self.combo_jdd.count() > 1)
+        self._fit_jdd_popup_width()
+        self._on_jdd_changed()
+        self.logger.info("%d jeu(x) de données chargé(s)", self.combo_jdd.count() - 1)
+
+    def _fit_jdd_popup_width(self):
+        """Élargir le popup d'autocomplétion pour afficher les noms de JDD complets."""
+        popup = self.combo_jdd.completer().popup()
+        metrics = popup.fontMetrics()
+        longest = 0
+        for i in range(self.combo_jdd.count()):
+            try:
+                width = metrics.horizontalAdvance(self.combo_jdd.itemText(i))
+            except AttributeError:  # Qt < 5.11
+                width = metrics.width(self.combo_jdd.itemText(i))
+            longest = max(longest, width)
+        # marge pour le padding des lignes + un éventuel ascenseur
+        popup.setMinimumWidth(min(max(longest + 60, self.combo_jdd.width()), 640))
+
+    def _fetch_datasets(self, params):
+        """Appel bas-niveau à /meta/datasets, tolérant au format (liste ou {data:[...]})."""
+        try:
+            response = self.client.get_datasets(params=params)
+        except Exception as exc:  # noqa: BLE001
+            self.logger.warning("JDD non chargés (params=%s) : %s", params, exc)
+            return []
+        if isinstance(response, dict):
+            response = response.get("data", [])
+        return response if isinstance(response, list) else []
+
+    @staticmethod
+    def _has_module(dataset, module_code):
+        """Vrai si le JDD est rattaché au module donné (insensible à la casse)."""
+        modules = dataset.get("modules") or []
+        return any(
+            str(m.get("module_code", "")).upper() == module_code for m in modules
+        )
+
+    # --------------------------------------------------- données de référence
+    def _load_reference_data(self):
+        """Précharger toutes les nomenclatures des formulaires (station + habitat)."""
+        self.nomenclatures = {}
+        codes = set(STATION_NOMENCLATURES.values()) | set(HABITAT_NOMENCLATURES.values())
+        for code in sorted(codes):
+            try:
+                self.nomenclatures[code] = self.client.get_nomenclature_values(code)
+            except Exception as exc:  # noqa: BLE001
+                self.nomenclatures[code] = []
+                # 404 = type de nomenclature absent de cette instance (ex. TYPE_SOL
+                # sur une version antérieure) : attendu, le champ sera juste masqué.
+                if "404" in str(exc):
+                    self.logger.info(
+                        "Nomenclature %s absente de cette instance (champ masqué).", code
+                    )
+                else:
+                    self.logger.warning("Nomenclature %s non chargée : %s", code, exc)
+        self.logger.info(
+            "Nomenclatures chargées : %s",
+            {k: len(v) for k, v in self.nomenclatures.items()},
+        )
+        try:
+            defaults = self.client.get_default_nomenclatures()
+            self.default_nomenclatures = defaults if isinstance(defaults, dict) else {}
+        except Exception as exc:  # noqa: BLE001
+            self.logger.warning("Nomenclatures par défaut non chargées : %s", exc)
+            self.default_nomenclatures = {}
+        try:
+            self.typologies = self.client.get_habref_typologies()
+        except Exception as exc:  # noqa: BLE001
+            self.logger.warning("Typologies HABREF non chargées : %s", exc)
+            self.typologies = []
+        self.logger.info("Typologies HABREF chargées : %d", len(self.typologies))
+        list_id = self.config.get("geonature.observer_list_id", 1) or 1
+        try:
+            self.observers = self.client.get_observers(list_id)
+        except Exception as exc:  # noqa: BLE001
+            self.logger.warning("Observateurs non chargés : %s", exc)
+            self.observers = []
+        self.logger.info("Observateurs chargés : %d", len(self.observers))
+
+    def _observers_items(self):
+        """Liste (id_role, nom_complet) des observateurs de la liste OccHab."""
+        items = []
+        for user in self.observers:
+            id_role = user.get("id_role")
+            name = user.get("nom_complet") or (
+                "%s %s" % (user.get("prenom_role") or "", user.get("nom_role") or "")
+            ).strip()
+            if id_role is not None:
+                items.append((id_role, name or str(id_role)))
+        return items
+
+    def _user_names(self):
+        """Noms d'utilisateurs proposés pour le champ déterminateur."""
+        return [name for _, name in self._observers_items()]
+
+    def _current_user_name(self):
+        """Nom de l'utilisateur connecté (déterminateur par défaut)."""
+        obs = self._current_user_observer()
+        return obs.get("observer_name") if obs else None
+
+    def _current_user_observer(self):
+        """L'utilisateur connecté sous forme d'observateur (pour pré-sélection)."""
+        user = self.client.user if self.client else None
+        if isinstance(user, dict) and user.get("id_role"):
+            name = user.get("nom_complet") or (
+                "%s %s" % (user.get("prenom_role") or "", user.get("nom_role") or "")
+            ).strip()
+            return {"id_role": user["id_role"], "observer_name": name or str(user["id_role"])}
+        return None
+
+    def _habref_typologies(self):
+        """Liste (cd_typo, nom) des typologies HABREF (Corine, EUNIS…)."""
+        items = []
+        for typo in self.typologies:
+            cd_typo = typo.get("cd_typo")
+            name = typo.get("lb_nom_typo") or str(cd_typo)
+            if cd_typo is not None:
+                items.append((cd_typo, name))
+        return items
+
+    def _nomenclature_items(self, mnemonique):
+        """Liste (id_nomenclature, libellé) des valeurs actives d'une nomenclature."""
+        items = []
+        for value in self.nomenclatures.get(mnemonique, []):
+            if value.get("active", True) is False:
+                continue
+            id_nom = value.get("id_nomenclature")
+            label = (
+                value.get("label_default")
+                or value.get("label_fr")
+                or value.get("mnemonique")
+                or str(id_nom)
+            )
+            if id_nom is not None:
+                items.append((id_nom, label))
+        return items
+
+    def _station_nomenclatures(self):
+        return {
+            key: self._nomenclature_items(mnem)
+            for key, mnem in STATION_NOMENCLATURES.items()
+        }
+
+    def _habitat_nomenclatures(self):
+        return {
+            key: self._nomenclature_items(mnem)
+            for key, mnem in HABITAT_NOMENCLATURES.items()
+        }
+
+    def _default_ids(self, mapping):
+        """{clé de formulaire: id_nomenclature par défaut} d'après l'instance."""
+        out = {}
+        for key, mnem in mapping.items():
+            default = self.default_nomenclatures.get(mnem)
+            if isinstance(default, dict) and default.get("id_nomenclature") is not None:
+                out[key] = default["id_nomenclature"]
+        return out
+
+    def _nomenclature_id_by_cd(self, mnemonique, cd):
+        """id de la valeur d'un type de nomenclature par son cd_nomenclature, ou None."""
+        for value in self.nomenclatures.get(mnemonique, []):
+            if str(value.get("cd_nomenclature")) == str(cd):
+                return value.get("id_nomenclature")
+        return None
+
+    def _station_defaults(self):
+        defaults = self._default_ids(STATION_NOMENCLATURES)
+        # Champs laissés « non renseigné » par défaut (placeholder).
+        for key in ("geo_object", "type_sol", "mosaique"):
+            defaults.pop(key, None)
+        return defaults
+
+    def _habitat_defaults(self):
+        defaults = self._default_ids(HABITAT_NOMENCLATURES)
+        # Technique de collecte (NOT NULL côté serveur) : défaut = « In situ » (cd 1)
+        # si cette valeur existe, sinon le défaut d'instance.
+        in_situ = self._nomenclature_id_by_cd("TECHNIQUE_COLLECT_HAB", "1")
+        if in_situ is not None:
+            defaults["technique"] = in_situ
+        # Sensibilité : « Non sensible » (cd 0) par défaut, sinon défaut d'instance.
+        non_sensible = self._nomenclature_id_by_cd("SENSIBILITE", "0")
+        if non_sensible is not None:
+            defaults["sensitivity"] = non_sensible
+        return defaults
+
+    def _abundance_cover_map(self):
+        """{classe de recouvrement (cd 1..5): id_nomenclature} pour ABONDANCE_HAB."""
+        out = {}
+        for value in self.nomenclatures.get("ABONDANCE_HAB", []):
+            try:
+                cd = int(value.get("cd_nomenclature"))
+            except (TypeError, ValueError):
+                continue
+            if value.get("id_nomenclature") is not None:
+                out[cd] = value["id_nomenclature"]
+        return out
+
+    def _habref_search_fn(self):
+        """Callable de recherche HABREF (avec filtre typologie) si connecté, sinon None."""
+        if self.client is None or not self.client.is_authenticated:
+            return None
+        return lambda text, cd_typo=None: self.client.search_habref(text, cd_typo=cd_typo)
+
+    def _dataset_items(self):
+        """Liste (id_dataset, nom) des JDD (depuis la combo, hors « Tous »)."""
+        items = []
+        for i in range(self.combo_jdd.count()):
+            data = self.combo_jdd.itemData(i)
+            if data is not None:
+                items.append((data, self.combo_jdd.itemText(i)))
+        return items
+
+    def _on_jdd_changed(self):
+        data = self.combo_jdd.currentData()
+        if data is not None:
+            self.config.set("id_dataset", data)
+        self.refresh()  # filtrer la vue (table + carte) sur le JDD sélectionné
+        # Contexte serveur du JDD + zoom sur ses géométries (choix explicite d'un JDD).
+        self._load_server_stations(zoom=True)
+
+    def _load_server_stations(self, zoom=False):
+        """Charger en contexte les stations serveur du JDD sélectionné (lecture seule).
+
+        Si `zoom` et qu'il existe des géométries, cadrer le canevas dessus (serveur
+        en priorité, sinon les stations locales du JDD).
+        """
+        if self.client is None or not self.client.is_authenticated:
+            self.server_layers.clear()
+            self.label_server.setText("")
+            return
+        jdd = self.combo_jdd.currentData() if self.combo_jdd.isEnabled() else None
+        if jdd is None:  # « Tous les JDD » → pas de contexte serveur (trop volumineux)
+            self.server_layers.clear()
+            self.label_server.setText("")
+            return
+        try:
+            fc = self.client.get_stations(params={"id_dataset": jdd}, geojson=True)
+            fc = self._filter_own_stations(fc)
+            count = self.server_layers.show(fc)
+        except Exception as exc:  # noqa: BLE001
+            self.logger.warning("Stations serveur non chargées : %s", exc)
+            self.server_layers.clear()
+            self.label_server.setText("")
+            return
+        suffix = " (les miennes)" if self.check_only_mine.isChecked() else ""
+        self.label_server.setText("Serveur : %d station(s)%s" % (count, suffix))
+        if zoom:
+            self._zoom_canvas_to_4326(self.server_layers.extent() or self.layers.extent())
+
+    def _filter_own_stations(self, fc):
+        """Ne garder que les stations numérisées par l'utilisateur si le filtre est actif."""
+        if not self.check_only_mine.isChecked() or not isinstance(fc, dict):
+            return fc
+        my_id = (self.client.user or {}).get("id_role") if self.client else None
+        if not my_id:
+            return fc
+        features = [
+            f for f in fc.get("features", [])
+            if (f.get("properties") or {}).get("id_digitiser") == my_id
+        ]
+        return dict(fc, features=features)
+
+    def import_server_stations(self):
+        """Récupérer les stations serveur sélectionnées dans le local (pour édition).
+
+        Permet d'éditer/re-synchroniser une station déjà sur GeoNature, y compris
+        si la base locale a été perdue ou depuis une autre machine.
+        """
+        if self.client is None or not self.client.is_authenticated:
+            QMessageBox.information(self, "OccHab", "Connectez-vous à GeoNature d'abord.")
+            return
+        ids = self.server_layers.selected_id_stations()
+        if not ids:
+            QMessageBox.information(
+                self,
+                "OccHab",
+                "Sélectionnez d'abord une ou plusieurs stations dans la couche "
+                "« OccHab — stations serveur » (outil de sélection de QGIS).",
+            )
+            return
+        from ..api.payload import parse_server_station
+
+        # Stations déjà présentes en local : proposer d'écraser par la version serveur
+        # (permet de restaurer une station dont les données locales ont été perdues).
+        already_local = [i for i in ids if self.db.find_by_id_station(i)]
+        overwrite = False
+        if already_local:
+            overwrite = self._ask(
+                "Récupérer du serveur",
+                "%d station(s) sélectionnée(s) sont déjà dans la base locale.\n\n"
+                "Remplacer la copie locale par la version du serveur ?\n"
+                "⚠ Les modifications locales NON synchronisées de ces stations seront "
+                "écrasées." % len(already_local),
+            )
+
+        imported, restored, skipped, failed = 0, 0, 0, 0
+        for id_station in ids:
+            existing = self.db.find_by_id_station(id_station)
+            if existing and not overwrite:
+                skipped += 1
+                continue
+            try:
+                detail = self.client.get_station(id_station)
+                station, habitats, observers = parse_server_station(detail)
+                props = detail.get("properties", {}) if isinstance(detail, dict) else {}
+                my_id = (self.client.user or {}).get("id_role")
+                mine = 1 if my_id and props.get("id_digitiser") == my_id else 0
+                if existing:  # repartir proprement de la version serveur
+                    self.db.delete_station(existing["id"])
+                local_id = self.db.create_station(
+                    sync_status="synced", mine=mine, **station
+                )
+                for habitat in habitats:
+                    self.db.add_habitat(local_id, sync_status="synced", **habitat)
+                for observer in observers:
+                    self.db.add_observer(
+                        local_id,
+                        observer_name=observer.get("observer_name"),
+                        id_role=observer.get("id_role"),
+                    )
+                if existing:
+                    restored += 1
+                else:
+                    imported += 1
+            except Exception as exc:  # noqa: BLE001
+                failed += 1
+                self.logger.error("Récupération station %s échouée : %s", id_station, exc)
+        self.refresh()
+        parts = ["%d importée(s)" % imported]
+        if restored:
+            parts.append("%d restaurée(s)" % restored)
+        if skipped:
+            parts.append("%d ignorée(s) (déjà locale)" % skipped)
+        if failed:
+            parts.append("%d échec(s)" % failed)
+        self.iface.messageBar().pushInfo("OccHab", "Récupération : %s." % ", ".join(parts))
+
+    # -------------------------------------------------- saisie + géométrie
+    def new_station(self):
+        self._capture_target = "new"
+        if self.check_digitize.isChecked():
+            self._start_capture()
+        else:
+            self._open_station_dialog(None, None)
+
+    def edit_geometry(self):
+        """Éditer la géométrie enregistrée de la station (ou la numériser si absente)."""
+        station_id = self._selected_station_id()
+        if station_id is None:
+            QMessageBox.information(self, "OccHab", "Sélectionnez une station.")
+            return
+        full = self.db.get_station(station_id)
+        if full is None:
+            return
+        wkt, geom_type = full.get("geom"), full.get("geom_type")
+        if wkt and geom_type:  # géométrie existante → édition des sommets
+            self._edit_geom_station_id = station_id
+            self._ensure_geom_editor().start(wkt, geom_type)
+        else:  # pas de géométrie → numérisation d'une nouvelle
+            self._capture_target = station_id
+            self._start_capture()
+
+    def _ensure_geom_editor(self):
+        if self._geom_editor is None:
+            from .map_tools import GeometryEditController
+
+            self._geom_editor = GeometryEditController(self.iface, self)
+            self._geom_editor.edited.connect(self._on_geometry_edited)
+            self._geom_editor.cancelled.connect(self._on_geometry_edit_cancelled)
+        return self._geom_editor
+
+    def _on_geometry_edited(self, wkt, geom_type):
+        station_id = self._edit_geom_station_id
+        self._edit_geom_station_id = None
+        if station_id is not None:
+            metrics = self._geo_metrics(wkt or None, geom_type)
+            self._update_geometry(station_id, wkt or None, geom_type, metrics)
+
+    def _on_geometry_edit_cancelled(self):
+        self._edit_geom_station_id = None
+        self.iface.messageBar().pushInfo("OccHab", "Édition de géométrie annulée.")
+
+    def _ensure_capture(self):
+        if self._capture is None:
+            from .map_tools import GeometryCaptureController
+
+            self._capture = GeometryCaptureController(self.iface, self)
+            self._capture.captured.connect(self._on_geometry_captured)
+            self._capture.cancelled.connect(self._on_capture_cancelled)
+        return self._capture
+
+    def _start_capture(self):
+        self._ensure_capture().start(self.combo_geomtype.currentData())
+        self.iface.messageBar().pushInfo(
+            "OccHab",
+            "Numérisez la station (accrochage QGIS actif, clic droit pour "
+            "terminer, Échap pour annuler).",
+        )
+
+    def _on_geometry_captured(self, wkt, geom_type):
+        target = self._capture_target
+        self._capture_target = None
+        metrics = self._geo_metrics(wkt or None, geom_type)
+        if isinstance(target, int):
+            self._update_geometry(target, wkt or None, geom_type, metrics)
+        else:
+            self._open_station_dialog(wkt or None, geom_type, metrics)
+
+    def _on_capture_cancelled(self):
+        self._capture_target = None
+        self.iface.messageBar().pushInfo("OccHab", "Numérisation annulée.")
+
+    def _update_geometry(self, station_id, wkt, geom_type, metrics=None):
+        if not wkt:
+            self.iface.messageBar().pushInfo("OccHab", "Géométrie vide, station inchangée.")
+            return
+        fields = {"geom": wkt, "geom_type": geom_type, "sync_status": "pending"}
+        for key in ("area", "altitude_min", "altitude_max"):
+            if (metrics or {}).get(key) is not None:
+                fields[key] = metrics[key]
+        self.db.update_station(station_id, **fields)
+        self.logger.info("Géométrie de la station %s mise à jour", station_id)
+        self.refresh()
+
+    def _geo_metrics(self, wkt, geom_type):
+        """Surface (m², polygone) et altitude min/max (MNT serveur si connecté)."""
+        metrics = {"area": None, "altitude_min": None, "altitude_max": None}
+        if not wkt:
+            return metrics
+        if geom_type == "polygon":
+            try:
+                from qgis.core import (
+                    QgsCoordinateReferenceSystem,
+                    QgsDistanceArea,
+                    QgsGeometry,
+                    QgsProject,
+                    QgsUnitTypes,
+                )
+
+                calc = QgsDistanceArea()
+                calc.setSourceCrs(
+                    QgsCoordinateReferenceSystem("EPSG:4326"),
+                    QgsProject.instance().transformContext(),
+                )
+                calc.setEllipsoid(QgsProject.instance().ellipsoid() or "WGS84")
+                area = calc.convertAreaMeasurement(
+                    calc.measureArea(QgsGeometry.fromWkt(wkt)),
+                    QgsUnitTypes.AreaSquareMeters,
+                )
+                metrics["area"] = int(round(area))
+            except Exception as exc:  # noqa: BLE001
+                self.logger.warning("Surface non calculée : %s", exc)
+        if self.client is not None and self.client.is_authenticated:
+            try:
+                from ..processing.geometry import wkt_to_geojson
+
+                geojson = wkt_to_geojson(wkt)
+                altitude = self.client.get_altitude(geojson) if geojson else None
+                if isinstance(altitude, dict):
+                    metrics["altitude_min"] = altitude.get("altitude_min")
+                    metrics["altitude_max"] = altitude.get("altitude_max")
+            except Exception as exc:  # noqa: BLE001
+                self.logger.warning("Altitude non calculée : %s", exc)
+        return metrics
+
+    def shutdown(self):
+        """Nettoyer au déchargement du plugin : capture/édition en cours + couches carte."""
+        if self._capture is not None:
+            self._capture.cancel()
+        if self._geom_editor is not None:
+            self._geom_editor.cancel()
+        self.layers.cleanup()
+        self.server_layers.cleanup()
+
+    def _open_station_dialog(self, geom_wkt, geom_type, metrics=None):
+        dialog = StationDialog(
+            self.config,
+            geom_wkt=geom_wkt,
+            geom_type=geom_type,
+            geo_metrics=metrics,
+            datasets=self._dataset_items(),
+            station_nomenclatures=self._station_nomenclatures(),
+            habitat_nomenclatures=self._habitat_nomenclatures(),
+            station_defaults=self._station_defaults(),
+            habitat_defaults=self._habitat_defaults(),
+            abundance_cover_map=self._abundance_cover_map(),
+            habref_search=self._habref_search_fn(),
+            habref_typologies=self._habref_typologies(),
+            observers=self._observers_items(),
+            current_observer=self._current_user_observer(),
+            user_names=self._user_names(),
+            default_determiner=self._current_user_name(),
+            parent=self,
+        )
+        if not dialog.exec_():
+            return
+        station, habitats = dialog.get_result()
+        observers = station.pop("_observers", [])
+        try:
+            station_id = self.db.create_station(**station)
+            for habitat in habitats:
+                self.db.add_habitat(id_station_local=station_id, **habitat)
+            for obs in observers:
+                self.db.add_observer(
+                    station_id,
+                    observer_name=obs.get("observer_name"),
+                    id_role=obs.get("id_role"),
+                )
+            self.logger.info("Station %s créée (%d habitat(s))", station_id, len(habitats))
+        except Exception as exc:  # noqa: BLE001
+            self.logger.error("Échec création station : %s", exc)
+            QMessageBox.critical(self, "Erreur", "Création impossible : %s" % exc)
+            return
+        self.refresh()
+
+    def edit_station(self):
+        """Éditer la station sélectionnée (attributs + habitats)."""
+        station_id = self._selected_station_id()
+        if station_id is None:
+            QMessageBox.information(self, "OccHab", "Sélectionnez une station.")
+            return
+        full = self.db.get_station(station_id)
+        if full is None:
+            return
+        dialog = StationDialog(
+            self.config,
+            station=full,
+            datasets=self._dataset_items(),
+            station_nomenclatures=self._station_nomenclatures(),
+            habitat_nomenclatures=self._habitat_nomenclatures(),
+            station_defaults=self._station_defaults(),
+            habitat_defaults=self._habitat_defaults(),
+            abundance_cover_map=self._abundance_cover_map(),
+            habref_search=self._habref_search_fn(),
+            habref_typologies=self._habref_typologies(),
+            observers=self._observers_items(),
+            current_observer=self._current_user_observer(),
+            user_names=self._user_names(),
+            default_determiner=self._current_user_name(),
+            parent=self,
+        )
+        if not dialog.exec_():
+            return
+        station, habitats = dialog.get_result()
+        observers = station.pop("_observers", [])
+        # L'éditeur devient updated_by ; created_by (créateur d'origine) reste inchangé.
+        station["updated_by"] = station.pop("created_by", None)
+        try:
+            self.db.update_station(station_id, sync_status="pending", **station)
+            self.db.replace_habitats(station_id, habitats)
+            self.db.replace_observers(station_id, observers)
+            self.logger.info(
+                "Station %s modifiée (%d habitat(s))", station_id, len(habitats)
+            )
+        except Exception as exc:  # noqa: BLE001
+            self.logger.error("Échec modification station %s : %s", station_id, exc)
+            QMessageBox.critical(self, "Erreur", "Modification impossible : %s" % exc)
+            return
+        self.refresh()
+
+    # --------------------------------------------------------- tableau
+    def refresh(self):
+        jdd = self.combo_jdd.currentData() if self.combo_jdd.isEnabled() else None
+        stations = self.db.get_all_stations()
+        if jdd is not None:  # filtrer sur le JDD sélectionné (« Tous » = None)
+            stations = [s for s in stations if s.get("id_dataset") == jdd]
+        self.table.setRowCount(0)
+        for station in stations:
+            full = self.db.get_station(station["id"])
+            habitats = full["habitats"] if full else []
+            station["_nb_habitats"] = len(habitats)
+            row = self.table.rowCount()
+            self.table.insertRow(row)
+            etat = {
+                "synced": "Synchronisée",
+                "to_delete": "À supprimer",
+            }.get(station.get("sync_status"), "À synchroniser")
+            values = [
+                self._station_label(station, habitats),
+                station.get("date_min") or "",
+                station.get("observers_txt") or "",
+                etat,
+            ]
+            for col, value in enumerate(values):
+                item = QTableWidgetItem(value)
+                if col == 0:  # id local en donnée cachée pour la sélection
+                    item.setData(Qt.UserRole, station["id"])
+                self.table.setItem(row, col, item)
+        try:
+            self.layers.refresh(stations)
+        except Exception as exc:  # noqa: BLE001 - la carte ne doit pas casser la liste
+            self.logger.warning("Couches carte non mises à jour : %s", exc)
+        self.logger.info("Liste rafraîchie : %d station(s)", len(stations))
+
+    def zoom_to_stations(self):
+        """Zoom adaptatif : station locale sélectionnée, sinon emprise du JDD.
+
+        Avec une ligne sélectionnée dans « Mes stations (local) » → zoom sur sa
+        géométrie. Sans sélection → emprise du JDD (stations serveur en priorité,
+        sinon les stations locales).
+        """
+        station_id = self._selected_station_id()
+        if station_id is not None:
+            extent = self._station_extent_4326(station_id)
+            if extent is not None and self._zoom_canvas_to_4326(extent):
+                return
+        extent = self.server_layers.extent() or self.layers.extent()
+        if not self._zoom_canvas_to_4326(extent):
+            self.iface.messageBar().pushInfo("OccHab", "Aucune géométrie à afficher.")
+
+    def _station_extent_4326(self, station_id):
+        """Emprise EPSG:4326 de la géométrie d'une station locale, ou None."""
+        full = self.db.get_station(station_id)
+        wkt = full.get("geom") if full else None
+        if not wkt:
+            return None
+        from qgis.core import QgsGeometry
+
+        geom = QgsGeometry.fromWkt(wkt)
+        if geom is None or geom.isEmpty():
+            return None
+        rect = geom.boundingBox()
+        if rect.width() == 0 and rect.height() == 0:  # point → petite marge (~50 m)
+            rect.grow(0.0005)
+        return rect
+
+    def _zoom_canvas_to_4326(self, extent):
+        """Zoomer le canevas sur une emprise EPSG:4326. False si emprise vide."""
+        if extent is None or extent.isEmpty():
+            return False
+        from qgis.core import (
+            QgsCoordinateReferenceSystem,
+            QgsCoordinateTransform,
+            QgsProject,
+        )
+
+        canvas = self.iface.mapCanvas()
+        dest = canvas.mapSettings().destinationCrs()
+        source = QgsCoordinateReferenceSystem("EPSG:4326")
+        if dest.isValid() and dest.authid() != "EPSG:4326":
+            transform = QgsCoordinateTransform(source, dest, QgsProject.instance())
+            extent = transform.transformBoundingBox(extent)
+        canvas.setExtent(extent)
+        canvas.zoomByFactor(1.1)  # petite marge
+        canvas.refresh()
+        return True
+
+    @staticmethod
+    def _station_label(station, habitats):
+        """Libellé lisible d'une station : son (premier) habitat + nombre."""
+        if habitats:
+            first = habitats[0].get("nom_cite") or (
+                "cd_hab %s" % habitats[0].get("cd_hab")
+            )
+            extra = len(habitats) - 1
+            return "%s (+%d)" % (first, extra) if extra > 0 else first
+        return station.get("station_name") or "(station sans habitat)"
+
+    def _selected_station_id(self):
+        row = self.table.currentRow()
+        if row < 0:
+            return None
+        item = self.table.item(row, 0)
+        return item.data(Qt.UserRole) if item else None
+
+    # --------------------------------------------------------- stockage
+    def _open_db_folder(self):
+        folder = os.path.dirname(str(self.db.db_path))
+        QDesktopServices.openUrl(QUrl.fromLocalFile(folder))
+
+    def _backup_db(self):
+        import shutil
+
+        target, _ = QFileDialog.getSaveFileName(
+            self, "Sauvegarder la base locale", "occhab_local_backup.db",
+            "Base SQLite (*.db)",
+        )
+        if not target:
+            return
+        try:
+            shutil.copy2(str(self.db.db_path), target)
+        except OSError as exc:
+            QMessageBox.critical(self, "Sauvegarde", "Échec : %s" % exc)
+            return
+        self.iface.messageBar().pushSuccess("OccHab", "Sauvegarde : %s" % target)
+
+    def _export_geopackage(self):
+        target, _ = QFileDialog.getSaveFileName(
+            self, "Exporter en GeoPackage", "occhab_stations.gpkg",
+            "GeoPackage (*.gpkg)",
+        )
+        if not target:
+            return
+        try:
+            count = self.layers.export_geopackage(target)
+        except Exception as exc:  # noqa: BLE001
+            self.logger.error("Export GeoPackage échoué : %s", exc)
+            QMessageBox.critical(self, "Export", "Échec : %s" % exc)
+            return
+        self.iface.messageBar().pushSuccess(
+            "OccHab", "Export : %d station(s) → %s" % (count, target)
+        )
+
+    def delete_selected(self):
+        station_id = self._selected_station_id()
+        if station_id is None:
+            QMessageBox.information(self, "OccHab", "Sélectionnez une station.")
+            return
+        full = self.db.get_station(station_id)
+        if full is None:
+            return
+        label = self._station_label(full, full.get("habitats", []))
+
+        # Déjà marquée « à supprimer » → proposer d'annuler (réversible avant synchro).
+        if full.get("sync_status") == "to_delete":
+            if self._ask("Annuler la suppression", "Annuler la suppression de « %s » ?" % label):
+                self.db.update_station(station_id, sync_status="synced")
+                self.refresh()
+            return
+
+        if not full.get("id_station"):
+            # Jamais synchronisée → suppression locale immédiate (c'est forcément à vous).
+            if self._ask("Supprimer",
+                         "Supprimer définitivement « %s » (non synchronisée) ?" % label):
+                self.db.delete_station(station_id)
+                self.refresh()
+            return
+
+        # Déjà sur le serveur : DEUX gestes distincts à ne pas confondre.
+        #   • Retirer de la base LOCALE : n'affecte pas GeoNature (toujours possible,
+        #     y compris pour une station d'un autre utilisateur).
+        #   • Supprimer sur GeoNature : marque « à supprimer » (uniquement vos données).
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Question)
+        box.setWindowTitle("Supprimer")
+        box.setText("« %s » est déjà enregistrée sur GeoNature." % label)
+        info = (
+            "« Retirer de ma base locale » enlève seulement la copie locale ; "
+            "GeoNature n'est pas touché (vous pourrez la re-récupérer)."
+        )
+        if full.get("sync_status") == "pending":
+            info += " ⚠ Vos modifications locales non synchronisées seront perdues."
+        btn_local = box.addButton("Retirer de ma base locale", QMessageBox.AcceptRole)
+        btn_server = None
+        if full.get("mine", 1):
+            info += (
+                "\n« Supprimer sur GeoNature » la marquera pour suppression à la "
+                "prochaine synchronisation (réversible d'ici là)."
+            )
+            btn_server = box.addButton("Supprimer sur GeoNature", QMessageBox.DestructiveRole)
+        else:
+            info += (
+                "\nCette station n'a pas été créée par vous : vous ne pouvez pas la "
+                "supprimer de GeoNature."
+            )
+        btn_cancel = box.addButton("Annuler", QMessageBox.RejectRole)
+        box.setInformativeText(info)
+        box.setDefaultButton(btn_cancel)  # éviter un geste destructeur par inadvertance
+        box.setEscapeButton(btn_cancel)
+        box.exec_()
+        clicked = box.clickedButton()
+        if clicked is btn_local:
+            self.db.delete_station(station_id)
+            self.refresh()
+        elif btn_server is not None and clicked is btn_server:
+            self.db.update_station(station_id, sync_status="to_delete")
+            self.refresh()
+
+    def _ask(self, title, message):
+        """Confirmation Oui/Non (défaut Non, pour éviter une validation par inadvertance)."""
+        return (
+            QMessageBox.question(self, title, message,
+                                 QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+            == QMessageBox.Yes
+        )
+
+    # ----------------------------------------------------- synchronisation
+    _DELETE_THRESHOLD = 3  # au-delà : confirmation renforcée
+
+    def synchronize(self):
+        if self.client is None or not self.client.is_authenticated:
+            QMessageBox.information(
+                self, "OccHab", "Connectez-vous à GeoNature avant de synchroniser."
+            )
+            return
+
+        from ..api.payload import build_station_payload, extract_id_station
+        from ..processing.geometry import wkt_to_geojson
+
+        to_delete = self.db.get_all_stations(sync_status="to_delete")
+        pending = self.db.get_pending_stations()
+        if not to_delete and not pending:
+            self.iface.messageBar().pushInfo("OccHab", "Rien à synchroniser.")
+            return
+
+        # --- Suppressions (avec garde-fous) ---
+        deleted = del_failed = 0
+        if to_delete and self._confirm_deletions(to_delete):
+            for station in to_delete:
+                try:
+                    if station.get("id_station"):
+                        self.client.delete_station(station["id_station"])
+                    self.db.delete_station(station["id"])
+                    deleted += 1
+                except Exception as exc:  # noqa: BLE001
+                    del_failed += 1
+                    self.logger.error(
+                        "Suppression station %s échouée : %s",
+                        station.get("id_station"), exc,
+                    )
+
+        # --- Créations / mises à jour ---
+        ok = failed = 0
+        tech_default = self._habitat_defaults().get("technique")  # « In situ » (cd 1)
+        for station in pending:
+            full = self.db.get_station(station["id"])
+            if full is None:
+                continue
+            # Habitats saisis hors-ligne : technique restée None → défaut « In situ ».
+            if tech_default:
+                for hab in full["habitats"]:
+                    if not hab.get("id_nomenclature_collection_technique"):
+                        hab["id_nomenclature_collection_technique"] = tech_default
+            geojson = wkt_to_geojson(full.get("geom")) if full.get("geom") else None
+            payload = build_station_payload(
+                full, full["habitats"], full["observers"], geojson
+            )
+            try:
+                if full.get("id_station"):  # déjà synchronisée → mise à jour
+                    self.client.update_station(full["id_station"], payload)
+                    id_station = full["id_station"]
+                else:  # première synchro → création
+                    response = self.client.create_station(payload)
+                    id_station = extract_id_station(response)
+                self.db.mark_station_synced(station["id"], id_station)
+                ok += 1
+            except Exception as exc:  # noqa: BLE001
+                failed += 1
+                self.logger.error("Station %s non synchronisée : %s", station["id"], exc)
+
+        parts = []
+        if ok or failed:
+            parts.append("%d envoyée(s), %d échec(s)" % (ok, failed))
+        if deleted or del_failed:
+            parts.append("%d supprimée(s), %d échec(s)" % (deleted, del_failed))
+        message = " | ".join(parts) or "rien à faire"
+        status = "success" if failed == 0 and del_failed == 0 else "partial"
+        self.db.log_sync("upload", status, message, ok + deleted)
+        self.logger.info("Synchronisation : %s", message)
+        self.iface.messageBar().pushInfo("OccHab", "Synchronisation : %s." % message)
+        self.refresh()
+        self._load_server_stations()  # recharger le contexte serveur (données à jour)
+
+    def _confirm_deletions(self, to_delete):
+        """Confirmer la suppression serveur : nombre + libellés, puis seuil renforcé."""
+        labels = []
+        for station in to_delete:
+            full = self.db.get_station(station["id"])
+            labels.append(self._station_label(station, full["habitats"] if full else []))
+        count = len(labels)
+        listing = "\n".join("• %s" % lbl for lbl in labels[:15])
+        if count > 15:
+            listing += "\n… (+%d)" % (count - 15)
+        if not self._ask(
+            "Suppression sur GeoNature",
+            "%d station(s) vont être définitivement supprimées de GeoNature :\n\n"
+            "%s\n\nConfirmer ?" % (count, listing),
+        ):
+            return False
+        if count > self._DELETE_THRESHOLD:
+            text, ok = QInputDialog.getText(
+                self,
+                "Confirmation renforcée",
+                "Suppression de %d stations. Tapez SUPPRIMER (en majuscules) "
+                "pour confirmer :" % count,
+            )
+            if not ok or text.strip() != "SUPPRIMER":
+                self.iface.messageBar().pushInfo("OccHab", "Suppression annulée.")
+                return False
+        return True

@@ -1,0 +1,9 @@
+# QGIS / PyQGIS / PyQt5 sont fournis par QGIS — NE PAS les installer via pip.
+# Dépendances runtime réellement nécessaires :
+requests>=2.28.0          # synchronisation avec l'API GeoNature (mode online)
+
+# Outils de développement uniquement (non requis à l'exécution du plugin) :
+# pytest>=7.0
+# pytest-cov>=3.0
+# black>=22.0
+# pylint>=2.14.0
