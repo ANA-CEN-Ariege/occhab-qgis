@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Cédric Roy <it@ariegenature.fr>
+# SPDX-License-Identifier: GPL-3.0-or-later
+
 """Affichage des stations locales sur le canevas QGIS.
 
 La base SQLite est la source de vérité ; ces couches en sont un **miroir en

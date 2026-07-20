@@ -6,7 +6,7 @@ description=Offline-first data entry for GeoNature's OccHab module (habitat stat
 version=0.1.1
 author=Cédric Roy
 email=it@ariegenature.fr
-license=GPL-3.0
+license=GPL-3.0-or-later
 
 about=QGIS plugin to record data for GeoNature's OccHab module directly from QGIS.
     Digitise stations (point, line or polygon) and describe their habitats (HABREF

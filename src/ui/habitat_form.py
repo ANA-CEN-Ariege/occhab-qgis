@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Cédric Roy <it@ariegenature.fr>
+# SPDX-License-Identifier: GPL-3.0-or-later
+
 """Formulaire de saisie d'un habitat (aligné sur le formulaire GeoNature).
 
 `cd_hab` (code HABREF) et `nom_cite` (texte cité) sont **deux champs distincts,

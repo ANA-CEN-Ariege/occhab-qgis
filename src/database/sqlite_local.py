@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Cédric Roy <it@ariegenature.fr>
+# SPDX-License-Identifier: GPL-3.0-or-later
+
 """Base de données SQLite locale (mode hors-ligne) — miroir du modèle OccHab.
 
 Modèle : station (spatiale) 1→N habitats (non-spatiaux) ; observateurs en

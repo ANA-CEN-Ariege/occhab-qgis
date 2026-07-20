@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Cédric Roy <it@ariegenature.fr>
+# SPDX-License-Identifier: GPL-3.0-or-later
+
 """Construction du payload OccHab pour l'API GeoNature (module pur, testable).
 
 Format validé de bout en bout contre une vraie instance GeoNature

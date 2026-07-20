@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Cédric Roy <it@ariegenature.fr>
+# SPDX-License-Identifier: GPL-3.0-or-later
+
 """Journalisation du plugin.
 
 Écrit dans le panneau « Journal des messages » de QGIS (onglet OccHab) et,

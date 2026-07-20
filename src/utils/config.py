@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Cédric Roy <it@ariegenature.fr>
+# SPDX-License-Identifier: GPL-3.0-or-later
+
 """Gestion de la configuration du plugin OccHab.
 
 Configuration stockée en JSON dans le répertoire de profil QGIS de l'utilisateur.

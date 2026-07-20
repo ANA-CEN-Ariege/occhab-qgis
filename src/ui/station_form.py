@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Cédric Roy <it@ariegenature.fr>
+# SPDX-License-Identifier: GPL-3.0-or-later
+
 """Formulaire de saisie d'une station OccHab (aligné sur le formulaire GeoNature)."""
 from qgis.PyQt.QtCore import Qt, QDate
 from qgis.PyQt.QtWidgets import (

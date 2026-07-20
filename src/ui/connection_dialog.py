@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Cédric Roy <it@ariegenature.fr>
+# SPDX-License-Identifier: GPL-3.0-or-later
+
 """Dialogue de connexion à GeoNature.
 
 L'authentification passe **exclusivement par le système d'authentification de

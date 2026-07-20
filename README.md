@@ -385,14 +385,8 @@ occhab/
 ## Auteur & licence
 
 - **Auteur** : Cédric Roy (ANA-CEN Ariège) — it@ariegenature.fr
-- **Licence** : **GPL-3.0-or-later** (comme QGIS et GeoNature). Texte complet dans
-  [LICENSE](LICENSE).
+- **Licence** : **GPL-3.0-or-later** (GNU GPL v3 ou ultérieure). Texte complet dans [LICENSE](LICENSE).
 
-```
-Copyright (C) 2026 Cédric Roy
-
-Ce programme est un logiciel libre : vous pouvez le redistribuer et/ou le
-modifier selon les termes de la licence publique générale GNU publiée par la
-Free Software Foundation, en version 3 ou (à votre choix) toute version
-ultérieure. Il est distribué SANS AUCUNE GARANTIE. Voir le fichier LICENSE.
-```
+© 2026 Cédric Roy. Logiciel libre distribué **SANS AUCUNE GARANTIE**, redistribuable et
+modifiable selon les termes de la GNU GPL v3 ou ultérieure. Chaque fichier source porte
+l'en-tête `SPDX-License-Identifier: GPL-3.0-or-later`.

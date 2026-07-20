@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Cédric Roy <it@ariegenature.fr>
+# SPDX-License-Identifier: GPL-3.0-or-later
+
 """Champs métier ANA (niveau d'enjeu, état de conservation, recouvrement).
 
 OccHab n'a pas de champ natif exposé pour ces notions. On les stocke, de façon

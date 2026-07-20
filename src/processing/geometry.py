@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Cédric Roy <it@ariegenature.fr>
+# SPDX-License-Identifier: GPL-3.0-or-later
+
 """Aides géométrie : conversion vers EPSG:4326 (attendu par OccHab) et GeoJSON.
 
 Ces fonctions dépendent de PyQGIS et ne sont utilisées qu'à l'exécution.

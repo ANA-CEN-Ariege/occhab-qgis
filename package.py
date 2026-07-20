@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# SPDX-FileCopyrightText: 2026 Cédric Roy <it@ariegenature.fr>
+# SPDX-License-Identifier: GPL-3.0-or-later
+
 """Construit le ZIP d'installation du plugin QGIS OccHab.
 
 Produit `dist/occhab-<version>.zip` avec un dossier racine `occhab/` (structure

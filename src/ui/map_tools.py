@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Cédric Roy <it@ariegenature.fr>
+# SPDX-License-Identifier: GPL-3.0-or-later
+
 """Numérisation de la géométrie d'une station avec l'outil natif de QGIS.
 
 `QgsMapToolDigitizeFeature` (accrochage, saisie CAD, annulation de sommet,

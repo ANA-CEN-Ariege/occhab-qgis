@@ -54,7 +54,7 @@ Concrètement, vous pouvez :
 
 ## 2. Prérequis
 
-- **QGIS 3.16 ou plus récent** (Windows, Linux ou macOS).
+- **QGIS 3.28 ou plus récent** (Windows, Linux ou macOS).
 - Un **compte GeoNature** de votre instance (ex. celle de l'ANA-CEN Ariège), avec
   les **droits sur le module OccHab** (au minimum *Lire* et *Créer* ; *Modifier*
   et *Supprimer* pour éditer/effacer vos données). Voir §14 si vous obtenez une
@@ -462,4 +462,4 @@ Reconnectez-vous, sélectionnez vos stations dans la couche serveur et
 ---
 
 *Extension développée par l'ANA-CEN Ariège — contact : it@ariegenature.fr.
-Licence GPL-3.0. Pour les aspects techniques, voir le [README](README.md).*
+Licence GPL-3.0-or-later. Pour les aspects techniques, voir le [README](README.md).*
