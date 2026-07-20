@@ -3,7 +3,7 @@ name=OccHab GeoNature
 qgisMinimumVersion=3.28
 qgisMaximumVersion=3.99
 description=Offline-first data entry for GeoNature's OccHab module (habitat stations) from QGIS, with local SQLite storage and synchronisation to the GeoNature REST API.
-version=0.1.1
+version=0.2.0
 author=Cédric Roy
 email=it@ariegenature.fr
 license=GPL-3.0-or-later
@@ -32,7 +32,11 @@ icon=resources/icons/occhab.svg
 experimental=True
 deprecated=False
 
-changelog=0.1.1 - Qt6 compatibility (fully-qualified/scoped Qt and QGIS enums,
+changelog=0.2.0 - Panel redesign: collapsible connection/dataset block, sync-state
+    chips on the editable local list with a read-only server map context, station
+    retrieval by map selection or text search, optimistic conflict detection on sync.
+    New-station geometry limited to polygon/point; clearer labels.
+    0.1.1 - Qt6 compatibility (fully-qualified/scoped Qt and QGIS enums,
     .exec()), Bandit security scan clean (reviewed false positives), English
     metadata with valid links, minimum QGIS version raised to 3.28.
     0.1.0 - First release: dockable panel, GeoNature connection via the QGIS
