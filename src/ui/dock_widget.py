@@ -33,7 +33,7 @@ from .station_dialog import StationDialog
 from .station_layers import StationLayerManager
 from .server_layers import ServerStationLayerManager
 
-_GEOM_TYPES = [("Polygone", "polygon"), ("Ligne", "line"), ("Point", "point")]
+_GEOM_TYPES = [("Polygone", "polygon"), ("Point", "point")]
 
 # Nomenclatures OccHab, par champ de formulaire → mnémonique GeoNature.
 STATION_NOMENCLATURES = {
@@ -219,9 +219,13 @@ class OccHabDockWidget(QDockWidget):
         self.btn_new = QPushButton("＋ Nouvelle station")
         self.btn_new.clicked.connect(self.new_station)
         row_new.addWidget(self.btn_new, 1)
-        self.check_digitize = QCheckBox("numériser")
+        self.check_digitize = QCheckBox("Dessiner sur la carte")
         self.check_digitize.setChecked(True)
-        self.check_digitize.setToolTip("Dessiner la géométrie sur la carte à la création")
+        self.check_digitize.setToolTip(
+            "Coché : dessiner la forme sur la carte à la création.\n"
+            "Décoché : créer la station sans géométrie (à tracer plus tard via "
+            "« Modifier la géométrie »)."
+        )
         self.check_digitize.stateChanged.connect(
             lambda _s: self.combo_geomtype.setEnabled(self.check_digitize.isChecked())
         )
