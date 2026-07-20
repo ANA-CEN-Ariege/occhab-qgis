@@ -68,6 +68,13 @@ class OccHabPlugin:
             self.dock_widget = OccHabDockWidget(self.iface, self.config, self.logger)
             self.dock_widget.visibilityChanged.connect(self._on_visibility)
             self.iface.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.dock_widget)
+            # Largeur initiale raisonnable (l'utilisateur peut ensuite redimensionner).
+            try:
+                self.iface.mainWindow().resizeDocks(
+                    [self.dock_widget], [450], Qt.Orientation.Horizontal
+                )
+            except Exception:  # noqa: BLE001 - resizeDocks absent sur très vieux Qt
+                pass
         else:
             self.dock_widget.setVisible(not self.dock_widget.isVisible())
 

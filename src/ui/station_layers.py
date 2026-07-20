@@ -38,9 +38,9 @@ _FIELDS_URI = (
 )
 _SYNC_STYLE = {
     "pending": ("#e69100", "À synchroniser"),
-    "synced": ("#2e7d32", "Synchronisée"),
+    "synced": ("#1565c0", "Synchronisée"),
+    "conflict": ("#c62828", "Conflit"),
     "to_delete": ("#9e9e9e", "À supprimer"),
-    "error": ("#c62828", "Erreur"),
 }
 
 

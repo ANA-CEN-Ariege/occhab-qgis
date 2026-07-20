@@ -26,7 +26,7 @@ from .station_layers import GROUP_NAME as LOCAL_GROUP_NAME
 
 GROUP_NAME = "OccHab (serveur)"
 LAYER_NAME = "OccHab — stations serveur"
-_COLOR = "#1565c0"  # bleu, distinct des couches locales (colorées par sync)
+_COLOR = "#8a938b"  # gris estompé : contexte serveur en lecture seule (non éditable)
 
 
 class ServerStationLayerManager:

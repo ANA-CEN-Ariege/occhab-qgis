@@ -12,6 +12,8 @@ récupération (aller-retour) confirmées.
 Réserve mineure : une instance OccHab très ancienne ou fortement personnalisée
 pourrait diverger — le cas échéant, comparer avec un GET /occhab/stations/<id>/.
 """
+import hashlib
+import json
 
 
 def build_station_payload(station, habitats, observers, geom_geojson):
@@ -225,3 +227,31 @@ def parse_server_station(feature):
         observers.append({"id_role": obs.get("id_role"), "observer_name": name or None})
 
     return station, habitats, observers
+
+
+def server_fingerprint(station, habitats, observers):
+    """Empreinte stable de l'état SERVEUR d'une station (détection de conflit).
+
+    Calculée uniquement à partir des champs déjà normalisés par
+    `parse_server_station` (donc validés contre une vraie instance), sans dépendre
+    d'un champ d'horodatage serveur non garanti. Deux GET successifs de la même
+    station inchangée produisent la même empreinte ; toute divergence côté serveur
+    la fait changer. Comparer `server_fingerprint(parse_server_station(detail))`
+    à l'empreinte mémorisée au dernier import/synchro révèle un conflit.
+    """
+    def _norm(mapping):
+        return {k: mapping[k] for k in sorted(mapping)}
+
+    def _sorted(items):
+        rows = [_norm(i) for i in (items or []) if isinstance(i, dict)]
+        return sorted(rows, key=lambda r: json.dumps(r, sort_keys=True, default=str))
+
+    blob = json.dumps(
+        {
+            "station": _norm(station or {}),
+            "habitats": _sorted(habitats),
+            "observers": _sorted(observers),
+        },
+        sort_keys=True, ensure_ascii=False, default=str,
+    )
+    return hashlib.sha256(blob.encode("utf-8")).hexdigest()

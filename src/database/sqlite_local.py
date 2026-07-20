@@ -44,6 +44,7 @@ CREATE TABLE IF NOT EXISTS t_stations (
     created_by TEXT,
     updated_by TEXT,
     mine INTEGER DEFAULT 1,
+    server_snapshot TEXT,
     UNIQUE(unique_id_sinp_station)
 );
 
@@ -109,7 +110,7 @@ class OccHabDatabase:
         "id_nomenclature_geographic_object", "id_nomenclature_exposure",
         "id_nomenclature_type_sol", "id_nomenclature_area_surface_calculation",
         "id_nomenclature_type_mosaique_habitat",
-        "created_by", "updated_by", "sync_status", "mine",
+        "created_by", "updated_by", "sync_status", "mine", "server_snapshot",
     }
     HABITAT_COLS = {
         "id_habitat", "unique_id_sinp_hab", "cd_hab", "nom_cite", "determiner",
@@ -150,6 +151,10 @@ class OccHabDatabase:
         if "mine" not in cols:
             self.connection.execute(
                 "ALTER TABLE t_stations ADD COLUMN mine INTEGER DEFAULT 1"
+            )
+        if "server_snapshot" not in cols:
+            self.connection.execute(
+                "ALTER TABLE t_stations ADD COLUMN server_snapshot TEXT"
             )
 
     # --------------------------------------------------------- stations
@@ -345,10 +350,19 @@ class OccHabDatabase:
     def get_pending_stations(self):
         return self.get_all_stations(sync_status="pending")
 
-    def mark_station_synced(self, station_id, id_station, status="synced"):
-        self.update_station(
-            station_id, id_station=id_station, sync_status=status,
-        )
+    def get_conflict_stations(self):
+        return self.get_all_stations(sync_status="conflict")
+
+    def set_server_snapshot(self, station_id, snapshot):
+        """Mémoriser l'empreinte serveur connue d'une station (détection de conflit)."""
+        self.update_station(station_id, server_snapshot=snapshot)
+
+    def mark_station_synced(self, station_id, id_station, status="synced",
+                            server_snapshot=None):
+        fields = {"id_station": id_station, "sync_status": status}
+        if server_snapshot is not None:
+            fields["server_snapshot"] = server_snapshot
+        self.update_station(station_id, **fields)
         self.connect()
         cursor = self.connection.cursor()
         cursor.execute(

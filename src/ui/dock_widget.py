@@ -12,6 +12,7 @@ from qgis.PyQt.QtWidgets import (
     QCompleter,
     QDockWidget,
     QFileDialog,
+    QFrame,
     QHBoxLayout,
     QHeaderView,
     QInputDialog,
@@ -21,6 +22,7 @@ from qgis.PyQt.QtWidgets import (
     QPushButton,
     QTableWidget,
     QTableWidgetItem,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
@@ -60,6 +62,7 @@ class OccHabDockWidget(QDockWidget):
         self.logger = logger
         self.db = OccHabDatabase(config.get("local_db.path"))
         self.client = None
+        self._user_label = None
         self.nomenclatures = {}
         self.default_nomenclatures = {}
         self.typologies = []
@@ -80,17 +83,44 @@ class OccHabDockWidget(QDockWidget):
         container = QWidget()
         layout = QVBoxLayout(container)
 
-        # Connexion
-        conn = QHBoxLayout()
+        # Connexion + JDD : bloc compact repliable (divulgation progressive).
+        conn_frame = QFrame()
+        conn_frame.setFrameShape(QFrame.Shape.StyledPanel)
+        conn_v = QVBoxLayout(conn_frame)
+        conn_v.setContentsMargins(9, 7, 9, 7)
+        conn_v.setSpacing(5)
+
+        summary = QHBoxLayout()
+        self.label_conn = QLabel("● Non connecté")
+        self.label_conn.setStyleSheet("font-weight: 600;")
+        # Retour à la ligne : évite qu'un JDD au nom long n'impose une largeur
+        # minimale énorme au dock (sinon impossible de le rétrécir).
+        self.label_conn.setWordWrap(True)
+        summary.addWidget(self.label_conn, 1)
+        self.btn_conn_toggle = QToolButton()
+        self.btn_conn_toggle.setText("changer")
+        self.btn_conn_toggle.setAutoRaise(True)
+        self.btn_conn_toggle.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_conn_toggle.clicked.connect(self._toggle_conn_details)
+        summary.addWidget(self.btn_conn_toggle)
+        conn_v.addLayout(summary)
+
+        self.label_server = QLabel("")  # nb de stations serveur (contexte)
+        self.label_server.setStyleSheet("color: palette(mid);")
+        self.label_server.setWordWrap(True)
+        self.label_server.setToolTip("Stations déjà présentes sur GeoNature pour ce JDD")
+        conn_v.addWidget(self.label_server)
+
+        # Détails repliables : (re)connexion, choix du JDD, filtre « mes stations ».
+        self.conn_details = QWidget()
+        det_v = QVBoxLayout(self.conn_details)
+        det_v.setContentsMargins(0, 4, 0, 0)
+        det_v.setSpacing(6)
+
         self.btn_connect = QPushButton("Connexion GeoNature…")
         self.btn_connect.clicked.connect(self.open_connection)
-        self.label_conn = QLabel("Non connecté")
-        conn.addWidget(self.btn_connect)
-        conn.addWidget(self.label_conn)
-        conn.addStretch(1)
-        layout.addLayout(conn)
+        det_v.addWidget(self.btn_connect)
 
-        # JDD (filtre de la vue + JDD par défaut des nouvelles stations)
         row_jdd = QHBoxLayout()
         row_jdd.addWidget(QLabel("JDD :"))
         self.combo_jdd = QComboBox()
@@ -108,47 +138,87 @@ class OccHabDockWidget(QDockWidget):
         # _fit_jdd_popup_width une fois les JDD chargés).
         jdd_completer.popup().setStyleSheet("QListView::item { padding: 4px 8px; }")
         self.combo_jdd.currentIndexChanged.connect(self._on_jdd_changed)
+        # Choix EXPLICITE d'un JDD par l'utilisateur → replier le bloc connexion.
+        # `activated` (contrairement à `currentIndexChanged`) ne se déclenche pas sur
+        # la sélection automatique du JDD par défaut au chargement.
+        self.combo_jdd.activated.connect(lambda _i: self._collapse_conn_details())
         row_jdd.addWidget(self.combo_jdd, 1)
-        layout.addLayout(row_jdd)
+        det_v.addLayout(row_jdd)
 
-        # Sous la ligne JDD : filtre « mes stations » + compteur de stations serveur.
-        row_srv_ctx = QHBoxLayout()
-        self.check_only_mine = QCheckBox("mes stations")
+        self.check_only_mine = QCheckBox("N'afficher que mes stations serveur")
         self.check_only_mine.setEnabled(False)  # activé une fois connecté (JDD chargés)
         self.check_only_mine.setToolTip(
-            "N'afficher sur la carte serveur que les stations dont je suis le "
+            "Sur la carte serveur, ne montrer que les stations dont je suis le "
             "numérisateur (id_digitiser)."
         )
         self.check_only_mine.stateChanged.connect(lambda _s: self._load_server_stations())
-        row_srv_ctx.addWidget(self.check_only_mine)
-        row_srv_ctx.addStretch(1)
-        self.label_server = QLabel("")  # nb de stations serveur (contexte)
-        self.label_server.setToolTip("Stations déjà présentes sur GeoNature pour ce JDD")
-        row_srv_ctx.addWidget(self.label_server)
-        layout.addLayout(row_srv_ctx)
+        det_v.addWidget(self.check_only_mine)
 
-        # Section : saisies locales (à distinguer du contexte serveur en lecture seule)
-        label_local = QLabel("Mes stations (local)")
-        label_local.setStyleSheet("font-weight: bold;")
-        layout.addWidget(label_local)
+        conn_v.addWidget(self.conn_details)
+        layout.addWidget(conn_frame)
 
-        # Tableau (une station = un ou plusieurs habitats ; l'id local est en donnée cachée)
-        self.table = QTableWidget(0, 4)
-        self.table.setHorizontalHeaderLabels(["Habitat(s)", "Date", "Observateur(s)", "État"])
-        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        # Mes stations locales : source de vérité éditable (id local caché en donnée).
+        row_head = QHBoxLayout()
+        lbl_local = QLabel("Mes stations")
+        lbl_local.setStyleSheet("font-weight: 600;")
+        row_head.addWidget(lbl_local)
+        row_head.addStretch(1)
+        self.label_count = QLabel("")
+        self.label_count.setStyleSheet("color: palette(mid);")
+        row_head.addWidget(self.label_count)
+        layout.addLayout(row_head)
+
+        self.table = QTableWidget(0, 3)
+        self.table.setHorizontalHeaderLabels(["Habitat(s)", "Date", "État"])
+        header = self.table.horizontalHeader()
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+        self.table.verticalHeader().setVisible(False)
         self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self.table.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
         self.table.cellDoubleClicked.connect(lambda _r, _c: self.edit_station())
-        layout.addWidget(self.table)
+        self.table.itemSelectionChanged.connect(self._on_selection_changed)
+        layout.addWidget(self.table, 1)
 
-        # ============== Actions sur MES stations (local) ==============
-        # Saisie : créer une station + comment numériser sa géométrie
+        # Barre d'action fixe : agit sur la station sélectionnée (grisée sinon).
+        # Deux rangées groupées par sens : édition (attributs / géométrie), puis
+        # utilitaires (zoom / suppression). Libellés explicites, boutons à largeur égale.
+        self.btn_edit = QPushButton("Éditer")
+        self.btn_edit.setToolTip("Éditer les attributs et habitats de la station sélectionnée.")
+        self.btn_edit.clicked.connect(self.edit_station)
+        self.btn_geom = QPushButton("Modifier la géométrie")
+        self.btn_geom.setToolTip("Modifier / (re)numériser la géométrie de la station.")
+        self.btn_geom.clicked.connect(self.edit_geometry)
+        self.btn_zoom = QPushButton("Zoom")
+        self.btn_zoom.setToolTip(
+            "Zoomer sur la station sélectionnée ; sans sélection, sur l'emprise du JDD."
+        )
+        self.btn_zoom.clicked.connect(self.zoom_to_stations)
+        self.btn_delete = QPushButton("Supprimer")
+        self.btn_delete.setToolTip("Supprimer la station sélectionnée.")
+        self.btn_delete.clicked.connect(self.delete_selected)
+        row_act1 = QHBoxLayout()
+        row_act1.setSpacing(4)
+        row_act1.addWidget(self.btn_edit, 1)
+        row_act1.addWidget(self.btn_geom, 1)
+        layout.addLayout(row_act1)
+        row_act2 = QHBoxLayout()
+        row_act2.setSpacing(4)
+        row_act2.addWidget(self.btn_zoom, 1)
+        row_act2.addWidget(self.btn_delete, 1)
+        layout.addLayout(row_act2)
+
+        self.label_hint = QLabel("Sélectionnez une station pour l'éditer.")
+        self.label_hint.setStyleSheet("color: palette(mid); font-size: 11px;")
+        layout.addWidget(self.label_hint)
+
+        # Créer une nouvelle station (+ type de géométrie à numériser).
         row_new = QHBoxLayout()
         self.btn_new = QPushButton("＋ Nouvelle station")
         self.btn_new.clicked.connect(self.new_station)
-        row_new.addWidget(self.btn_new)
-        row_new.addWidget(QLabel("géométrie :"))
+        row_new.addWidget(self.btn_new, 1)
         self.check_digitize = QCheckBox("numériser")
         self.check_digitize.setChecked(True)
         self.check_digitize.setToolTip("Dessiner la géométrie sur la carte à la création")
@@ -160,51 +230,36 @@ class OccHabDockWidget(QDockWidget):
         for label, code in _GEOM_TYPES:
             self.combo_geomtype.addItem(label, code)
         row_new.addWidget(self.combo_geomtype)
-        row_new.addStretch(1)
         layout.addLayout(row_new)
 
-        # Agir sur la station LOCALE sélectionnée dans le tableau ci-dessus
-        row_sel = QHBoxLayout()
-        self.btn_edit = QPushButton("Éditer")
-        self.btn_edit.setToolTip("Éditer la station sélectionnée dans « Mes stations (local) ».")
-        self.btn_edit.clicked.connect(self.edit_station)
-        self.btn_geom = QPushButton("Modifier la géométrie")
-        self.btn_geom.clicked.connect(self.edit_geometry)
-        self.btn_delete = QPushButton("Supprimer")
-        self.btn_delete.clicked.connect(self.delete_selected)
-        self.btn_zoom = QPushButton("Zoom")
-        self.btn_zoom.setToolTip(
-            "Zoomer sur la station sélectionnée ; sans sélection, sur l'emprise du "
-            "JDD (stations serveur, sinon locales)."
-        )
-        self.btn_zoom.clicked.connect(self.zoom_to_stations)
-        for btn in (self.btn_edit, self.btn_geom, self.btn_delete, self.btn_zoom):
-            row_sel.addWidget(btn)
-        layout.addLayout(row_sel)
-
-        # ===================== Contexte SERVEUR =====================
+        # Contexte SERVEUR : synchroniser, rafraîchir, récupérer (deux chemins).
         label_srv = QLabel("Serveur")
-        label_srv.setStyleSheet("font-weight: bold;")
+        label_srv.setStyleSheet("font-weight: 600;")
         layout.addWidget(label_srv)
 
         row_srv = QHBoxLayout()
-        self.btn_import = QPushButton("Récupérer du serveur")
-        self.btn_import.setToolTip(
-            "Sélectionnez des stations dans la couche « OccHab — stations serveur » "
-            "(outil de sélection QGIS) puis cliquez ici pour les éditer localement."
-        )
-        self.btn_import.clicked.connect(self.import_server_stations)
-        self.btn_refresh = QPushButton("Rafraîchir")
-        self.btn_refresh.setToolTip("Recharger les stations locales et le contexte serveur.")
-        self.btn_refresh.clicked.connect(self.refresh)
+        row_srv.setSpacing(4)
         self.btn_sync = QPushButton("Synchroniser")
         self.btn_sync.setToolTip(
             "Envoyer vos créations / modifications / suppressions vers GeoNature."
         )
         self.btn_sync.clicked.connect(self.synchronize)
-        for btn in (self.btn_import, self.btn_refresh, self.btn_sync):
-            row_srv.addWidget(btn)
+        self.btn_refresh = QPushButton("Rafraîchir")
+        self.btn_refresh.setToolTip("Recharger les stations locales et le contexte serveur.")
+        self.btn_refresh.clicked.connect(self.refresh)
+        row_srv.addWidget(self.btn_sync, 1)
+        row_srv.addWidget(self.btn_refresh)
         layout.addLayout(row_srv)
+
+        self.btn_import = QPushButton("Récupérer une station du serveur…")
+        self.btn_import.setToolTip(
+            "Amener une station GeoNature dans votre base locale pour l'éditer."
+        )
+        import_menu = QMenu(self.btn_import)
+        import_menu.addAction("Depuis la carte (sélection)…", self.import_server_stations)
+        import_menu.addAction("Chercher une station…", self.open_server_picker)
+        self.btn_import.setMenu(import_menu)
+        layout.addWidget(self.btn_import)
 
         # Footer : où sont stockées les données locales + sauvegarde/export
         footer = QHBoxLayout()
@@ -223,6 +278,60 @@ class OccHabDockWidget(QDockWidget):
         layout.addLayout(footer)
 
         self.setWidget(container)
+        self._update_conn_summary()
+        self._on_selection_changed()
+
+    def _toggle_conn_details(self):
+        """Afficher / masquer les détails de connexion (divulgation progressive)."""
+        visible = not self.conn_details.isVisible()
+        self.conn_details.setVisible(visible)
+        self.btn_conn_toggle.setText("replier" if visible else "changer")
+
+    def _collapse_conn_details(self):
+        """Replier le bloc connexion (une fois le JDD choisi)."""
+        self.conn_details.setVisible(False)
+        self.btn_conn_toggle.setText("changer")
+
+    def _update_conn_summary(self):
+        """Résumé compact connexion + JDD."""
+        if self.client is not None and self.client.is_authenticated:
+            jdd = self.combo_jdd.currentText() if self.combo_jdd.count() else "—"
+            self.label_conn.setText("✓ %s  ·  %s" % (self._user_label or "Connecté", jdd))
+            self.btn_conn_toggle.setVisible(True)
+        else:
+            self.label_conn.setText("● Non connecté")
+            self.conn_details.setVisible(True)
+            self.btn_conn_toggle.setVisible(False)
+
+    def _on_selection_changed(self):
+        """Activer la barre d'action seulement quand une station est sélectionnée."""
+        has = self._selected_station_id() is not None
+        for btn in (self.btn_edit, self.btn_geom, self.btn_delete):
+            btn.setEnabled(has)
+        self.label_hint.setText("" if has else "Sélectionnez une station pour l'éditer.")
+
+    # (glyphe, libellé, texte, fond OPAQUE, bordure). Fond opaque : le chip reste
+    # lisible même quand la ligne est sélectionnée (surlignage bleu par-dessous).
+    _PILL_STYLES = {
+        "synced": ("✓", "Synchronisée", "#12579f", "#e6effb", "#bcdcf5"),
+        "pending": ("↑", "À synchroniser", "#8a4d02", "#fbeedb", "#f0d6ac"),
+        "conflict": ("▲", "Conflit", "#b23125", "#fbe4e0", "#f2c4bc"),
+        "to_delete": ("✕", "À supprimer", "#566070", "#eceef1", "#d5d9df"),
+    }
+
+    def _status_pill(self, sync_status, id_station):
+        """Pastille d'état « couleur + icône + texte » (chip opaque)."""
+        glyph, label, fg, bg, border = self._PILL_STYLES.get(
+            sync_status, self._PILL_STYLES["pending"]
+        )
+        widget = QLabel("%s %s" % (glyph, label))
+        widget.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        widget.setStyleSheet(
+            "QLabel { color: %s; background-color: %s; border: 1px solid %s;"
+            " border-radius: 9px; padding: 1px 8px; margin: 2px 4px; font-weight: 600; }"
+            % (fg, bg, border)
+        )
+        return widget
 
     # ------------------------------------------------------- connexion
     def open_connection(self):
@@ -230,7 +339,7 @@ class OccHabDockWidget(QDockWidget):
         if not dialog.exec():
             return
         self.client = dialog.client
-        self.label_conn.setText("Connecté : %s" % dialog.user_label())
+        self._user_label = dialog.user_label()
         self.logger.info(
             "Connecté à %s en tant que %s",
             self.config.get("geonature.api_url"),
@@ -238,6 +347,9 @@ class OccHabDockWidget(QDockWidget):
         )
         self._load_datasets()
         self._load_reference_data()
+        # On laisse le bloc OUVERT : l'utilisateur choisit d'abord son JDD ; le bloc
+        # se replie ensuite de lui-même à la sélection (voir combo_jdd.activated).
+        self._update_conn_summary()
 
     def _load_datasets(self):
         """Charger les JDD actifs rattachés au module OccHab.
@@ -493,6 +605,7 @@ class OccHabDockWidget(QDockWidget):
         self.refresh()  # filtrer la vue (table + carte) sur le JDD sélectionné
         # Contexte serveur du JDD + zoom sur ses géométries (choix explicite d'un JDD).
         self._load_server_stations(zoom=True)
+        self._update_conn_summary()
 
     def _load_server_stations(self, zoom=False):
         """Charger en contexte les stations serveur du JDD sélectionné (lecture seule).
@@ -537,11 +650,7 @@ class OccHabDockWidget(QDockWidget):
         return dict(fc, features=features)
 
     def import_server_stations(self):
-        """Récupérer les stations serveur sélectionnées dans le local (pour édition).
-
-        Permet d'éditer/re-synchroniser une station déjà sur GeoNature, y compris
-        si la base locale a été perdue ou depuis une autre machine.
-        """
+        """Récupérer les stations sélectionnées SUR LA CARTE (couche serveur)."""
         if self.client is None or not self.client.is_authenticated:
             QMessageBox.information(self, "OccHab", "Connectez-vous à GeoNature d'abord.")
             return
@@ -551,10 +660,66 @@ class OccHabDockWidget(QDockWidget):
                 self,
                 "OccHab",
                 "Sélectionnez d'abord une ou plusieurs stations dans la couche "
-                "« OccHab — stations serveur » (outil de sélection de QGIS).",
+                "« OccHab — stations serveur » (outil de sélection de QGIS), ou "
+                "utilisez « Chercher une station… ».",
             )
             return
-        from ..api.payload import parse_server_station
+        self._import_by_ids(ids)
+
+    def open_server_picker(self):
+        """Récupérer une station serveur via une recherche texte (sans la carte)."""
+        if self.client is None or not self.client.is_authenticated:
+            QMessageBox.information(self, "OccHab", "Connectez-vous à GeoNature d'abord.")
+            return
+        jdd = self.combo_jdd.currentData() if self.combo_jdd.isEnabled() else None
+        if jdd is None:
+            QMessageBox.information(
+                self, "OccHab", "Choisissez d'abord un JDD précis (pas « Tous »)."
+            )
+            return
+        try:
+            fc = self.client.get_stations(params={"id_dataset": jdd}, geojson=True)
+        except Exception as exc:  # noqa: BLE001
+            QMessageBox.warning(self, "OccHab", "Stations serveur non chargées : %s" % exc)
+            return
+        rows = []
+        for feature in (fc.get("features") if isinstance(fc, dict) else None) or []:
+            props = feature.get("properties") or {}
+            id_station = props.get("id_station") or feature.get("id")
+            if not id_station:
+                continue
+            habitats = props.get("habitats") or []
+            if habitats:
+                first = habitats[0]
+                habitat = first.get("nom_cite") or ("cd_hab %s" % first.get("cd_hab"))
+            else:
+                habitat = props.get("station_name") or ("station %s" % id_station)
+            rows.append({
+                "id_station": id_station,
+                "habitat": habitat,
+                "date": (props.get("date_min") or "").split("T")[0],
+                "observer": props.get("observers_txt") or "",
+            })
+        if not rows:
+            QMessageBox.information(self, "OccHab", "Aucune station serveur pour ce JDD.")
+            return
+        from .server_picker_dialog import ServerStationPicker
+
+        dialog = ServerStationPicker(rows, parent=self)
+        if not dialog.exec():
+            return
+        ids = dialog.selected_ids()
+        if ids:
+            self._import_by_ids(ids)
+
+    def _import_by_ids(self, ids):
+        """Importer en local les stations serveur d'id_station donnés (pour édition).
+
+        Permet d'éditer/re-synchroniser une station déjà sur GeoNature, y compris si
+        la base locale a été perdue ou depuis une autre machine. Mémorise l'empreinte
+        serveur pour la détection de conflit ultérieure.
+        """
+        from ..api.payload import parse_server_station, server_fingerprint
 
         # Stations déjà présentes en local : proposer d'écraser par la version serveur
         # (permet de restaurer une station dont les données locales ont été perdues).
@@ -578,13 +743,14 @@ class OccHabDockWidget(QDockWidget):
             try:
                 detail = self.client.get_station(id_station)
                 station, habitats, observers = parse_server_station(detail)
+                snapshot = server_fingerprint(station, habitats, observers)
                 props = detail.get("properties", {}) if isinstance(detail, dict) else {}
                 my_id = (self.client.user or {}).get("id_role")
                 mine = 1 if my_id and props.get("id_digitiser") == my_id else 0
                 if existing:  # repartir proprement de la version serveur
                     self.db.delete_station(existing["id"])
                 local_id = self.db.create_station(
-                    sync_status="synced", mine=mine, **station
+                    sync_status="synced", mine=mine, server_snapshot=snapshot, **station
                 )
                 for habitat in habitats:
                     self.db.add_habitat(local_id, sync_status="synced", **habitat)
@@ -798,6 +964,7 @@ class OccHabDockWidget(QDockWidget):
         full = self.db.get_station(station_id)
         if full is None:
             return
+        was_conflict = full.get("sync_status") == "conflict"
         dialog = StationDialog(
             self.config,
             station=full,
@@ -832,40 +999,55 @@ class OccHabDockWidget(QDockWidget):
             self.logger.error("Échec modification station %s : %s", station_id, exc)
             QMessageBox.critical(self, "Erreur", "Modification impossible : %s" % exc)
             return
+        if was_conflict:
+            # Conflit résolu « côté local » : oublier l'empreinte pour que la prochaine
+            # synchro impose la version locale (sans re-détecter le conflit).
+            self.db.set_server_snapshot(station_id, None)
         self.refresh()
 
     # --------------------------------------------------------- tableau
     def refresh(self):
         jdd = self.combo_jdd.currentData() if self.combo_jdd.isEnabled() else None
-        stations = self.db.get_all_stations()
-        if jdd is not None:  # filtrer sur le JDD sélectionné (« Tous » = None)
-            stations = [s for s in stations if s.get("id_dataset") == jdd]
+        all_stations = self.db.get_all_stations()
+        stations = (
+            [s for s in all_stations if s.get("id_dataset") == jdd]
+            if jdd is not None else all_stations
+        )
+        # « Synchroniser » agit sur TOUTES les stations (tous JDD confondus).
+        n_sync = sum(
+            1 for s in all_stations if s.get("sync_status") in ("pending", "to_delete")
+        )
         self.table.setRowCount(0)
+        n_conflict = 0
         for station in stations:
             full = self.db.get_station(station["id"])
             habitats = full["habitats"] if full else []
             station["_nb_habitats"] = len(habitats)
+            status = station.get("sync_status")
+            if status == "conflict":
+                n_conflict += 1
             row = self.table.rowCount()
             self.table.insertRow(row)
-            etat = {
-                "synced": "Synchronisée",
-                "to_delete": "À supprimer",
-            }.get(station.get("sync_status"), "À synchroniser")
-            values = [
-                self._station_label(station, habitats),
-                station.get("date_min") or "",
-                station.get("observers_txt") or "",
-                etat,
-            ]
-            for col, value in enumerate(values):
-                item = QTableWidgetItem(value)
-                if col == 0:  # id local en donnée cachée pour la sélection
-                    item.setData(Qt.ItemDataRole.UserRole, station["id"])
-                self.table.setItem(row, col, item)
+            item_hab = QTableWidgetItem(self._station_label(station, habitats))
+            item_hab.setData(Qt.ItemDataRole.UserRole, station["id"])  # id local caché
+            observers = station.get("observers_txt") or ""
+            if observers:
+                item_hab.setToolTip("Observateur(s) : %s" % observers)
+            self.table.setItem(row, 0, item_hab)
+            self.table.setItem(row, 1, QTableWidgetItem(station.get("date_min") or ""))
+            self.table.setCellWidget(
+                row, 2, self._status_pill(status, station.get("id_station"))
+            )
         try:
             self.layers.refresh(stations)
         except Exception as exc:  # noqa: BLE001 - la carte ne doit pas casser la liste
             self.logger.warning("Couches carte non mises à jour : %s", exc)
+        parts = ["%d locale(s)" % len(stations)]
+        if n_conflict:
+            parts.append("%d conflit(s)" % n_conflict)
+        self.label_count.setText(" · ".join(parts))
+        self.btn_sync.setText("Synchroniser (%d)" % n_sync if n_sync else "Synchroniser")
+        self._on_selection_changed()
         self.logger.info("Liste rafraîchie : %d station(s)", len(stations))
 
     def zoom_to_stations(self):
@@ -1060,7 +1242,12 @@ class OccHabDockWidget(QDockWidget):
             )
             return
 
-        from ..api.payload import build_station_payload, extract_id_station
+        from ..api.payload import (
+            build_station_payload,
+            extract_id_station,
+            parse_server_station,
+            server_fingerprint,
+        )
         from ..processing.geometry import wkt_to_geojson
 
         to_delete = self.db.get_all_stations(sync_status="to_delete")
@@ -1086,7 +1273,7 @@ class OccHabDockWidget(QDockWidget):
                     )
 
         # --- Créations / mises à jour ---
-        ok = failed = 0
+        ok = failed = conflicts = 0
         tech_default = self._habitat_defaults().get("technique")  # « In situ » (cd 1)
         for station in pending:
             full = self.db.get_station(station["id"])
@@ -1097,6 +1284,23 @@ class OccHabDockWidget(QDockWidget):
                 for hab in full["habitats"]:
                     if not hab.get("id_nomenclature_collection_technique"):
                         hab["id_nomenclature_collection_technique"] = tech_default
+            # Conflit : le serveur a-t-il changé depuis notre dernière synchro de CETTE
+            # station ? (empreinte mémorisée ≠ empreinte serveur actuelle). Fail-open :
+            # si le contrôle échoue (réseau…), on synchronise quand même.
+            if full.get("id_station") and full.get("server_snapshot"):
+                try:
+                    current = self.client.get_station(full["id_station"])
+                    if server_fingerprint(*parse_server_station(current)) != full[
+                        "server_snapshot"
+                    ]:
+                        self.db.update_station(station["id"], sync_status="conflict")
+                        conflicts += 1
+                        continue  # ne pas écraser la version serveur
+                except Exception as exc:  # noqa: BLE001
+                    self.logger.warning(
+                        "Contrôle de conflit ignoré (station %s) : %s",
+                        full["id_station"], exc,
+                    )
             geojson = wkt_to_geojson(full.get("geom")) if full.get("geom") else None
             payload = build_station_payload(
                 full, full["habitats"], full["observers"], geojson
@@ -1108,7 +1312,17 @@ class OccHabDockWidget(QDockWidget):
                 else:  # première synchro → création
                     response = self.client.create_station(payload)
                     id_station = extract_id_station(response)
-                self.db.mark_station_synced(station["id"], id_station)
+                # Rafraîchir l'empreinte serveur (best-effort) pour les conflits futurs.
+                snapshot = None
+                try:
+                    snapshot = server_fingerprint(
+                        *parse_server_station(self.client.get_station(id_station))
+                    )
+                except Exception:  # noqa: BLE001
+                    snapshot = None
+                self.db.mark_station_synced(
+                    station["id"], id_station, server_snapshot=snapshot
+                )
                 ok += 1
             except Exception as exc:  # noqa: BLE001
                 failed += 1
@@ -1119,11 +1333,22 @@ class OccHabDockWidget(QDockWidget):
             parts.append("%d envoyée(s), %d échec(s)" % (ok, failed))
         if deleted or del_failed:
             parts.append("%d supprimée(s), %d échec(s)" % (deleted, del_failed))
+        if conflicts:
+            parts.append("%d conflit(s)" % conflicts)
         message = " | ".join(parts) or "rien à faire"
         status = "success" if failed == 0 and del_failed == 0 else "partial"
         self.db.log_sync("upload", status, message, ok + deleted)
         self.logger.info("Synchronisation : %s", message)
-        self.iface.messageBar().pushInfo("OccHab", "Synchronisation : %s." % message)
+        if conflicts:
+            self.iface.messageBar().pushWarning(
+                "OccHab",
+                "Synchronisation : %s. %d station(s) modifiée(s) aussi sur GeoNature : "
+                "ré-éditez-la puis resynchronisez pour imposer votre version, ou "
+                "« Récupérer du serveur » pour prendre la version serveur."
+                % (message, conflicts),
+            )
+        else:
+            self.iface.messageBar().pushInfo("OccHab", "Synchronisation : %s." % message)
         self.refresh()
         self._load_server_stations()  # recharger le contexte serveur (données à jour)
 
