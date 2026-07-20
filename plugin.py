@@ -73,8 +73,8 @@ class OccHabPlugin:
                 self.iface.mainWindow().resizeDocks(
                     [self.dock_widget], [450], Qt.Orientation.Horizontal
                 )
-            except Exception:  # noqa: BLE001 - resizeDocks absent sur très vieux Qt
-                pass
+            except Exception as exc:  # noqa: BLE001 - resizeDocks absent sur très vieux Qt
+                self.logger.debug("Largeur initiale du dock non appliquée : %s", exc)
         else:
             self.dock_widget.setVisible(not self.dock_widget.isVisible())
 
