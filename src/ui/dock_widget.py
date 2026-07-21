@@ -76,6 +76,7 @@ class OccHabDockWidget(QDockWidget):
         self._geom_editor = None
         self._edit_geom_station_id = None
         self._map_filter_installed = False
+        self._server_prompt = None
         self._build_ui()
         self._install_map_interaction()
         self.refresh()
@@ -674,21 +675,88 @@ class OccHabDockWidget(QDockWidget):
         return dict(fc, features=features)
 
     def import_server_stations(self):
-        """Récupérer les stations sélectionnées SUR LA CARTE (couche serveur)."""
+        """Récupérer des stations depuis la carte (couche serveur).
+
+        Si des stations sont déjà sélectionnées, on les importe. Sinon, au lieu
+        d'un message d'erreur, on prépare la sélection (couche + outil actifs) et on
+        propose un bouton « Récupérer la sélection » : l'utilisateur sélectionne
+        APRÈS avoir cliqué.
+        """
         if self.client is None or not self.client.is_authenticated:
             QMessageBox.information(self, "OccHab", "Connectez-vous à GeoNature d'abord.")
             return
         ids = self.server_layers.selected_id_stations()
-        if not ids:
+        if ids:
+            self._import_by_ids(ids)
+        else:
+            self._prompt_server_selection()
+
+    def _prompt_server_selection(self):
+        """Activer la sélection sur la couche serveur + bouton « Récupérer »."""
+        layer = self.server_layers.layer()
+        if layer is None:
             QMessageBox.information(
-                self,
+                self, "OccHab",
+                "Aucune couche serveur chargée. Choisissez un JDD précis, puis "
+                "« Rafraîchir », avant de récupérer depuis la carte.",
+            )
+            return
+        self.iface.setActiveLayer(layer)
+        self._activate_select_tool()
+        self._clear_server_prompt()
+        bar = self.iface.messageBar()
+        try:
+            from qgis.PyQt.QtWidgets import QPushButton
+
+            widget = bar.createMessage(
                 "OccHab",
-                "Sélectionnez d'abord une ou plusieurs stations dans la couche "
-                "« OccHab — stations serveur » (outil de sélection de QGIS), ou "
-                "utilisez « Chercher une station… ».",
+                "Sélectionnez une ou plusieurs stations sur « %s », puis :"
+                % layer.name(),
+            )
+            button = QPushButton("Récupérer la sélection")
+            button.clicked.connect(self._finish_server_selection)
+            widget.layout().addWidget(button)
+            self._server_prompt = bar.pushWidget(widget)
+        except Exception as exc:  # noqa: BLE001 - repli si l'API barre de message diffère
+            self.logger.warning("Barre de message serveur indisponible : %s", exc)
+            bar.pushInfo(
+                "OccHab",
+                "Sélectionnez des stations sur la couche serveur, puis relancez "
+                "« Récupérer → Depuis la carte ».",
+            )
+
+    def _finish_server_selection(self):
+        self._clear_server_prompt()
+        ids = self.server_layers.selected_id_stations()
+        if not ids:
+            self.iface.messageBar().pushInfo(
+                "OccHab", "Aucune station sélectionnée sur la couche serveur."
             )
             return
         self._import_by_ids(ids)
+
+    def _clear_server_prompt(self):
+        if self._server_prompt is not None:
+            try:
+                self.iface.messageBar().popWidget(self._server_prompt)
+            except Exception as exc:  # noqa: BLE001
+                self.logger.debug("popWidget message serveur : %s", exc)
+            self._server_prompt = None
+
+    def _activate_select_tool(self):
+        """Activer l'outil de sélection de QGIS (best-effort, selon la version)."""
+        for name in ("actionSelect", "actionSelectRectangle"):
+            action = getattr(self.iface, name, None)
+            if not callable(action):
+                continue
+            try:
+                act = action()
+                if act is not None:
+                    act.trigger()
+                    return True
+            except Exception as exc:  # noqa: BLE001
+                self.logger.debug("Activation outil sélection (%s) : %s", name, exc)
+        return False
 
     def open_server_picker(self):
         """Récupérer une station serveur via une recherche texte (sans la carte)."""
@@ -1019,6 +1087,7 @@ class OccHabDockWidget(QDockWidget):
             except Exception as exc:  # noqa: BLE001
                 self.logger.debug("removeEventFilter ignoré : %s", exc)
             self._map_filter_installed = False
+        self._clear_server_prompt()
         if self._capture is not None:
             self._capture.cancel()
         if self._geom_editor is not None:

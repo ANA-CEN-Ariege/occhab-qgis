@@ -5,12 +5,14 @@
 from qgis.PyQt.QtCore import Qt, QDate
 from qgis.PyQt.QtWidgets import (
     QComboBox,
+    QCompleter,
     QDateEdit,
     QFormLayout,
     QLabel,
     QLineEdit,
     QListWidget,
     QListWidgetItem,
+    QPushButton,
     QSpinBox,
     QTextEdit,
     QVBoxLayout,
@@ -159,67 +161,95 @@ class StationForm(QWidget):
 
     # -------------------------------------------------------- observateurs
     def _build_observers_widget(self):
+        """Autocomplétion (taper ou dérouler) pour ajouter + liste des retenus."""
+        self._selected = []  # [(id_role, nom)] des observateurs retenus
         container = QWidget()
         box = QVBoxLayout(container)
         box.setContentsMargins(0, 0, 0, 0)
-        self.filter_observers = QLineEdit()
-        self.filter_observers.setPlaceholderText("Filtrer les observateurs…")
-        self.filter_observers.textChanged.connect(self._filter_observers)
-        box.addWidget(self.filter_observers)
-        self.list_observers = QListWidget()
-        self.list_observers.setMaximumHeight(110)
-        box.addWidget(self.list_observers)
+        box.setSpacing(4)
 
-        items = list(self._observers)
-        known = {id_role for id_role, _ in items}
+        self.combo_add_observer = QComboBox()
+        self.combo_add_observer.setEditable(True)
+        self.combo_add_observer.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
+        self.combo_add_observer.lineEdit().setPlaceholderText(
+            "Ajouter un observateur… (tapez ou déroulez)"
+        )
+        for id_role, name in self._observers:
+            self.combo_add_observer.addItem(name or str(id_role), id_role)
+        completer = self.combo_add_observer.completer()
+        completer.setCompletionMode(QCompleter.CompletionMode.PopupCompletion)
+        completer.setFilterMode(Qt.MatchFlag.MatchContains)
+        completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
+        self.combo_add_observer.setCurrentIndex(-1)  # champ vide au départ
+        self.combo_add_observer.activated.connect(self._on_observer_picked)
+        box.addWidget(self.combo_add_observer)
+
+        self.list_selected = QListWidget()
+        self.list_selected.setMaximumHeight(90)
+        self.list_selected.setToolTip(
+            "Observateurs retenus — double-clic (ou « Retirer ») pour en enlever un."
+        )
+        self.list_selected.itemDoubleClicked.connect(
+            lambda item: self._remove_observer(item.data(Qt.ItemDataRole.UserRole))
+        )
+        box.addWidget(self.list_selected)
+
+        self.btn_remove_observer = QPushButton("Retirer l'observateur sélectionné")
+        self.btn_remove_observer.clicked.connect(self._remove_current_observer)
+        box.addWidget(self.btn_remove_observer)
+
+        # Pré-remplir avec l'utilisateur connecté (observateur par défaut).
         current = self._current_observer
-        if current and current.get("id_role") not in known:
-            items.insert(0, (current["id_role"],
-                             current.get("observer_name") or str(current["id_role"])))
-        for id_role, name in items:
-            checked = bool(current and id_role == current.get("id_role"))
-            self._add_observer_item(id_role, name, checked)
+        if current and current.get("id_role"):
+            self._add_observer(
+                current["id_role"],
+                current.get("observer_name") or str(current["id_role"]),
+            )
         return container
 
-    def _add_observer_item(self, id_role, name, checked):
-        item = QListWidgetItem(name or str(id_role))
-        item.setData(Qt.ItemDataRole.UserRole, id_role)
-        item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
-        item.setCheckState(Qt.CheckState.Checked if checked else Qt.CheckState.Unchecked)
-        self.list_observers.addItem(item)
+    def _on_observer_picked(self, index):
+        if index < 0:
+            return
+        self._add_observer(
+            self.combo_add_observer.itemData(index),
+            self.combo_add_observer.itemText(index),
+        )
+        self.combo_add_observer.setCurrentIndex(-1)
+        self.combo_add_observer.clearEditText()
 
-    def _filter_observers(self, text):
-        needle = text.lower()
-        for i in range(self.list_observers.count()):
-            item = self.list_observers.item(i)
-            item.setHidden(needle not in item.text().lower())
+    def _add_observer(self, id_role, name):
+        if id_role is None or any(r == id_role for r, _ in self._selected):
+            return
+        self._selected.append((id_role, name or str(id_role)))
+        self._rebuild_selected()
+
+    def _remove_observer(self, id_role):
+        self._selected = [(r, n) for r, n in self._selected if r != id_role]
+        self._rebuild_selected()
+
+    def _remove_current_observer(self):
+        item = self.list_selected.currentItem()
+        if item is not None:
+            self._remove_observer(item.data(Qt.ItemDataRole.UserRole))
+
+    def _rebuild_selected(self):
+        self.list_selected.clear()
+        for id_role, name in self._selected:
+            item = QListWidgetItem(name)
+            item.setData(Qt.ItemDataRole.UserRole, id_role)
+            self.list_selected.addItem(item)
 
     def _selected_observers(self):
-        result = []
-        for i in range(self.list_observers.count()):
-            item = self.list_observers.item(i)
-            if item.checkState() == Qt.CheckState.Checked:
-                result.append(
-                    {"id_role": item.data(Qt.ItemDataRole.UserRole), "observer_name": item.text()}
-                )
-        return result
+        return [{"id_role": r, "observer_name": n} for r, n in self._selected]
 
     def _apply_observers(self, observers):
-        """Cocher exactement les observateurs de la station (édition)."""
-        wanted = {
-            o.get("id_role"): o.get("observer_name")
+        """Remplacer les observateurs retenus (mode édition)."""
+        self._selected = [
+            (o["id_role"], o.get("observer_name") or str(o["id_role"]))
             for o in observers
             if o.get("id_role")
-        }
-        present = set()
-        for i in range(self.list_observers.count()):
-            item = self.list_observers.item(i)
-            id_role = item.data(Qt.ItemDataRole.UserRole)
-            present.add(id_role)
-            item.setCheckState(Qt.CheckState.Checked if id_role in wanted else Qt.CheckState.Unchecked)
-        for id_role, name in wanted.items():
-            if id_role not in present:
-                self._add_observer_item(id_role, name, True)
+        ]
+        self._rebuild_selected()
 
     # ------------------------------------------------------------- API
     def _id_dataset(self):

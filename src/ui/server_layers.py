@@ -85,6 +85,12 @@ class ServerStationLayerManager:
                 pass
         return ids
 
+    def layer(self):
+        """Couche serveur courante (QgsVectorLayer) ou None."""
+        if not self._layer_id:
+            return None
+        return QgsProject.instance().mapLayer(self._layer_id)
+
     def extent(self):
         """Emprise (EPSG:4326) de la couche serveur, ou None si absente/vide."""
         if not self._layer_id:
