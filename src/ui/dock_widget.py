@@ -75,7 +75,9 @@ class OccHabDockWidget(QDockWidget):
         self._capture_target = None  # None/"new" = nouvelle station ; int = id station à re-géométrer
         self._geom_editor = None
         self._edit_geom_station_id = None
+        self._map_filter_installed = False
         self._build_ui()
+        self._install_map_interaction()
         self.refresh()
 
     # ------------------------------------------------------------- UI
@@ -911,6 +913,12 @@ class OccHabDockWidget(QDockWidget):
 
     def shutdown(self):
         """Nettoyer au déchargement du plugin : capture/édition en cours + couches carte."""
+        if self._map_filter_installed:
+            try:
+                self.iface.mapCanvas().viewport().removeEventFilter(self)
+            except Exception as exc:  # noqa: BLE001
+                self.logger.debug("removeEventFilter ignoré : %s", exc)
+            self._map_filter_installed = False
         if self._capture is not None:
             self._capture.cancel()
         if self._geom_editor is not None:
@@ -960,11 +968,16 @@ class OccHabDockWidget(QDockWidget):
         self.refresh()
 
     def edit_station(self):
-        """Éditer la station sélectionnée (attributs + habitats)."""
+        """Éditer la station sélectionnée dans le tableau (attributs + habitats)."""
         station_id = self._selected_station_id()
         if station_id is None:
             QMessageBox.information(self, "OccHab", "Sélectionnez une station.")
             return
+        self._edit_station_by_id(station_id)
+
+    def _edit_station_by_id(self, station_id):
+        """Ouvrir le formulaire d'édition d'une station par son id local."""
+        self._select_table_row(station_id)
         full = self.db.get_station(station_id)
         if full is None:
             return
@@ -1124,6 +1137,85 @@ class OccHabDockWidget(QDockWidget):
             return None
         item = self.table.item(row, 0)
         return item.data(Qt.ItemDataRole.UserRole) if item else None
+
+    def _select_table_row(self, local_id):
+        """Sélectionner dans le tableau la ligne d'une station (sync carte → dock)."""
+        for row in range(self.table.rowCount()):
+            item = self.table.item(row, 0)
+            if item and item.data(Qt.ItemDataRole.UserRole) == local_id:
+                self.table.selectRow(row)
+                return
+
+    # -------------------------------------------------- interaction carte
+    def _install_map_interaction(self):
+        """Ouvrir le formulaire d'une station cliquée sur la carte.
+
+        Double-clic (n'importe quel outil, ex. « Sélectionner ») ou simple clic
+        avec l'outil « Identifier des entités » : filtre d'événements sur le
+        canevas. Tout est protégé pour ne jamais faire planter QGIS.
+        """
+        try:
+            self.iface.mapCanvas().viewport().installEventFilter(self)
+            self._map_filter_installed = True
+        except Exception as exc:  # noqa: BLE001
+            self.logger.warning("Interaction carte non installée : %s", exc)
+
+    def eventFilter(self, obj, event):
+        try:
+            from qgis.PyQt.QtCore import QEvent, QTimer
+
+            etype = event.type()
+            if etype in (
+                QEvent.Type.MouseButtonDblClick, QEvent.Type.MouseButtonRelease
+            ) and event.button() == Qt.MouseButton.LeftButton:
+                tool = self.iface.mapCanvas().mapTool()
+                is_identify = bool(tool) and "identify" in type(tool).__name__.lower()
+                # Identifier → simple clic ; autres outils (Sélectionner…) → double-clic.
+                if (etype == QEvent.Type.MouseButtonRelease and is_identify) or (
+                    etype == QEvent.Type.MouseButtonDblClick and not is_identify
+                ):
+                    pos = event.position() if hasattr(event, "position") else event.pos()
+                    x, y = int(pos.x()), int(pos.y())
+                    QTimer.singleShot(0, lambda: self._open_station_at(x, y))
+        except Exception as exc:  # noqa: BLE001 - un filtre ne doit jamais planter QGIS
+            self.logger.debug("Filtre carte : %s", exc)
+        return super().eventFilter(obj, event)
+
+    def _open_station_at(self, px, py):
+        """Ouvrir la station locale située sous le pixel (px, py) du canevas."""
+        try:
+            from qgis.core import (
+                QgsCoordinateReferenceSystem,
+                QgsCoordinateTransform,
+                QgsFeatureRequest,
+                QgsProject,
+                QgsRectangle,
+            )
+
+            canvas = self.iface.mapCanvas()
+            point = canvas.getCoordinateTransform().toMapCoordinates(px, py)
+            tol = canvas.mapUnitsPerPixel() * 6  # ~6 px de tolérance
+            rect = QgsRectangle(
+                point.x() - tol, point.y() - tol, point.x() + tol, point.y() + tol
+            )
+            canvas_crs = canvas.mapSettings().destinationCrs()
+            if canvas_crs.isValid() and canvas_crs.authid() != "EPSG:4326":
+                transform = QgsCoordinateTransform(
+                    canvas_crs,
+                    QgsCoordinateReferenceSystem("EPSG:4326"),
+                    QgsProject.instance(),
+                )
+                rect = transform.transformBoundingBox(rect)
+            for layer in self.layers.existing_layers():
+                if layer.fields().indexOf("id") < 0:
+                    continue
+                for feature in layer.getFeatures(QgsFeatureRequest().setFilterRect(rect)):
+                    value = feature["id"]
+                    if value is not None:
+                        self._edit_station_by_id(int(value))
+                        return
+        except Exception as exc:  # noqa: BLE001
+            self.logger.warning("Ouverture depuis la carte échouée : %s", exc)
 
     # --------------------------------------------------------- stockage
     def _open_db_folder(self):

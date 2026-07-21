@@ -65,6 +65,15 @@ class StationLayerManager:
         for geom_type, items in buckets.items():
             self._update_layer(geom_type, items)
 
+    def existing_layers(self):
+        """Couches locales actuellement présentes dans le projet (non nulles)."""
+        layers = []
+        for layer_id in self._layer_ids.values():
+            layer = QgsProject.instance().mapLayer(layer_id)
+            if layer is not None:
+                layers.append(layer)
+        return layers
+
     def extent(self):
         """Emprise combinée (EPSG:4326) des couches non vides, ou None."""
         rect = None
