@@ -136,7 +136,11 @@ class StationDialog(QDialog):
     # ------------------------------------------------------------ habitats
     @staticmethod
     def _habitat_label(habitat):
-        return "cd_hab %s — %s" % (habitat.get("cd_hab"), habitat.get("nom_cite") or "")
+        label = "cd_hab %s — %s" % (habitat.get("cd_hab"), habitat.get("nom_cite") or "")
+        recovery = habitat.get("recovery_percentage")
+        if isinstance(recovery, (int, float)) and recovery:  # 0 / None = non renseigné
+            label += " — %g %% de recouvrement" % recovery
+        return label
 
     def _new_habitat_form(self):
         return HabitatForm(

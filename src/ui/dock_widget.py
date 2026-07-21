@@ -238,6 +238,24 @@ class OccHabDockWidget(QDockWidget):
         row_new.addWidget(self.combo_geomtype)
         layout.addLayout(row_new)
 
+        # Reprendre une géométrie existante d'une couche (entité sélectionnée).
+        self.btn_reprise = QPushButton("Reprendre une géométrie d'une couche…")
+        self.btn_reprise.setToolTip(
+            "Utiliser la géométrie de l'entité sélectionnée dans la couche active "
+            "(reprojetée automatiquement en EPSG:4326)."
+        )
+        reprise_menu = QMenu(self.btn_reprise)
+        reprise_menu.addAction(
+            "Nouvelle station depuis l'entité sélectionnée",
+            self._new_station_from_selection,
+        )
+        reprise_menu.addAction(
+            "Affecter à la station sélectionnée dans la liste",
+            self._assign_selection_to_station,
+        )
+        self.btn_reprise.setMenu(reprise_menu)
+        layout.addWidget(self.btn_reprise)
+
         # Contexte SERVEUR : synchroniser, rafraîchir, récupérer (deux chemins).
         label_srv = QLabel("Serveur")
         label_srv.setStyleSheet("font-weight: 600;")
@@ -790,6 +808,88 @@ class OccHabDockWidget(QDockWidget):
             self._start_capture()
         else:
             self._open_station_dialog(None, None)
+
+    # ------------------------------------------ reprise de géométrie (couche)
+    def _new_station_from_selection(self):
+        """Créer une station à partir de la géométrie de l'entité sélectionnée."""
+        wkt, geom_type, error = self._reprise_geometry()
+        if error:
+            QMessageBox.information(self, "OccHab", error)
+            return
+        self._capture_target = None
+        self._open_station_dialog(wkt, geom_type, self._geo_metrics(wkt, geom_type))
+
+    def _assign_selection_to_station(self):
+        """Affecter la géométrie de l'entité sélectionnée à la station choisie."""
+        station_id = self._selected_station_id()
+        if station_id is None:
+            QMessageBox.information(
+                self, "OccHab",
+                "Sélectionnez d'abord une station dans « Mes stations », puis "
+                "relancez « Affecter à la station sélectionnée ».",
+            )
+            return
+        wkt, geom_type, error = self._reprise_geometry()
+        if error:
+            QMessageBox.information(self, "OccHab", error)
+            return
+        self._update_geometry(station_id, wkt, geom_type, self._geo_metrics(wkt, geom_type))
+
+    def _reprise_geometry(self):
+        """(WKT EPSG:4326, geom_type, erreur) de l'entité sélectionnée active.
+
+        Reprend la PREMIÈRE entité sélectionnée de la couche vectorielle active et
+        la reprojette en EPSG:4326. Renvoie (None, None, message) si rien d'exploitable.
+        """
+        from qgis.core import (
+            QgsCoordinateReferenceSystem,
+            QgsCoordinateTransform,
+            QgsGeometry,
+            QgsProject,
+            QgsVectorLayer,
+            QgsWkbTypes,
+        )
+
+        layer = self.iface.activeLayer()
+        if not isinstance(layer, QgsVectorLayer):
+            return None, None, (
+                "Activez d'abord une couche vectorielle contenant l'entité voulue."
+            )
+        features = layer.selectedFeatures()
+        if not features:
+            return None, None, (
+                "Aucune entité sélectionnée dans la couche « %s »." % layer.name()
+            )
+        geom = QgsGeometry(features[0].geometry())
+        if geom is None or geom.isEmpty():
+            return None, None, "L'entité sélectionnée n'a pas de géométrie."
+        # Type géré (point / ligne / polygone) ; enum QGIS scopé ou non.
+        types = getattr(QgsWkbTypes, "GeometryType", QgsWkbTypes)
+        geom_type = {
+            types.PointGeometry: "point",
+            types.LineGeometry: "line",
+            types.PolygonGeometry: "polygon",
+        }.get(geom.type())
+        if geom_type is None:
+            return None, None, (
+                "Type de géométrie non géré (ni point, ni ligne, ni polygone)."
+            )
+        try:
+            src_crs = layer.crs()
+            if src_crs.isValid() and src_crs.authid() != "EPSG:4326":
+                transform = QgsCoordinateTransform(
+                    src_crs,
+                    QgsCoordinateReferenceSystem("EPSG:4326"),
+                    QgsProject.instance(),
+                )
+                geom.transform(transform)
+            wkt = geom.asWkt()
+        except Exception as exc:  # noqa: BLE001
+            self.logger.warning("Reprise de géométrie : reprojection échouée : %s", exc)
+            return None, None, "Reprojection impossible : %s" % exc
+        if not wkt:
+            return None, None, "Géométrie vide après conversion."
+        return wkt, geom_type, None
 
     def edit_geometry(self):
         """Éditer la géométrie enregistrée de la station (ou la numériser si absente)."""
