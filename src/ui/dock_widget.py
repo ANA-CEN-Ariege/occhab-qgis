@@ -295,6 +295,9 @@ class OccHabDockWidget(QDockWidget):
         menu.addAction("Ouvrir le dossier", self._open_db_folder)
         menu.addAction("Sauvegarder (copie .db)…", self._backup_db)
         menu.addAction("Exporter en GeoPackage…", self._export_geopackage)
+        menu.addAction(
+            "Exporter la cartographie du JDD (serveur)…", self.export_jdd_cartography
+        )
         btn_storage.setMenu(menu)
         footer.addWidget(btn_storage)
         layout.addLayout(footer)
@@ -1495,6 +1498,171 @@ class OccHabDockWidget(QDockWidget):
         self.iface.messageBar().pushSuccess(
             "OccHab", "Export : %d station(s) → %s" % (count, target)
         )
+
+    def _nomenclature_id_label_map(self):
+        """{id_nomenclature: libellé} sur toutes les nomenclatures chargées."""
+        mapping = {}
+        for values in self.nomenclatures.values():
+            for value in values:
+                id_nom = value.get("id_nomenclature")
+                if id_nom is not None:
+                    mapping[id_nom] = (
+                        value.get("label_default") or value.get("label_fr")
+                        or value.get("mnemonique") or str(id_nom)
+                    )
+        return mapping
+
+    def export_jdd_cartography(self):
+        """Exporter la cartographie d'habitats du JDD (serveur) : 1 ligne / habitat."""
+        if self.client is None or not self.client.is_authenticated:
+            QMessageBox.information(self, "OccHab", "Connectez-vous à GeoNature d'abord.")
+            return
+        jdd = self.combo_jdd.currentData() if self.combo_jdd.isEnabled() else None
+        if jdd is None:
+            QMessageBox.information(
+                self, "OccHab", "Choisissez d'abord un JDD précis (pas « Tous »)."
+            )
+            return
+        target, _ = QFileDialog.getSaveFileName(
+            self, "Exporter la cartographie du JDD", "cartographie_habitats.gpkg",
+            "GeoPackage (*.gpkg)",
+        )
+        if not target:
+            return
+        try:
+            fc = self.client.get_stations(params={"id_dataset": jdd}, geojson=True)
+        except Exception as exc:  # noqa: BLE001
+            QMessageBox.warning(self, "OccHab", "Stations serveur non chargées : %s" % exc)
+            return
+        features = (fc.get("features") if isinstance(fc, dict) else None) or []
+        ids = []
+        for feature in features:
+            props = feature.get("properties") or {}
+            id_station = props.get("id_station") or feature.get("id")
+            if id_station:
+                ids.append(id_station)
+        if not ids:
+            QMessageBox.information(self, "OccHab", "Aucune station serveur pour ce JDD.")
+            return
+
+        from ..api.payload import parse_server_station
+        from ..processing.export import flatten_cartography
+
+        parsed, failed = [], 0
+        for id_station in ids:
+            try:
+                parsed.append(parse_server_station(self.client.get_station(id_station)))
+            except Exception as exc:  # noqa: BLE001
+                failed += 1
+                self.logger.warning("Station %s non exportée : %s", id_station, exc)
+        if not parsed:
+            QMessageBox.warning(self, "OccHab", "Aucune station récupérée pour l'export.")
+            return
+
+        nomenclature_map = self._nomenclature_id_label_map()
+        role_map = dict(self._observers_items())
+        rows = flatten_cartography(
+            parsed,
+            nomenclature_label=nomenclature_map.get,
+            jdd_name=self.combo_jdd.currentText(),
+            role_label=role_map.get,
+        )
+        try:
+            written = self._write_cartography(target, rows)
+        except Exception as exc:  # noqa: BLE001
+            self.logger.error("Export cartographie échoué : %s", exc)
+            QMessageBox.critical(self, "Export", "Échec : %s" % exc)
+            return
+        suffix = " (%d station(s) ignorée(s))" % failed if failed else ""
+        self.iface.messageBar().pushSuccess(
+            "OccHab",
+            "Cartographie exportée : %d ligne(s) → %s%s" % (len(rows), written, suffix),
+        )
+
+    def _write_cartography(self, gpkg_path, rows):
+        """Écrire les lignes en GeoPackage (+ Shapefile), une couche par type géom."""
+        import os
+
+        from qgis.PyQt.QtCore import QVariant
+        from qgis.core import (
+            QgsFeature,
+            QgsField,
+            QgsFields,
+            QgsGeometry,
+            QgsProject,
+            QgsVectorFileWriter,
+            QgsVectorLayer,
+        )
+
+        from ..processing.export import FIELDS, NUMERIC_FIELDS
+
+        wkb = {"point": "Point", "line": "LineString", "polygon": "Polygon"}
+        groups = {}
+        for row in rows:
+            geom_type = (row.get("_geom_type") or "").lower()
+            if geom_type in wkb and row.get("_geom"):
+                groups.setdefault(geom_type, []).append(row)
+        if not groups:
+            raise ValueError("Aucune géométrie exploitable à exporter.")
+
+        def build_fields():
+            fields = QgsFields()
+            for name in FIELDS:
+                qtype = QVariant.Double if name in NUMERIC_FIELDS else QVariant.String
+                fields.append(QgsField(name, qtype))
+            return fields
+
+        context = QgsProject.instance().transformContext()
+        base = os.path.splitext(gpkg_path)[0]
+        outputs = []
+        first = True
+        for geom_type, group in groups.items():
+            layer = QgsVectorLayer(
+                "%s?crs=EPSG:4326" % wkb[geom_type],
+                "cartographie_%s" % geom_type, "memory",
+            )
+            layer.dataProvider().addAttributes(list(build_fields()))
+            layer.updateFields()
+            features = []
+            for row in group:
+                feature = QgsFeature(layer.fields())
+                feature.setGeometry(QgsGeometry.fromWkt(row["_geom"]))
+                feature.setAttributes([row.get(name) for name in FIELDS])
+                features.append(feature)
+            layer.dataProvider().addFeatures(features)
+
+            options = QgsVectorFileWriter.SaveVectorOptions()
+            options.driverName = "GPKG"
+            options.layerName = "cartographie_%s" % geom_type
+            options.actionOnExistingFile = (
+                QgsVectorFileWriter.ActionOnExistingFile.CreateOrOverwriteFile
+                if first
+                else QgsVectorFileWriter.ActionOnExistingFile.CreateOrOverwriteLayer
+            )
+            result = QgsVectorFileWriter.writeAsVectorFormatV3(
+                layer, gpkg_path, context, options
+            )
+            if result[0] != QgsVectorFileWriter.WriterError.NoError:
+                raise RuntimeError(result[1])
+            first = False
+            outputs.append("%s:%s" % (os.path.basename(gpkg_path), geom_type))
+
+            shp_path = "%s_%s.shp" % (base, geom_type)
+            shp_options = QgsVectorFileWriter.SaveVectorOptions()
+            shp_options.driverName = "ESRI Shapefile"
+            shp_options.actionOnExistingFile = (
+                QgsVectorFileWriter.ActionOnExistingFile.CreateOrOverwriteFile
+            )
+            shp_result = QgsVectorFileWriter.writeAsVectorFormatV3(
+                layer, shp_path, context, shp_options
+            )
+            if shp_result[0] != QgsVectorFileWriter.WriterError.NoError:
+                self.logger.warning(
+                    "Shapefile %s non écrit : %s", shp_path, shp_result[1]
+                )
+            else:
+                outputs.append(os.path.basename(shp_path))
+        return ", ".join(outputs)
 
     def delete_selected(self):
         station_id = self._selected_station_id()

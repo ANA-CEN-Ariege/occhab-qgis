@@ -32,8 +32,9 @@ Développée par l'**ANA-CEN Ariège**.
   dans un JDD, et **récupération** d'une station serveur en local pour l'éditer.
 - **Carte** : les stations locales et serveur s'affichent sur le canevas, dans des
   groupes distincts, colorées par état.
-- **Stockage transparent** : emplacement du fichier SQLite visible, sauvegarde et
-  export GeoPackage.
+- **Stockage & export** : emplacement du fichier SQLite visible, sauvegarde,
+  export GeoPackage des saisies locales, et **export cartographie d'habitats** d'un
+  JDD (vue à plat, une ligne par habitat, en GeoPackage + Shapefile).
 
 ---
 
@@ -208,10 +209,15 @@ poste n'a aucun effet sur GeoNature. Garde-fous à la synchro : confirmation ave
 serveur. Retirer un habitat d'une station est déjà supprimé côté serveur à la
 mise à jour.
 
-### Stockage / sauvegarde
+### Stockage / export
 Le pied du dock affiche l'emplacement de `occhab_local.db`. Bouton **« Base
-locale… »** : ouvrir le dossier, sauvegarder une copie `.db`, exporter la vue en
-GeoPackage.
+locale… »** :
+- **Ouvrir le dossier**, **Sauvegarder (copie .db)**, **Exporter en GeoPackage**
+  (vos couches locales).
+- **Exporter la cartographie du JDD (serveur)** : récupère **toutes** les stations
+  du JDD sur GeoNature et les écrit en **vue à plat** (une ligne par habitat, avec
+  libellés résolus — habitat, recouvrement, enjeu, état, observateurs…) en
+  **GeoPackage** *et* **Shapefile** (une couche / un fichier par type de géométrie).
 
 ---
 

@@ -394,6 +394,14 @@ Bouton **« Base locale… »** (en bas du dock) :
   base locale.
 - **Exporter en GeoPackage…** — exporter vos stations dans un **`.gpkg`**
   réutilisable dans QGIS ou un autre outil.
+- **Exporter la cartographie du JDD (serveur)…** — produit une **cartographie
+  d'habitats** du JDD choisi : le plugin récupère **toutes** les stations du JDD
+  sur GeoNature et les écrit en **vue à plat** — **une ligne par habitat**, avec
+  les libellés résolus (habitat, recouvrement, niveau d'enjeu, état, observateurs,
+  exposition…). Sortie en **GeoPackage** *et* **Shapefile** (une couche / un
+  fichier par type de géométrie). Vous devez être **connecté**.
+  > Le **Shapefile** tronque les noms de champs à 10 caractères et limite le texte
+  > — préférez le **GeoPackage** si le destinataire l'accepte.
 
 > Pensez à **sauvegarder** régulièrement votre base locale, surtout avant une
 > synchronisation importante.
