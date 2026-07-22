@@ -15,8 +15,10 @@ Développée par l'**ANA-CEN Ariège**.
 
 - **Saisie hors-ligne** de stations (spatiales) et de leurs habitats, stockée en
   SQLite local — utilisable sans connexion.
-- **Numérisation native QGIS** de la géométrie (point / ligne / polygone), avec
-  accrochage ; **édition des sommets** d'une géométrie existante.
+- **Numérisation native QGIS** de la géométrie (polygone / point), **reprise**
+  d'une géométrie depuis une autre couche, avec accrochage ; **édition des
+  sommets** d'une géométrie existante ; **ouverture d'une station au clic sur la
+  carte** (double-clic ou outil *Identifier*).
 - **Formulaires alignés** sur le formulaire web OccHab : `cd_hab` (recherche
   HABREF), nom cité, nomenclatures (technique de collecte, détermination,
   abondance, intérêt communautaire, exposition, méthode de calcul de surface,
@@ -103,16 +105,23 @@ redémarrer QGIS.
 ## 5. Utilisation
 
 ### Organisation du dock
-Les actions sont séparées en **deux blocs** pour distinguer clairement ce qui
-touche votre poste de ce qui touche GeoNature :
-- **Mes stations (local)** : le tableau de vos stations + *＋ Nouvelle station*,
-  *Éditer*, *Modifier la géométrie*, *Supprimer*, *Zoom*. Ces boutons agissent sur
-  la **ligne sélectionnée** dans le tableau.
-- **Serveur** : *Récupérer du serveur* (sur la sélection **carte** de la couche
-  serveur), *Rafraîchir*, *Synchroniser*.
+- **Connexion + JDD** : une barre compacte **repliable** (« changer » pour la
+  déplier) ; elle se replie une fois le JDD choisi.
+- **Mes stations** : le tableau de vos saisies locales (Habitat(s) / Date /
+  **État**). **Au-dessus** du tableau, une barre d'action agit sur la **ligne
+  sélectionnée** (grisée sans sélection) : *Éditer*, *Géométrie ▾* (redessiner /
+  éditer, ou copier une entité d'une couche), *Zoom*, et *Supprimer* (isolé à
+  droite). Les mêmes actions sont dans un **menu clic-droit** sur la ligne, et
+  **double-cliquer** une ligne l'ouvre. En dessous : *＋ Nouvelle station ▾*.
+- **Serveur** : *Synchroniser (N)*, *Rafraîchir*, et *Récupérer une station du
+  serveur…* (depuis la carte, ou par recherche texte).
+- Le panneau **défile** si son contenu dépasse la hauteur du dock.
 
 Le bouton **Zoom** est adaptatif : station sélectionnée → zoom dessus ; sans
 sélection → emprise du JDD (stations serveur, sinon locales).
+
+**Depuis la carte** : double-cliquer une station locale (ou cliquer dessus avec
+l'outil *Identifier des entités*) ouvre directement son formulaire.
 
 ### Connexion
 Bouton **« Connexion GeoNature… »** : renseigner l'URL de l'API et choisir une
@@ -133,37 +142,51 @@ La case **« mes stations »** restreint la couche serveur aux stations dont vou
 stations du JDD que vos permissions GeoNature vous autorisent à voir.
 
 ### Saisir une station
-1. Choisir le type de géométrie, cocher « numériser », cliquer **« ＋ Nouvelle
-   station »**, dessiner sur la carte (accrochage QGIS actif ; clic droit pour
-   terminer). Surface et altitude se calculent automatiquement.
-2. Remplir le formulaire station (JDD, dates, observateurs, altitude, profondeur,
-   surface, exposition, type de sol, type de mosaïque, nature d'objet
-   géographique…) et **ajouter un ou plusieurs habitats** (recherche HABREF sur le
-   nom cité → remplit `cd_hab` ; nomenclatures habitat : technique de collecte,
-   détermination, abondance, sensibilité, intérêt communautaire). La technique de
-   collecte est **« In situ »** par défaut, la sensibilité **« Non sensible »** ;
-   les autres listes reprennent les défauts de l'instance.
-3. La station apparaît dans **« Mes stations (local) »**, identifiée par son
-   habitat (« 41.2 - Chênaies-charmaies (+N) »), état *À synchroniser*.
+1. **« ＋ Nouvelle station ▾ »** propose : *Dessiner un polygone* / *Dessiner un
+   point* (tracé sur la carte, accrochage actif, clic droit pour terminer),
+   *Copier l'entité sélectionnée (autre couche)* (reprend la géométrie d'une entité
+   sélectionnée dans une autre couche, reprojetée en 4326), ou *Sans géométrie*
+   (à tracer plus tard). Surface et altitude se calculent automatiquement pour un
+   polygone.
+2. Remplir le **formulaire station**, à **deux niveaux** : l'**Essentiel** (JDD,
+   nom, **observateurs**, dates, enjeu, état, commentaire) est visible ; le reste
+   (altitude, profondeur, surface, exposition, type de sol, type de mosaïque,
+   nature d'objet) est sous **« Détails »** (replié, déplié auto en édition s'il
+   est rempli). Le champ **Observateur(s)** est à **autocomplétion** (déroulez ou
+   tapez ; les retenus s'affichent dessous, retirables). **Ajouter un ou plusieurs
+   habitats** (recherche HABREF sur le nom cité → remplit `cd_hab` ; la liste
+   affiche le **% de recouvrement** de chacun). La technique de collecte est
+   **« In situ »** par défaut, la sensibilité **« Non sensible »**.
+3. La station apparaît dans **« Mes stations »**, identifiée par son habitat
+   (« 41.2 - Chênaies-charmaies (+N) »), état *À synchroniser*.
 
 ### Éditer
-Double-clic (ou **« Éditer »**) sur une station : attributs et habitats
-modifiables (retirer un habitat demande confirmation). **« Modifier la
-géométrie »** édite les sommets de la géométrie enregistrée. Toute édition
-repasse la station en *À synchroniser*.
+Ouvrir une station : **« Éditer »** (barre au-dessus du tableau), **double-clic**
+sur la ligne, **clic-droit → Éditer**, ou — sur la carte — **double-clic / clic
+avec l'outil *Identifier***. Attributs et habitats modifiables (retirer un habitat
+demande confirmation). **« Géométrie ▾ »** propose *Redessiner / éditer sur la
+carte* (édition des sommets, ou nouveau tracé si aucune géométrie) ou *Copier
+l'entité sélectionnée (autre couche)*. Toute édition repasse la station en
+*À synchroniser*.
 
 ### Synchroniser
 **« Synchroniser »** envoie les créations/mises à jour et applique les
 suppressions marquées, puis recharge le contexte serveur. Récapitulatif affiché.
 
 ### Récupérer / éditer une station serveur
-Sélectionner des stations dans la couche **« OccHab — stations serveur »** (outil
-de sélection QGIS) puis **« Récupérer du serveur »** : elles sont importées en
-local (avec `id_station`/`id_habitat` → pas de doublon à la resynchro) et
-deviennent éditables. Utile si la base locale est perdue ou depuis une autre
-machine. Si une station sélectionnée est **déjà en local**, le plugin propose de
-**remplacer la copie locale par la version du serveur** (restauration ; les
-modifications locales non synchronisées de ces stations sont alors écrasées).
+**« Récupérer une station du serveur… »** offre **deux chemins** :
+- **Depuis la carte (sélection)** : sélectionner des stations dans la couche
+  « OccHab — stations serveur » (outil de sélection QGIS). Si rien n'est
+  sélectionné, le plugin **active la couche + l'outil** et affiche un bouton
+  **« Récupérer la sélection »** — vous sélectionnez *après*, puis validez.
+- **Chercher une station…** : un dialogue **liste/filtre** les stations serveur du
+  JDD ; cochez celles à récupérer.
+
+Elles sont importées en local (avec `id_station`/`id_habitat` → pas de doublon à
+la resynchro) et deviennent éditables. Utile si la base locale est perdue ou
+depuis une autre machine. Si une station sélectionnée est **déjà en local**, le
+plugin propose de **remplacer la copie locale par la version du serveur**
+(restauration ; les modifications locales non synchronisées sont alors écrasées).
 
 ### Supprimer
 **« Supprimer »** (une station à la fois) distingue **deux gestes** — base

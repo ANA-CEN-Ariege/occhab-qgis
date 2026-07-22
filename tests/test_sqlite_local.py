@@ -104,6 +104,17 @@ def test_delete_cascade(tmp_path):
     assert db.get_station(station_id) is None
 
 
+def test_prev_geom_roundtrip(tmp_path):
+    db = _make_db(tmp_path)
+    station_id = db.create_station(
+        id_dataset=3, geom="POINT (1 2)", geom_type="point"
+    )
+    db.update_station(station_id, prev_geom="POINT (9 9)", prev_geom_type="point")
+    full = db.get_station(station_id)
+    assert full["prev_geom"] == "POINT (9 9)"
+    assert full["prev_geom_type"] == "point"
+
+
 def test_set_server_snapshot(tmp_path):
     db = _make_db(tmp_path)
     station_id = db.create_station(id_dataset=3)

@@ -188,10 +188,14 @@ class OccHabDockWidget(QDockWidget):
         geom_menu.setToolTipsVisible(True)
         geom_menu.addAction("Redessiner / éditer sur la carte", self.edit_geometry)
         act_reuse_geom = geom_menu.addAction(
-            "Copier l'entité sélectionnée (autre couche)", self._assign_selection_to_station
+            "Copier l'entité sélectionnée d'une autre couche", self._assign_selection_to_station
         )
         act_reuse_geom.setToolTip(
             "Sélectionnez d'abord une entité dans une autre couche, puis choisissez ceci."
+        )
+        geom_menu.addSeparator()
+        geom_menu.addAction(
+            "Rétablir la géométrie précédente", self.restore_previous_geometry
         )
         self.btn_geom.setMenu(geom_menu)
         self.btn_geom.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
@@ -240,7 +244,7 @@ class OccHabDockWidget(QDockWidget):
         new_menu.addAction("Dessiner un polygone", lambda: self._new_station_draw("polygon"))
         new_menu.addAction("Dessiner un point", lambda: self._new_station_draw("point"))
         act_reuse_new = new_menu.addAction(
-            "Copier l'entité sélectionnée (autre couche)", self._new_station_from_selection
+            "Copier l'entité sélectionnée d'une autre couche", self._new_station_from_selection
         )
         act_reuse_new.setToolTip(
             "Sélectionnez d'abord une entité dans une autre couche, puis choisissez ceci."
@@ -357,8 +361,10 @@ class OccHabDockWidget(QDockWidget):
         geom = menu.addMenu("Modifier la géométrie")
         geom.addAction("Redessiner / éditer sur la carte", self.edit_geometry)
         geom.addAction(
-            "Copier l'entité sélectionnée (autre couche)", self._assign_selection_to_station
+            "Copier l'entité sélectionnée d'une autre couche", self._assign_selection_to_station
         )
+        geom.addSeparator()
+        geom.addAction("Rétablir la géométrie précédente", self.restore_previous_geometry)
         menu.addAction("Zoom", self.zoom_to_stations)
         menu.addSeparator()
         menu.addAction("Supprimer", self.delete_selected)
@@ -1062,13 +1068,47 @@ class OccHabDockWidget(QDockWidget):
         if not wkt:
             self.iface.messageBar().pushInfo("OccHab", "Géométrie vide, station inchangée.")
             return
-        fields = {"geom": wkt, "geom_type": geom_type, "sync_status": "pending"}
+        current = self.db.get_station(station_id)  # mémoriser l'ancienne géométrie
+        fields = {
+            "geom": wkt, "geom_type": geom_type, "sync_status": "pending",
+            "prev_geom": current.get("geom") if current else None,
+            "prev_geom_type": current.get("geom_type") if current else None,
+        }
         for key in ("area", "altitude_min", "altitude_max"):
             if (metrics or {}).get(key) is not None:
                 fields[key] = metrics[key]
         self.db.update_station(station_id, **fields)
         self.logger.info("Géométrie de la station %s mise à jour", station_id)
         self.refresh()
+
+    def restore_previous_geometry(self):
+        """Rétablir la géométrie précédente (échange courante ↔ précédente → réversible)."""
+        station_id = self._selected_station_id()
+        if station_id is None:
+            QMessageBox.information(self, "OccHab", "Sélectionnez une station.")
+            return
+        full = self.db.get_station(station_id)
+        if full is None:
+            return
+        prev = full.get("prev_geom")
+        if not prev:
+            self.iface.messageBar().pushInfo(
+                "OccHab", "Aucune géométrie précédente à rétablir pour cette station."
+            )
+            return
+        prev_type = full.get("prev_geom_type")
+        metrics = self._geo_metrics(prev, prev_type)
+        fields = {
+            "geom": prev, "geom_type": prev_type, "sync_status": "pending",
+            "prev_geom": full.get("geom"), "prev_geom_type": full.get("geom_type"),
+        }
+        for key in ("area", "altitude_min", "altitude_max"):
+            if (metrics or {}).get(key) is not None:
+                fields[key] = metrics[key]
+        self.db.update_station(station_id, **fields)
+        self.logger.info("Géométrie précédente rétablie (station %s)", station_id)
+        self.refresh()
+        self.iface.messageBar().pushInfo("OccHab", "Géométrie précédente rétablie.")
 
     def _geo_metrics(self, wkt, geom_type):
         """Surface (m², polygone) et altitude min/max (MNT serveur si connecté)."""

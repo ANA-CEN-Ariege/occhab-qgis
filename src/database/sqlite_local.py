@@ -32,6 +32,8 @@ CREATE TABLE IF NOT EXISTS t_stations (
     comment TEXT,
     geom TEXT,
     geom_type TEXT,
+    prev_geom TEXT,
+    prev_geom_type TEXT,
     id_nomenclature_geographic_object INTEGER,
     id_nomenclature_exposure INTEGER,
     id_nomenclature_type_sol INTEGER,
@@ -96,6 +98,7 @@ class OccHabDatabase:
         "id_station", "unique_id_sinp_station", "id_dataset", "station_name",
         "date_min", "date_max", "observers_txt", "altitude_min", "altitude_max",
         "depth_min", "depth_max", "area", "comment", "geom", "geom_type",
+        "prev_geom", "prev_geom_type",
         "id_nomenclature_geographic_object", "id_nomenclature_exposure",
         "id_nomenclature_type_sol", "id_nomenclature_area_surface_calculation",
         "id_nomenclature_type_mosaique_habitat",
@@ -144,6 +147,12 @@ class OccHabDatabase:
         if "server_snapshot" not in cols:
             self.connection.execute(
                 "ALTER TABLE t_stations ADD COLUMN server_snapshot TEXT"
+            )
+        if "prev_geom" not in cols:
+            self.connection.execute("ALTER TABLE t_stations ADD COLUMN prev_geom TEXT")
+        if "prev_geom_type" not in cols:
+            self.connection.execute(
+                "ALTER TABLE t_stations ADD COLUMN prev_geom_type TEXT"
             )
 
     # --------------------------------------------------------- stations

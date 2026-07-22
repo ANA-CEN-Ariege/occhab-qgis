@@ -152,45 +152,48 @@ se fait automatiquement.
 
 ## 5. Découvrir l'interface
 
-Le dock est organisé en **deux blocs**, pour bien distinguer ce qui concerne
-**votre poste** de ce qui concerne **GeoNature** :
+Le dock présente, de haut en bas : la **connexion + le JDD** (barre repliable),
+vos **stations locales** avec leurs actions, puis le bloc **Serveur** :
 
 ```
 ┌─────────────────────────────────────────────────────────┐
-│ [Connexion GeoNature…]   Connecté : Roy Cédric (…)        │
-│ JDD :  [ Rechercher un JDD…                           ▾ ] │
-│ [ ] mes stations                    Serveur : 12 station(s)│
+│ ✓ Roy Cédric  ·  JDD : Puech Saint Sauveur    [changer]  │
+│   Serveur : 12 station(s)                                 │
 │─────────────────────────────────────────────────────────│
-│ Mes stations (local)                                      │
-│  ┌─────────────┬──────────┬───────────────┬────────────┐  │
-│  │ Habitat(s)  │ Date     │ Observateur(s)│ État       │  │
-│  └─────────────┴──────────┴───────────────┴────────────┘  │
-│  [＋ Nouvelle station]  géométrie: [x] numériser [Polygone▾]│
-│  [Éditer] [Modifier la géométrie] [Supprimer] [Zoom]      │
+│ Mes stations                                    7 locales │
+│ [✏ Éditer] [⬡ Géométrie ▾] [🔍 Zoom]         [🗑 Supprimer]│
+│  ┌────────────────────┬───────────┬─────────────────┐     │
+│  │ Habitat(s)         │ Date      │ État            │     │
+│  │ 41.711 — Bois de…  │ 2024-06-21│ ✓ Synchronisée  │     │
+│  └────────────────────┴───────────┴─────────────────┘     │
+│  [＋ Nouvelle station ▾]                                  │
 │─────────────────────────────────────────────────────────│
 │ Serveur                                                   │
-│  [Récupérer du serveur] [Rafraîchir] [Synchroniser]       │
+│  [Synchroniser (2)]  [Rafraîchir]                         │
+│  [Récupérer une station du serveur… ▾]                    │
 │─────────────────────────────────────────────────────────│
 │ Base locale : occhab_local.db          [Base locale…]     │
 └─────────────────────────────────────────────────────────┘
 ```
 
-- **Ligne JDD** : sélectionne le jeu de données de travail. La combo est
-  **cherchable** : tapez quelques lettres pour filtrer.
-- **Ligne « mes stations » / compteur serveur** : la case restreint la couche
-  serveur à *vos* stations ; le compteur indique le nombre de stations serveur du
-  JDD.
-- **Bloc « Mes stations (local) »** : le tableau de **vos** saisies + les boutons
-  qui agissent sur la **ligne sélectionnée** (Éditer, Géométrie, Supprimer, Zoom)
-  et la création d'une nouvelle station.
-- **Bloc « Serveur »** : récupérer des stations depuis GeoNature, rafraîchir,
-  synchroniser.
+- **Barre connexion + JDD** (repliable) : cliquez **« changer »** pour la déplier
+  (se connecter, choisir le JDD, filtre « mes stations serveur ») ; elle se replie
+  une fois le JDD choisi. La combo JDD est **cherchable** (tapez pour filtrer).
+- **Mes stations** : le tableau de **vos** saisies. La **barre d'action
+  au-dessus** agit sur la **ligne sélectionnée** (grisée sans sélection) :
+  *Éditer*, *Géométrie ▾*, *Zoom*, *Supprimer* (isolé, destructif). Les mêmes
+  actions sont accessibles par **clic-droit** sur une ligne, et **double-clic**
+  ouvre la station. **« ＋ Nouvelle station ▾ »** la crée (voir §6).
+- **Serveur** : *Synchroniser*, *Rafraîchir*, *Récupérer une station du serveur…*.
+- **Astuce carte** : double-cliquer une station sur la carte (ou cliquer dessus
+  avec l'outil **Identifier des entités**) ouvre son formulaire.
 
 ### Les couches sur la carte
 
 - **OccHab (local)** : vos stations, **colorées selon leur état** :
   - *À synchroniser* (pas encore envoyées ou modifiées),
   - *Synchronisée* (à jour sur GeoNature),
+  - *Conflit* (modifiée aussi côté serveur — à résoudre),
   - *À supprimer* (marquée pour effacement),
 - **OccHab (serveur)** : les stations déjà sur GeoNature pour le JDD choisi, en
   **bleu** et en **lecture seule** (contexte, non modifiable directement).
@@ -201,6 +204,7 @@ Le dock est organisé en **deux blocs**, pour bien distinguer ce qui concerne
 |--------------------|------------------------------------------------------------|
 | **À synchroniser** | Créée ou modifiée localement, pas encore envoyée à GeoNature |
 | **Synchronisée**   | Identique à la version GeoNature                           |
+| **Conflit**        | Modifiée **aussi** sur GeoNature depuis votre dernière synchro — à résoudre |
 | **À supprimer**    | Marquée pour suppression au prochain envoi (réversible)    |
 
 ---
@@ -209,35 +213,39 @@ Le dock est organisé en **deux blocs**, pour bien distinguer ce qui concerne
 
 ### Étape 1 — Créer la station et sa géométrie
 
-1. Choisissez le **type de géométrie** (Polygone, Ligne ou Point) et laissez
-   **« numériser »** coché.
-2. Cliquez **« ＋ Nouvelle station »**.
-3. **Dessinez sur la carte** :
-   - clic gauche pour poser les sommets (l'**accrochage** QGIS est actif, pratique
-     pour se caler sur des objets existants) ;
-   - **clic droit** pour terminer.
-4. Le formulaire de la station s'ouvre. Pour un **polygone**, la **surface** (m²)
-   et l'**altitude min/max** sont déjà remplies automatiquement.
+Cliquez **« ＋ Nouvelle station ▾ »** et choisissez d'où vient la géométrie :
 
-> Vous préférez saisir sans dessiner ? Décochez **« numériser »** avant de cliquer
-> « ＋ Nouvelle station » : vous pourrez ajouter la géométrie plus tard avec
-> **« Modifier la géométrie »**.
+- **Dessiner un polygone** / **Dessiner un point** — dessinez sur la carte : clic
+  gauche pour poser les sommets (l'**accrochage** QGIS est actif, pratique pour se
+  caler sur des objets existants), **clic droit** pour terminer.
+- **Copier l'entité sélectionnée (autre couche)** — sélectionnez d'abord une entité
+  dans une **autre couche** (parcellaire, ancien relevé, trace GPS…), puis
+  choisissez ceci : sa forme est reprise (et reprojetée) pour la station.
+- **Sans géométrie (à tracer plus tard)** — ouvre directement le formulaire ; vous
+  ajouterez la géométrie ensuite via **« Géométrie ▾ »**.
+
+Le formulaire de la station s'ouvre. Pour un **polygone**, la **surface** (m²) et
+l'**altitude min/max** sont déjà remplies automatiquement.
 
 ### Étape 2 — Renseigner la station
 
-Champs principaux :
+Le formulaire est à **deux niveaux**. L'**Essentiel** est toujours visible :
 
 - **Jeu de données (JDD)** — *obligatoire*.
 - **Nom de la station**, **dates** (début / fin).
-- **Observateur(s)** — liste à cocher, avec filtre ; l'utilisateur connecté est
-  pré-coché.
-- **Altitude**, **profondeur**, **surface**, **exposition**, **type de sol**,
-  **type de mosaïque**, **nature d'objet géographique**.
-- **Niveau d'enjeu** / **état de conservation** (voir §13).
-- **Commentaire**.
+- **Observateur(s)** — champ à **autocomplétion** : déroulez pour parcourir la
+  liste, ou **tapez** un nom pour filtrer ; l'observateur choisi s'ajoute dessous
+  (retirable par double-clic ou « Retirer »). L'utilisateur connecté est
+  pré-ajouté.
+- **Niveau d'enjeu** / **état de conservation** (voir §13), **Commentaire**.
+
+Les autres champs (**altitude**, **profondeur**, **surface**, **exposition**,
+**type de sol**, **type de mosaïque**, **nature d'objet géographique**) sont sous
+**« ▸ Détails »** — cliquez pour déplier. En **édition**, cette section se déplie
+d'elle-même si ces champs sont déjà renseignés.
 
 > Certains champs (type de sol, mosaïque…) ne s'affichent que si votre instance
-> GeoNature les propose.
+> GeoNature les propose. **Surface** et **altitude** sont calculées automatiquement.
 
 ### Étape 3 — Ajouter un ou plusieurs habitats
 
@@ -255,8 +263,9 @@ Dans le formulaire, ajoutez au moins un habitat :
 - **Type de détermination**, **abondance**, **intérêt communautaire**.
 - **Niveau d'enjeu** / **état de conservation** de l'habitat (voir §13).
 
-Répétez pour chaque habitat de la station. Un garde-fou demande confirmation avant
-de **retirer** un habitat.
+Répétez pour chaque habitat. La **liste des habitats** de la station affiche, pour
+chacun, son **% de recouvrement**. Un garde-fou demande confirmation avant de
+**retirer** un habitat.
 
 ### Étape 4 — Enregistrer
 
@@ -268,33 +277,51 @@ Validez le formulaire : la station apparaît dans le tableau **« Mes stations
 
 ## 7. Modifier une station
 
-- **Éditer les attributs / habitats** : sélectionnez la station dans le tableau et
-  cliquez **« Éditer »** (ou double-cliquez sur la ligne). Vous pouvez modifier la
-  station, ajouter/retirer des habitats.
-- **Modifier la géométrie** : sélectionnez la station, cliquez **« Modifier la
-  géométrie »**, déplacez/ajoutez/supprimez les sommets sur la carte, puis
-  **Valider** (ou **Annuler**) via les boutons de la barre de message.
+Ouvrez une station de plusieurs façons : **« Éditer »** (barre au-dessus du
+tableau), **double-clic** sur la ligne, **clic-droit → Éditer**, ou — directement
+sur la carte — **double-clic** / clic avec l'outil **Identifier des entités**.
+
+- **Attributs / habitats** : modifiez la station, ajoutez/retirez des habitats.
+- **Géométrie** : bouton **« Géométrie ▾ »** (ou clic-droit → *Modifier la
+  géométrie*) :
+  - *Redessiner / éditer sur la carte* : déplacez/ajoutez/supprimez les sommets,
+    puis **Valider** (ou **Annuler**) via la barre de message. *(Pendant l'édition,
+    **Ctrl+Z** annule le dernier geste ; « Annuler » abandonne toute l'édition.)*
+  - *Copier l'entité sélectionnée d'une autre couche* : remplace la géométrie par
+    celle d'une entité sélectionnée dans une autre couche.
+  - *Rétablir la géométrie précédente* : **annule** le dernier changement de
+    géométrie (re-cliquez pour **refaire** — c'est un échange).
 
 Toute modification repasse la station en **À synchroniser**.
+
+> **Annuler une autre modification ?** En dehors de la géométrie, une modification
+> **enregistrée** écrase l'ancienne valeur en local (pas d'historique). Pour une
+> station déjà sur GeoNature, vous pouvez restaurer la version serveur via
+> *Récupérer du serveur* (§8) — au prix de vos modifications locales non
+> synchronisées.
 
 ---
 
 ## 8. Récupérer des stations depuis le serveur
 
 Utile pour **corriger une station déjà envoyée**, **repartir d'un autre poste**,
-ou **restaurer** une base locale perdue.
+ou **restaurer** une base locale perdue. Choisissez d'abord le bon **JDD**.
 
-1. Assurez-vous d'avoir choisi le bon **JDD** : la couche **« OccHab (serveur) »**
-   affiche ses stations.
-2. Avec l'**outil de sélection de QGIS**, sélectionnez une ou plusieurs stations
-   **sur la carte** (dans la couche serveur).
-3. Cliquez **« Récupérer du serveur »** : elles sont copiées dans votre base
-   locale et deviennent **éditables**.
+Cliquez **« Récupérer une station du serveur… »** — **deux façons** :
 
-> Si une station sélectionnée est **déjà** dans votre base locale, le plugin
-> propose de **remplacer la copie locale par la version du serveur** (utile pour
-> restaurer). Vos modifications locales non synchronisées de ces stations seraient
-> alors écrasées : lisez bien le message.
+- **Depuis la carte (sélection)** : sélectionnez une ou plusieurs stations sur la
+  couche **« OccHab (serveur) »** avec l'**outil de sélection de QGIS**. Si vous
+  n'avez **rien** sélectionné, le plugin active la couche + l'outil et affiche un
+  bouton **« Récupérer la sélection »** : sélectionnez *ensuite*, puis cliquez-le.
+- **Chercher une station…** : un dialogue **liste et filtre** les stations serveur
+  du JDD (par habitat, date, observateur) ; **cochez** celles à récupérer.
+
+Elles sont copiées dans votre base locale et deviennent **éditables**.
+
+> Si une station est **déjà** dans votre base locale, le plugin propose de
+> **remplacer la copie locale par la version du serveur** (utile pour restaurer).
+> Vos modifications locales non synchronisées seraient alors écrasées : lisez bien
+> le message.
 
 Ensuite : éditez comme d'habitude (§7), puis **synchronisez** (§9).
 
@@ -419,8 +446,8 @@ Ce n'est **pas une erreur** : votre instance GeoNature ne fournit pas cette list
 Le champ correspondant (« Type de sol ») est simplement **masqué**. Rien à faire.
 
 ### « Pas de couche vectorielle active » / la numérisation ne démarre pas
-Cliquez d'abord **« ＋ Nouvelle station »** (avec « numériser » coché) : le plugin
-prépare lui-même la couche de dessin. Ne créez pas de couche à la main.
+Utilisez **« ＋ Nouvelle station ▾ → Dessiner un polygone / un point »** : le
+plugin prépare lui-même la couche de dessin. Ne créez pas de couche à la main.
 
 ### Les stations serveur ne s'affichent pas
 - Vous devez être **connecté** et avoir choisi un **JDD précis** (pas « Tous les
