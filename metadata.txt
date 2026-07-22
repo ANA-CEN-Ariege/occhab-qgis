@@ -3,7 +3,7 @@ name=OccHab GeoNature
 qgisMinimumVersion=3.28
 qgisMaximumVersion=3.99
 description=Offline-first data entry for GeoNature's OccHab module (habitat stations) from QGIS, with local SQLite storage and synchronisation to the GeoNature REST API.
-version=0.2.4
+version=0.2.5
 author=Cédric Roy
 email=it@ariegenature.fr
 license=GPL-3.0-or-later
@@ -32,7 +32,13 @@ icon=resources/icons/occhab.svg
 experimental=True
 deprecated=False
 
-changelog=0.2.4 - Observer field: type-ahead autocomplete (browse or type) with the
+changelog=0.2.5 - Reworked dock: per-station action toolbar above the list (+ right
+    click menu), collapsible "Détails" in the station form, scrollable panel, geometry
+    and new-station menus, and map click / double-click to open a station. Undo a
+    geometry change ("Rétablir la géométrie précédente"). Export a JDD's habitat
+    cartography (flat view, one row per habitat, official HABREF label) to GeoPackage
+    and Shapefile. Dead-code cleanup and tests.
+    0.2.4 - Observer field: type-ahead autocomplete (browse or type) with the
     chosen observers listed and removable. Retrieving server stations from the map
     now lets you select AFTER clicking (a message-bar button confirms) instead of
     requiring a prior selection.
