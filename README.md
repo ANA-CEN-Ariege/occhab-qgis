@@ -216,7 +216,8 @@ locale… »** :
   (vos couches locales).
 - **Exporter la cartographie du JDD (serveur)** : récupère **toutes** les stations
   du JDD sur GeoNature et les écrit en **vue à plat** (une ligne par habitat, avec
-  libellés résolus — habitat, recouvrement, enjeu, état, observateurs…) en
+  libellés résolus — **nom d'habitat officiel HABREF** (`GET habref/habitat/<cd_hab>`)
+  + code + nom cité, recouvrement, enjeu, état, observateurs, nomenclatures…) en
   **GeoPackage** *et* **Shapefile** (une couche / un fichier par type de géométrie).
 
 ---

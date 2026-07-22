@@ -144,6 +144,14 @@ class GeoNatureAPIClient:
         result = self._make_request("GET", "habref/habitats/autocomplete", params=params)
         return result if isinstance(result, list) else []
 
+    def get_habref(self, cd_hab):
+        """Détail HABREF d'un habitat par cd_hab (GET habref/habitat/<cd_hab>).
+
+        Renvoie le dict de l'habitat (`lb_hab_fr`, `lb_hab_fr_complet`, `lb_code`…).
+        Un cd_hab inexistant fait renvoyer une erreur par l'API → GeoNatureAPIError.
+        """
+        return self._make_request("GET", "habref/habitat/%s" % int(cd_hab))
+
     def get_habref_typologies(self, params=None):
         """Typologies HABREF (/habref/typo) : cd_typo + lb_nom_typo (Corine, EUNIS…)."""
         result = self._make_request("GET", "habref/typo", params=params)

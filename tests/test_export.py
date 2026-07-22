@@ -21,11 +21,14 @@ def test_flatten_one_row_per_habitat():
     observers = [{"id_role": 7, "observer_name": "Roy Cédric"}]
     labels = {100: "Sud", 200: "Abondant"}
 
+    habref = {5130: {"nom": "Chênaies-charmaies", "code": "41.2"}}
+
     rows = ex.flatten_cartography(
         [(station, habitats, observers)],
         nomenclature_label=labels.get,
         jdd_name="JDD test",
         role_label={7: "Roy Cédric"}.get,
+        habref_label=habref.get,
     )
 
     assert len(rows) == 2  # une ligne par habitat
@@ -38,14 +41,17 @@ def test_flatten_one_row_per_habitat():
     assert first["st_enjeu"] == "fort"
     assert first["st_etat_cons"] == "moyen"
     assert first["cd_hab"] == 5130
+    assert first["habitat_officiel"] == "Chênaies-charmaies"  # libellé HABREF résolu
+    assert first["code_habref"] == "41.2"
     assert first["nom_cite"] == "Fruticées"
     assert first["recouvrement"] == 45
     assert first["abondance"] == "Abondant"
     assert first["_geom_type"] == "polygon"
     assert first["_geom"].startswith("POLYGON")
 
-    # 2e habitat : abondance non renseignée → None (label appelé sur None)
+    # 2e habitat : cd_hab non résolu et abondance non renseignée → None
     assert rows[1]["cd_hab"] == 5140
+    assert rows[1]["habitat_officiel"] is None
     assert rows[1]["abondance"] is None
 
 

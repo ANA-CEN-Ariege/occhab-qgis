@@ -1561,11 +1561,29 @@ class OccHabDockWidget(QDockWidget):
 
         nomenclature_map = self._nomenclature_id_label_map()
         role_map = dict(self._observers_items())
+        habref_cache = {}
+
+        def habref_label(cd_hab):
+            if cd_hab is None:
+                return None
+            if cd_hab not in habref_cache:
+                try:
+                    data = self.client.get_habref(cd_hab)
+                    habref_cache[cd_hab] = {
+                        "nom": data.get("lb_hab_fr") or data.get("lb_hab_fr_complet"),
+                        "code": data.get("lb_code"),
+                    } if isinstance(data, dict) else None
+                except Exception as exc:  # noqa: BLE001 - cd_hab absent → repli sur nom_cite
+                    self.logger.warning("Libellé HABREF %s non résolu : %s", cd_hab, exc)
+                    habref_cache[cd_hab] = None
+            return habref_cache[cd_hab]
+
         rows = flatten_cartography(
             parsed,
             nomenclature_label=nomenclature_map.get,
             jdd_name=self.combo_jdd.currentText(),
             role_label=role_map.get,
+            habref_label=habref_label,
         )
         try:
             written = self._write_cartography(target, rows)

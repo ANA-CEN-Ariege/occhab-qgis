@@ -26,9 +26,9 @@ STATION_FIELDS = [
     "nature_objet", "type_sol", "type_mosaique", "st_enjeu", "st_etat_cons",
 ]
 HABITAT_FIELDS = [
-    "id_habitat", "cd_hab", "nom_cite", "determinateur", "recouvrement",
-    "technique", "determination", "abondance", "sensibilite", "interet_com",
-    "hab_enjeu", "hab_etat_cons",
+    "id_habitat", "cd_hab", "code_habref", "habitat_officiel", "nom_cite",
+    "determinateur", "recouvrement", "technique", "determination", "abondance",
+    "sensibilite", "interet_com", "hab_enjeu", "hab_etat_cons",
 ]
 FIELDS = STATION_FIELDS + HABITAT_FIELDS
 NUMERIC_FIELDS = {
@@ -45,7 +45,7 @@ def _to_float(value):
 
 
 def flatten_cartography(stations, nomenclature_label=None, jdd_name=None,
-                        role_label=None):
+                        role_label=None, habref_label=None):
     """Renvoyer une liste de lignes (dicts) — une par habitat.
 
     Args:
@@ -60,6 +60,7 @@ def flatten_cartography(stations, nomenclature_label=None, jdd_name=None,
     """
     label = nomenclature_label or (lambda _i: None)
     role = role_label or (lambda _i: None)
+    habref = habref_label or (lambda _c: None)
     rows = []
     for station, habitats, observers in stations:
         st_eval = decode_eval(station.get("comment") or "")
@@ -100,9 +101,12 @@ def flatten_cartography(stations, nomenclature_label=None, jdd_name=None,
                 recouvrement = habitat.get("recovery_percentage")
                 if recouvrement is None:
                     recouvrement = _to_float(hab_eval.get("recouvrement"))
+                official = habref(habitat.get("cd_hab")) or {}
                 row.update({
                     "id_habitat": habitat.get("id_habitat"),
                     "cd_hab": habitat.get("cd_hab"),
+                    "code_habref": official.get("code"),
+                    "habitat_officiel": official.get("nom"),
                     "nom_cite": habitat.get("nom_cite"),
                     "determinateur": habitat.get("determiner"),
                     "recouvrement": recouvrement,
