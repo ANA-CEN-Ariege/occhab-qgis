@@ -75,17 +75,6 @@ CREATE TABLE IF NOT EXISTS cor_station_observer (
     FOREIGN KEY(id_station_local) REFERENCES t_stations(id) ON DELETE CASCADE
 );
 
-CREATE TABLE IF NOT EXISTS t_sync_queue (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    entity_type TEXT,
-    entity_id INTEGER,
-    operation TEXT,
-    data TEXT,
-    date_created TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    date_sent TIMESTAMP,
-    status TEXT DEFAULT 'pending'
-);
-
 CREATE TABLE IF NOT EXISTS t_sync_log (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     date_sync TIMESTAMP,
@@ -349,9 +338,6 @@ class OccHabDatabase:
     # ------------------------------------------------------- synchro
     def get_pending_stations(self):
         return self.get_all_stations(sync_status="pending")
-
-    def get_conflict_stations(self):
-        return self.get_all_stations(sync_status="conflict")
 
     def set_server_snapshot(self, station_id, snapshot):
         """Mémoriser l'empreinte serveur connue d'une station (détection de conflit)."""

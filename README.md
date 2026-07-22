@@ -56,9 +56,9 @@ Aligné sur le schéma `pr_occhab` réel :
 ### Base SQLite locale (miroir)
 
 `occhab_local.db` : `t_stations`, `t_habitats`, `cor_station_observer`,
-`t_sync_queue`, `t_sync_log`. Chaque station porte un `sync_status`
-(`pending` / `synced` / `to_delete`) et un indicateur `mine` (données créées par
-l'utilisateur, seules supprimables via le plugin).
+`t_sync_log`. Chaque station porte un `sync_status`
+(`pending` / `synced` / `conflict` / `to_delete`) et un indicateur `mine` (données
+créées par l'utilisateur, seules supprimables via le plugin).
 
 ---
 
