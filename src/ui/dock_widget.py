@@ -172,6 +172,50 @@ class OccHabDockWidget(QDockWidget):
         row_head.addWidget(self.label_count)
         layout.addLayout(row_head)
 
+        # Barre d'action ancrée AU-DESSUS de la liste (idiome QGIS : agit sur la
+        # station sélectionnée). Icône + texte, grisée sans sélection ; Supprimer
+        # (destructif) isolé à droite et en rouge.
+        self.btn_edit = self._action_button(
+            "Éditer", "/mActionMultiEdit.svg",
+            "Éditer les attributs et habitats de la station sélectionnée.",
+        )
+        self.btn_edit.clicked.connect(self.edit_station)
+        self.btn_geom = self._action_button(
+            "Géométrie", "/mActionVertexTool.svg",
+            "Modifier la géométrie de la station sélectionnée.",
+        )
+        geom_menu = QMenu(self.btn_geom)
+        geom_menu.setToolTipsVisible(True)
+        geom_menu.addAction("Redessiner / éditer sur la carte", self.edit_geometry)
+        act_reuse_geom = geom_menu.addAction(
+            "Copier l'entité sélectionnée (autre couche)", self._assign_selection_to_station
+        )
+        act_reuse_geom.setToolTip(
+            "Sélectionnez d'abord une entité dans une autre couche, puis choisissez ceci."
+        )
+        self.btn_geom.setMenu(geom_menu)
+        self.btn_geom.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        self.btn_zoom = self._action_button(
+            "Zoom", "/mActionZoomToSelected.svg",
+            "Zoomer sur la station sélectionnée ; sans sélection, sur l'emprise du JDD.",
+        )
+        self.btn_zoom.clicked.connect(self.zoom_to_stations)
+        self.btn_delete = self._action_button(
+            "Supprimer", "/mActionDeleteSelected.svg",
+            "Supprimer la station sélectionnée.",
+        )
+        self.btn_delete.clicked.connect(self.delete_selected)
+        self.btn_delete.setStyleSheet("QToolButton { color: #b23125; }")
+        row_actions = QHBoxLayout()
+        row_actions.setSpacing(3)
+        row_actions.setContentsMargins(0, 0, 0, 0)
+        row_actions.addWidget(self.btn_edit)
+        row_actions.addWidget(self.btn_geom)
+        row_actions.addWidget(self.btn_zoom)
+        row_actions.addStretch(1)
+        row_actions.addWidget(self.btn_delete)
+        layout.addLayout(row_actions)
+
         self.table = QTableWidget(0, 3)
         self.table.setHorizontalHeaderLabels(["Habitat(s)", "Date", "État"])
         header = self.table.horizontalHeader()
@@ -184,48 +228,9 @@ class OccHabDockWidget(QDockWidget):
         self.table.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
         self.table.cellDoubleClicked.connect(lambda _r, _c: self.edit_station())
         self.table.itemSelectionChanged.connect(self._on_selection_changed)
+        self.table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.table.customContextMenuRequested.connect(self._table_context_menu)
         layout.addWidget(self.table, 1)
-
-        # Barre d'action fixe : agit sur la station sélectionnée (grisée sinon).
-        # Deux rangées groupées par sens : édition (attributs / géométrie), puis
-        # utilitaires (zoom / suppression). Libellés explicites, boutons à largeur égale.
-        self.btn_edit = QPushButton("Éditer")
-        self.btn_edit.setToolTip("Éditer les attributs et habitats de la station sélectionnée.")
-        self.btn_edit.clicked.connect(self.edit_station)
-        self.btn_geom = QPushButton("Modifier la géométrie")
-        self.btn_geom.setToolTip("Modifier la géométrie de la station sélectionnée.")
-        geom_menu = QMenu(self.btn_geom)
-        geom_menu.setToolTipsVisible(True)
-        geom_menu.addAction("Redessiner / éditer sur la carte", self.edit_geometry)
-        act_reuse_geom = geom_menu.addAction(
-            "Copier l'entité sélectionnée (autre couche)", self._assign_selection_to_station
-        )
-        act_reuse_geom.setToolTip(
-            "Sélectionnez d'abord une entité dans une autre couche, puis choisissez ceci."
-        )
-        self.btn_geom.setMenu(geom_menu)
-        self.btn_zoom = QPushButton("Zoom")
-        self.btn_zoom.setToolTip(
-            "Zoomer sur la station sélectionnée ; sans sélection, sur l'emprise du JDD."
-        )
-        self.btn_zoom.clicked.connect(self.zoom_to_stations)
-        self.btn_delete = QPushButton("Supprimer")
-        self.btn_delete.setToolTip("Supprimer la station sélectionnée.")
-        self.btn_delete.clicked.connect(self.delete_selected)
-        row_act1 = QHBoxLayout()
-        row_act1.setSpacing(4)
-        row_act1.addWidget(self.btn_edit, 1)
-        row_act1.addWidget(self.btn_geom, 1)
-        layout.addLayout(row_act1)
-        row_act2 = QHBoxLayout()
-        row_act2.setSpacing(4)
-        row_act2.addWidget(self.btn_zoom, 1)
-        row_act2.addWidget(self.btn_delete, 1)
-        layout.addLayout(row_act2)
-
-        self.label_hint = QLabel("Sélectionnez une station pour l'éditer.")
-        self.label_hint.setStyleSheet("color: palette(mid); font-size: 11px;")
-        layout.addWidget(self.label_hint)
 
         # Créer une nouvelle station : un seul menu répond à « d'où vient la
         # géométrie ? » (dessiner, reprendre une entité d'une couche, ou aucune).
@@ -327,7 +332,37 @@ class OccHabDockWidget(QDockWidget):
         has = self._selected_station_id() is not None
         for btn in (self.btn_edit, self.btn_geom, self.btn_delete):
             btn.setEnabled(has)
-        self.label_hint.setText("" if has else "Sélectionnez une station pour l'éditer.")
+
+    def _action_button(self, text, icon_name, tooltip):
+        """Bouton d'action icône + texte (icône du thème QGIS, repli sur le texte)."""
+        from qgis.core import QgsApplication
+
+        button = QToolButton()
+        button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        button.setText(text)
+        button.setToolTip(tooltip)
+        icon = QgsApplication.getThemeIcon(icon_name)
+        if icon is not None and not icon.isNull():
+            button.setIcon(icon)
+        return button
+
+    def _table_context_menu(self, pos):
+        """Menu clic-droit sur une station (mêmes actions que la barre)."""
+        index = self.table.indexAt(pos)
+        if not index.isValid():
+            return
+        self.table.selectRow(index.row())
+        menu = QMenu(self.table)
+        menu.addAction("Éditer", self.edit_station)
+        geom = menu.addMenu("Modifier la géométrie")
+        geom.addAction("Redessiner / éditer sur la carte", self.edit_geometry)
+        geom.addAction(
+            "Copier l'entité sélectionnée (autre couche)", self._assign_selection_to_station
+        )
+        menu.addAction("Zoom", self.zoom_to_stations)
+        menu.addSeparator()
+        menu.addAction("Supprimer", self.delete_selected)
+        menu.exec(self.table.viewport().mapToGlobal(pos))
 
     # (glyphe, libellé, texte, fond OPAQUE, bordure). Fond opaque : le chip reste
     # lisible même quand la ligne est sélectionnée (surlignage bleu par-dessous).
