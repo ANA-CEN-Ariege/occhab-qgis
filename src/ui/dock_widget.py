@@ -195,9 +195,13 @@ class OccHabDockWidget(QDockWidget):
         self.btn_geom = QPushButton("Modifier la géométrie")
         self.btn_geom.setToolTip("Modifier la géométrie de la station sélectionnée.")
         geom_menu = QMenu(self.btn_geom)
+        geom_menu.setToolTipsVisible(True)
         geom_menu.addAction("Redessiner / éditer sur la carte", self.edit_geometry)
-        geom_menu.addAction(
-            "Reprendre l'entité sélectionnée", self._assign_selection_to_station
+        act_reuse_geom = geom_menu.addAction(
+            "Copier l'entité sélectionnée (autre couche)", self._assign_selection_to_station
+        )
+        act_reuse_geom.setToolTip(
+            "Sélectionnez d'abord une entité dans une autre couche, puis choisissez ceci."
         )
         self.btn_geom.setMenu(geom_menu)
         self.btn_zoom = QPushButton("Zoom")
@@ -227,10 +231,14 @@ class OccHabDockWidget(QDockWidget):
         # géométrie ? » (dessiner, reprendre une entité d'une couche, ou aucune).
         self.btn_new = QPushButton("＋ Nouvelle station")
         new_menu = QMenu(self.btn_new)
+        new_menu.setToolTipsVisible(True)
         new_menu.addAction("Dessiner un polygone", lambda: self._new_station_draw("polygon"))
         new_menu.addAction("Dessiner un point", lambda: self._new_station_draw("point"))
-        new_menu.addAction(
-            "Reprendre l'entité sélectionnée", self._new_station_from_selection
+        act_reuse_new = new_menu.addAction(
+            "Copier l'entité sélectionnée (autre couche)", self._new_station_from_selection
+        )
+        act_reuse_new.setToolTip(
+            "Sélectionnez d'abord une entité dans une autre couche, puis choisissez ceci."
         )
         new_menu.addSeparator()
         new_menu.addAction("Sans géométrie (à tracer plus tard)", self._new_station_no_geom)
