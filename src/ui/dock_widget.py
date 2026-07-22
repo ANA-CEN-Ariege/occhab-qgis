@@ -20,6 +20,7 @@ from qgis.PyQt.QtWidgets import (
     QMenu,
     QMessageBox,
     QPushButton,
+    QScrollArea,
     QTableWidget,
     QTableWidgetItem,
     QToolButton,
@@ -192,8 +193,13 @@ class OccHabDockWidget(QDockWidget):
         self.btn_edit.setToolTip("Éditer les attributs et habitats de la station sélectionnée.")
         self.btn_edit.clicked.connect(self.edit_station)
         self.btn_geom = QPushButton("Modifier la géométrie")
-        self.btn_geom.setToolTip("Modifier / (re)numériser la géométrie de la station.")
-        self.btn_geom.clicked.connect(self.edit_geometry)
+        self.btn_geom.setToolTip("Modifier la géométrie de la station sélectionnée.")
+        geom_menu = QMenu(self.btn_geom)
+        geom_menu.addAction("Redessiner / éditer sur la carte", self.edit_geometry)
+        geom_menu.addAction(
+            "Reprendre l'entité sélectionnée", self._assign_selection_to_station
+        )
+        self.btn_geom.setMenu(geom_menu)
         self.btn_zoom = QPushButton("Zoom")
         self.btn_zoom.setToolTip(
             "Zoomer sur la station sélectionnée ; sans sélection, sur l'emprise du JDD."
@@ -217,45 +223,19 @@ class OccHabDockWidget(QDockWidget):
         self.label_hint.setStyleSheet("color: palette(mid); font-size: 11px;")
         layout.addWidget(self.label_hint)
 
-        # Créer une nouvelle station (+ type de géométrie à numériser).
-        row_new = QHBoxLayout()
+        # Créer une nouvelle station : un seul menu répond à « d'où vient la
+        # géométrie ? » (dessiner, reprendre une entité d'une couche, ou aucune).
         self.btn_new = QPushButton("＋ Nouvelle station")
-        self.btn_new.clicked.connect(self.new_station)
-        row_new.addWidget(self.btn_new, 1)
-        self.check_digitize = QCheckBox("Dessiner sur la carte")
-        self.check_digitize.setChecked(True)
-        self.check_digitize.setToolTip(
-            "Coché : dessiner la forme sur la carte à la création.\n"
-            "Décoché : créer la station sans géométrie (à tracer plus tard via "
-            "« Modifier la géométrie »)."
+        new_menu = QMenu(self.btn_new)
+        new_menu.addAction("Dessiner un polygone", lambda: self._new_station_draw("polygon"))
+        new_menu.addAction("Dessiner un point", lambda: self._new_station_draw("point"))
+        new_menu.addAction(
+            "Reprendre l'entité sélectionnée", self._new_station_from_selection
         )
-        self.check_digitize.stateChanged.connect(
-            lambda _s: self.combo_geomtype.setEnabled(self.check_digitize.isChecked())
-        )
-        row_new.addWidget(self.check_digitize)
-        self.combo_geomtype = QComboBox()
-        for label, code in _GEOM_TYPES:
-            self.combo_geomtype.addItem(label, code)
-        row_new.addWidget(self.combo_geomtype)
-        layout.addLayout(row_new)
-
-        # Reprendre une géométrie existante d'une couche (entité sélectionnée).
-        self.btn_reprise = QPushButton("Reprendre une géométrie d'une couche…")
-        self.btn_reprise.setToolTip(
-            "Utiliser la géométrie de l'entité sélectionnée dans la couche active "
-            "(reprojetée automatiquement en EPSG:4326)."
-        )
-        reprise_menu = QMenu(self.btn_reprise)
-        reprise_menu.addAction(
-            "Nouvelle station depuis l'entité sélectionnée",
-            self._new_station_from_selection,
-        )
-        reprise_menu.addAction(
-            "Affecter à la station sélectionnée dans la liste",
-            self._assign_selection_to_station,
-        )
-        self.btn_reprise.setMenu(reprise_menu)
-        layout.addWidget(self.btn_reprise)
+        new_menu.addSeparator()
+        new_menu.addAction("Sans géométrie (à tracer plus tard)", self._new_station_no_geom)
+        self.btn_new.setMenu(new_menu)
+        layout.addWidget(self.btn_new)
 
         # Contexte SERVEUR : synchroniser, rafraîchir, récupérer (deux chemins).
         label_srv = QLabel("Serveur")
@@ -302,7 +282,13 @@ class OccHabDockWidget(QDockWidget):
         footer.addWidget(btn_storage)
         layout.addLayout(footer)
 
-        self.setWidget(container)
+        # Ascenseur : le panneau peut être plus haut que le dock ; sans scroll, le
+        # bas (section Serveur, pied) se ferait couper sur un dock court.
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setWidget(container)
+        self.setWidget(scroll)
         self._update_conn_summary()
         self._on_selection_changed()
 
@@ -870,12 +856,15 @@ class OccHabDockWidget(QDockWidget):
         self.iface.messageBar().pushInfo("OccHab", "Récupération : %s." % ", ".join(parts))
 
     # -------------------------------------------------- saisie + géométrie
-    def new_station(self):
+    def _new_station_draw(self, geom_type):
+        """Créer une station en dessinant sa géométrie sur la carte."""
         self._capture_target = "new"
-        if self.check_digitize.isChecked():
-            self._start_capture()
-        else:
-            self._open_station_dialog(None, None)
+        self._start_capture(geom_type)
+
+    def _new_station_no_geom(self):
+        """Créer une station sans géométrie (à tracer plus tard)."""
+        self._capture_target = "new"
+        self._open_station_dialog(None, None)
 
     # ------------------------------------------ reprise de géométrie (couche)
     def _new_station_from_selection(self):
@@ -972,9 +961,9 @@ class OccHabDockWidget(QDockWidget):
         if wkt and geom_type:  # géométrie existante → édition des sommets
             self._edit_geom_station_id = station_id
             self._ensure_geom_editor().start(wkt, geom_type)
-        else:  # pas de géométrie → numérisation d'une nouvelle
+        else:  # pas de géométrie → numérisation d'une nouvelle (polygone par défaut)
             self._capture_target = station_id
-            self._start_capture()
+            self._start_capture("polygon")
 
     def _ensure_geom_editor(self):
         if self._geom_editor is None:
@@ -1005,8 +994,8 @@ class OccHabDockWidget(QDockWidget):
             self._capture.cancelled.connect(self._on_capture_cancelled)
         return self._capture
 
-    def _start_capture(self):
-        self._ensure_capture().start(self.combo_geomtype.currentData())
+    def _start_capture(self, geom_type):
+        self._ensure_capture().start(geom_type)
         self.iface.messageBar().pushInfo(
             "OccHab",
             "Numérisez la station (accrochage QGIS actif, clic droit pour "

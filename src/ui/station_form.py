@@ -15,6 +15,7 @@ from qgis.PyQt.QtWidgets import (
     QPushButton,
     QSpinBox,
     QTextEdit,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
@@ -56,6 +57,7 @@ class StationForm(QWidget):
     def _build(self):
         form = QFormLayout(self)
 
+        # ===================== Essentiel (toujours visible) =====================
         self.label_geom = QLabel("Aucune géométrie")
         form.addRow("Géométrie", self.label_geom)
 
@@ -90,62 +92,8 @@ class StationForm(QWidget):
         self.date_max.setCalendarPopup(True)
         form.addRow("Date fin", self.date_max)
 
-        self.spin_alt_min = QSpinBox()
-        self.spin_alt_min.setRange(0, 9000)
-        form.addRow("Altitude min", self.spin_alt_min)
-
-        self.spin_alt_max = QSpinBox()
-        self.spin_alt_max.setRange(0, 9000)
-        form.addRow("Altitude max", self.spin_alt_max)
-
-        # Profondeur (m) — pour les stations en milieu aquatique/marin.
-        self.spin_depth_min = QSpinBox()
-        self.spin_depth_min.setRange(0, 12000)
-        self.spin_depth_min.setSpecialValueText("—")  # 0 = non renseigné
-        form.addRow("Profondeur min", self.spin_depth_min)
-
-        self.spin_depth_max = QSpinBox()
-        self.spin_depth_max.setRange(0, 12000)
-        self.spin_depth_max.setSpecialValueText("—")
-        form.addRow("Profondeur max", self.spin_depth_max)
-
-        # Type de sol / mosaïque : champs absents des instances GeoNature anciennes
-        # (nomenclature non fournie) → on ne crée le menu que si des valeurs existent.
-        self.combo_type_sol = None
-        if self.nomenclatures.get("type_sol"):
-            self.combo_type_sol = QComboBox()
-            fill_eval_combo(self.combo_type_sol, self.nomenclatures["type_sol"])
-            select_combo_data(self.combo_type_sol, self._defaults.get("type_sol"))
-            form.addRow("Type de sol", self.combo_type_sol)
-
-        self.combo_mosaique = None
-        if self.nomenclatures.get("mosaique"):
-            self.combo_mosaique = QComboBox()
-            fill_eval_combo(self.combo_mosaique, self.nomenclatures["mosaique"])
-            select_combo_data(self.combo_mosaique, self._defaults.get("mosaique"))
-            form.addRow("Type de mosaïque d'habitats", self.combo_mosaique)
-
-        self.combo_exposure = QComboBox()
-        fill_eval_combo(self.combo_exposure, self.nomenclatures.get("exposure", []))
-        select_combo_data(self.combo_exposure, self._defaults.get("exposure"))
-        form.addRow("Exposition", self.combo_exposure)
-
-        self.spin_area = QSpinBox()
-        self.spin_area.setRange(0, 2_000_000_000)
-        self.spin_area.setSuffix(" m²")
-        form.addRow("Surface", self.spin_area)
-
-        self.combo_surface_method = QComboBox()
-        fill_eval_combo(self.combo_surface_method, self.nomenclatures.get("surface_method", []))
-        select_combo_data(self.combo_surface_method, self._defaults.get("surface_method"))
-        form.addRow("Méthode de calcul de la surface", self.combo_surface_method)
-
-        self.combo_geo_object = QComboBox()
-        fill_eval_combo(self.combo_geo_object, self.nomenclatures.get("geo_object", []))
-        select_combo_data(self.combo_geo_object, self._defaults.get("geo_object"))
-        form.addRow("Nature objet géographique", self.combo_geo_object)
-
-        # Extension ANA : encodés dans le commentaire (voir README §6).
+        # Extension ANA (encodés dans le commentaire, voir README §6) — gardés
+        # visibles car souvent renseignés.
         self.combo_enjeu = QComboBox()
         fill_eval_combo(self.combo_enjeu, NIVEAUX_ENJEU)
         form.addRow("Niveau d'enjeu", self.combo_enjeu)
@@ -158,6 +106,85 @@ class StationForm(QWidget):
         self.text_comment.setPlaceholderText("Commentaire libre…")
         self.text_comment.setMaximumHeight(70)
         form.addRow("Commentaire", self.text_comment)
+
+        # ================= Détails (repliés par défaut) =================
+        self.btn_details = QToolButton()
+        self.btn_details.setAutoRaise(True)
+        self.btn_details.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_details.setStyleSheet("QToolButton { border: none; font-weight: 600; }")
+        self.btn_details.clicked.connect(self._toggle_details)
+        form.addRow(self.btn_details)
+
+        self.details = QWidget()
+        details_form = QFormLayout(self.details)
+        details_form.setContentsMargins(12, 0, 0, 0)
+
+        self.spin_alt_min = QSpinBox()
+        self.spin_alt_min.setRange(0, 9000)
+        details_form.addRow("Altitude min", self.spin_alt_min)
+
+        self.spin_alt_max = QSpinBox()
+        self.spin_alt_max.setRange(0, 9000)
+        details_form.addRow("Altitude max", self.spin_alt_max)
+
+        # Profondeur (m) — pour les stations en milieu aquatique/marin.
+        self.spin_depth_min = QSpinBox()
+        self.spin_depth_min.setRange(0, 12000)
+        self.spin_depth_min.setSpecialValueText("—")  # 0 = non renseigné
+        details_form.addRow("Profondeur min", self.spin_depth_min)
+
+        self.spin_depth_max = QSpinBox()
+        self.spin_depth_max.setRange(0, 12000)
+        self.spin_depth_max.setSpecialValueText("—")
+        details_form.addRow("Profondeur max", self.spin_depth_max)
+
+        # Type de sol / mosaïque : champs absents des instances GeoNature anciennes
+        # (nomenclature non fournie) → on ne crée le menu que si des valeurs existent.
+        self.combo_type_sol = None
+        if self.nomenclatures.get("type_sol"):
+            self.combo_type_sol = QComboBox()
+            fill_eval_combo(self.combo_type_sol, self.nomenclatures["type_sol"])
+            select_combo_data(self.combo_type_sol, self._defaults.get("type_sol"))
+            details_form.addRow("Type de sol", self.combo_type_sol)
+
+        self.combo_mosaique = None
+        if self.nomenclatures.get("mosaique"):
+            self.combo_mosaique = QComboBox()
+            fill_eval_combo(self.combo_mosaique, self.nomenclatures["mosaique"])
+            select_combo_data(self.combo_mosaique, self._defaults.get("mosaique"))
+            details_form.addRow("Type de mosaïque d'habitats", self.combo_mosaique)
+
+        self.combo_exposure = QComboBox()
+        fill_eval_combo(self.combo_exposure, self.nomenclatures.get("exposure", []))
+        select_combo_data(self.combo_exposure, self._defaults.get("exposure"))
+        details_form.addRow("Exposition", self.combo_exposure)
+
+        self.spin_area = QSpinBox()
+        self.spin_area.setRange(0, 2_000_000_000)
+        self.spin_area.setSuffix(" m²")
+        details_form.addRow("Surface", self.spin_area)
+
+        self.combo_surface_method = QComboBox()
+        fill_eval_combo(self.combo_surface_method, self.nomenclatures.get("surface_method", []))
+        select_combo_data(self.combo_surface_method, self._defaults.get("surface_method"))
+        details_form.addRow("Méthode de calcul de la surface", self.combo_surface_method)
+
+        self.combo_geo_object = QComboBox()
+        fill_eval_combo(self.combo_geo_object, self.nomenclatures.get("geo_object", []))
+        select_combo_data(self.combo_geo_object, self._defaults.get("geo_object"))
+        details_form.addRow("Nature objet géographique", self.combo_geo_object)
+
+        form.addRow(self.details)
+        self._set_details_visible(False)  # replié par défaut
+
+    def _set_details_visible(self, visible):
+        self.details.setVisible(visible)
+        self.btn_details.setText(
+            ("▾ " if visible else "▸ ") + "Détails (altitude, surface, exposition, sol…)"
+        )
+
+    def _toggle_details(self):
+        self._set_details_visible(not self.details.isVisible())
 
     # -------------------------------------------------------- observateurs
     def _build_observers_widget(self):
@@ -354,6 +381,16 @@ class StationForm(QWidget):
         codes = decode_eval(comment)
         select_combo_data(self.combo_enjeu, codes.get("enjeu"))
         select_combo_data(self.combo_etat, codes.get("etat_conservation"))
+
+        # Déplier « Détails » si la station en contient déjà (ne pas cacher de valeurs).
+        detail_keys = (
+            "altitude_min", "altitude_max", "depth_min", "depth_max", "area",
+            "id_nomenclature_exposure", "id_nomenclature_area_surface_calculation",
+            "id_nomenclature_geographic_object", "id_nomenclature_type_sol",
+            "id_nomenclature_type_mosaique_habitat",
+        )
+        if any(station.get(k) for k in detail_keys):
+            self._set_details_visible(True)
 
 
 def _current_user():
