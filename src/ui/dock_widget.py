@@ -194,7 +194,7 @@ class OccHabDockWidget(QDockWidget):
             "Sélectionnez d'abord une entité dans une autre couche, puis choisissez ceci."
         )
         geom_menu.addSeparator()
-        geom_menu.addAction(
+        self.action_restore_geom = geom_menu.addAction(
             "Rétablir la géométrie précédente", self.restore_previous_geometry
         )
         self.btn_geom.setMenu(geom_menu)
@@ -336,9 +336,16 @@ class OccHabDockWidget(QDockWidget):
 
     def _on_selection_changed(self):
         """Activer la barre d'action seulement quand une station est sélectionnée."""
-        has = self._selected_station_id() is not None
+        station_id = self._selected_station_id()
+        has = station_id is not None
         for btn in (self.btn_edit, self.btn_geom, self.btn_delete):
             btn.setEnabled(has)
+        # « Rétablir la géométrie précédente » : grisé s'il n'y a rien à rétablir.
+        has_prev = False
+        if has:
+            full = self.db.get_station(station_id)
+            has_prev = bool(full and full.get("prev_geom"))
+        self.action_restore_geom.setEnabled(has_prev)
 
     def _action_button(self, text, icon_name, tooltip):
         """Bouton d'action icône + texte (icône du thème QGIS, repli sur le texte)."""
@@ -367,7 +374,11 @@ class OccHabDockWidget(QDockWidget):
             "Copier l'entité sélectionnée d'une autre couche", self._assign_selection_to_station
         )
         geom.addSeparator()
-        geom.addAction("Rétablir la géométrie précédente", self.restore_previous_geometry)
+        restore_act = geom.addAction(
+            "Rétablir la géométrie précédente", self.restore_previous_geometry
+        )
+        full = self.db.get_station(self._selected_station_id())
+        restore_act.setEnabled(bool(full and full.get("prev_geom")))
         menu.addAction("Zoom", self.zoom_to_stations)
         menu.addSeparator()
         menu.addAction("Supprimer", self.delete_selected)
