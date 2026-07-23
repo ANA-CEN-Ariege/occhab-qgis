@@ -244,10 +244,13 @@ class OccHabDockWidget(QDockWidget):
         new_menu.addAction("Dessiner un polygone", lambda: self._new_station_draw("polygon"))
         new_menu.addAction("Dessiner un point", lambda: self._new_station_draw("point"))
         act_reuse_new = new_menu.addAction(
-            "Copier l'entité sélectionnée d'une autre couche", self._new_station_from_selection
+            "Copier la ou les entités sélectionnées d'une autre couche",
+            self._new_station_from_selection,
         )
         act_reuse_new.setToolTip(
-            "Sélectionnez d'abord une entité dans une autre couche, puis choisissez ceci."
+            "Sélectionnez une ou plusieurs entités dans une autre couche, puis "
+            "choisissez ceci. Plusieurs entités → une station par entité, "
+            "métadonnées communes saisies une seule fois."
         )
         new_menu.addSeparator()
         new_menu.addAction("Sans géométrie (à tracer plus tard)", self._new_station_no_geom)
@@ -931,13 +934,76 @@ class OccHabDockWidget(QDockWidget):
 
     # ------------------------------------------ reprise de géométrie (couche)
     def _new_station_from_selection(self):
-        """Créer une station à partir de la géométrie de l'entité sélectionnée."""
-        wkt, geom_type, error = self._reprise_geometry()
+        """Créer une (ou plusieurs) station(s) depuis la ou les entités sélectionnées.
+
+        Sélection simple → formulaire habituel. Sélection multiple → une station par
+        entité, avec des métadonnées communes saisies une seule fois (nom laissé vide,
+        habitat facultatif) et surface/altitude calculées pour chaque géométrie.
+        """
+        geoms, error = self._reprise_geometries()
         if error:
             QMessageBox.information(self, "OccHab", error)
             return
         self._capture_target = None
-        self._open_station_dialog(wkt, geom_type, self._geo_metrics(wkt, geom_type))
+        if len(geoms) == 1:
+            wkt, geom_type = geoms[0]
+            self._open_station_dialog(wkt, geom_type, self._geo_metrics(wkt, geom_type))
+            return
+        self._create_stations_from_geometries(geoms)
+
+    def _create_stations_from_geometries(self, geoms):
+        """Créer une station par géométrie en partageant les métadonnées d'un formulaire.
+
+        Le nom reste vide (propre à chaque station) ; surface et altitude sont
+        recalculées par géométrie ; l'habitat et les observateurs éventuellement saisis
+        sont appliqués à chaque station du lot.
+        """
+        dialog = self._make_station_dialog(batch_count=len(geoms))
+        if not dialog.exec():
+            return
+        shared, habitats = dialog.get_result()
+        observers = shared.pop("_observers", [])
+        # Champs propres à chaque station : écartés du modèle commun, réaffectés ci-dessous.
+        for key in ("geom", "geom_type", "station_name", "area",
+                    "altitude_min", "altitude_max"):
+            shared.pop(key, None)
+        created = failed = 0
+        for wkt, geom_type in geoms:
+            metrics = self._geo_metrics(wkt, geom_type)
+            fields = dict(shared)
+            fields.update(
+                geom=wkt,
+                geom_type=geom_type,
+                station_name=None,
+                area=metrics.get("area"),
+                altitude_min=metrics.get("altitude_min"),
+                altitude_max=metrics.get("altitude_max"),
+            )
+            try:
+                station_id = self.db.create_station(**fields)
+                for habitat in habitats:
+                    self.db.add_habitat(id_station_local=station_id, **habitat)
+                for obs in observers:
+                    self.db.add_observer(
+                        station_id,
+                        observer_name=obs.get("observer_name"),
+                        id_role=obs.get("id_role"),
+                    )
+                created += 1
+            except Exception as exc:  # noqa: BLE001
+                failed += 1
+                self.logger.error("Échec création station (lot) : %s", exc)
+        self.logger.info(
+            "Création depuis sélection : %d station(s) créée(s), %d échec(s)",
+            created, failed,
+        )
+        parts = ["%d station(s) créée(s)" % created]
+        if habitats:
+            parts.append("%d habitat(s) chacune" % len(habitats))
+        if failed:
+            parts.append("%d échec(s)" % failed)
+        self.iface.messageBar().pushInfo("OccHab", "Sélection : %s." % ", ".join(parts))
+        self.refresh()
 
     def _assign_selection_to_station(self):
         """Affecter la géométrie de l'entité sélectionnée à la station choisie."""
@@ -955,20 +1021,60 @@ class OccHabDockWidget(QDockWidget):
             return
         self._update_geometry(station_id, wkt, geom_type, self._geo_metrics(wkt, geom_type))
 
-    def _reprise_geometry(self):
-        """(WKT EPSG:4326, geom_type, erreur) de l'entité sélectionnée active.
-
-        Reprend la PREMIÈRE entité sélectionnée de la couche vectorielle active et
-        la reprojette en EPSG:4326. Renvoie (None, None, message) si rien d'exploitable.
-        """
+    def _layer_transform_to_4326(self, layer):
+        """QgsCoordinateTransform de la couche vers EPSG:4326, ou None si déjà en 4326."""
         from qgis.core import (
             QgsCoordinateReferenceSystem,
             QgsCoordinateTransform,
-            QgsGeometry,
             QgsProject,
-            QgsVectorLayer,
-            QgsWkbTypes,
         )
+
+        src_crs = layer.crs()
+        if src_crs.isValid() and src_crs.authid() != "EPSG:4326":
+            return QgsCoordinateTransform(
+                src_crs,
+                QgsCoordinateReferenceSystem("EPSG:4326"),
+                QgsProject.instance(),
+            )
+        return None
+
+    def _feature_geometry_wkt(self, feature, transform):
+        """(WKT EPSG:4326, geom_type) d'une entité, ou None si inexploitable.
+
+        `transform` : QgsCoordinateTransform déjà prêt (ou None si la couche est en
+        EPSG:4326). Écarte silencieusement les entités sans géométrie, de type non
+        géré (ni point/ligne/polygone) ou dont la reprojection échoue.
+        """
+        from qgis.core import QgsGeometry, QgsWkbTypes
+
+        geom = QgsGeometry(feature.geometry())
+        if geom is None or geom.isEmpty():
+            return None
+        # Type géré (point / ligne / polygone) ; enum QGIS scopé ou non.
+        types = getattr(QgsWkbTypes, "GeometryType", QgsWkbTypes)
+        geom_type = {
+            types.PointGeometry: "point",
+            types.LineGeometry: "line",
+            types.PolygonGeometry: "polygon",
+        }.get(geom.type())
+        if geom_type is None:
+            return None
+        try:
+            if transform is not None:
+                geom.transform(transform)
+            wkt = geom.asWkt()
+        except Exception as exc:  # noqa: BLE001
+            self.logger.warning("Reprise de géométrie : reprojection échouée : %s", exc)
+            return None
+        return (wkt, geom_type) if wkt else None
+
+    def _reprise_geometry(self):
+        """(WKT EPSG:4326, geom_type, erreur) de la PREMIÈRE entité sélectionnée.
+
+        Reprend la première entité sélectionnée de la couche vectorielle active et
+        la reprojette en EPSG:4326. Renvoie (None, None, message) si rien d'exploitable.
+        """
+        from qgis.core import QgsVectorLayer
 
         layer = self.iface.activeLayer()
         if not isinstance(layer, QgsVectorLayer):
@@ -980,36 +1086,46 @@ class OccHabDockWidget(QDockWidget):
             return None, None, (
                 "Aucune entité sélectionnée dans la couche « %s »." % layer.name()
             )
-        geom = QgsGeometry(features[0].geometry())
-        if geom is None or geom.isEmpty():
-            return None, None, "L'entité sélectionnée n'a pas de géométrie."
-        # Type géré (point / ligne / polygone) ; enum QGIS scopé ou non.
-        types = getattr(QgsWkbTypes, "GeometryType", QgsWkbTypes)
-        geom_type = {
-            types.PointGeometry: "point",
-            types.LineGeometry: "line",
-            types.PolygonGeometry: "polygon",
-        }.get(geom.type())
-        if geom_type is None:
+        result = self._feature_geometry_wkt(
+            features[0], self._layer_transform_to_4326(layer)
+        )
+        if result is None:
             return None, None, (
-                "Type de géométrie non géré (ni point, ni ligne, ni polygone)."
+                "Géométrie inexploitable : entité sans géométrie, de type non géré "
+                "(ni point/ligne/polygone) ou reprojection impossible."
             )
-        try:
-            src_crs = layer.crs()
-            if src_crs.isValid() and src_crs.authid() != "EPSG:4326":
-                transform = QgsCoordinateTransform(
-                    src_crs,
-                    QgsCoordinateReferenceSystem("EPSG:4326"),
-                    QgsProject.instance(),
-                )
-                geom.transform(transform)
-            wkt = geom.asWkt()
-        except Exception as exc:  # noqa: BLE001
-            self.logger.warning("Reprise de géométrie : reprojection échouée : %s", exc)
-            return None, None, "Reprojection impossible : %s" % exc
-        if not wkt:
-            return None, None, "Géométrie vide après conversion."
-        return wkt, geom_type, None
+        return result[0], result[1], None
+
+    def _reprise_geometries(self):
+        """([(WKT EPSG:4326, geom_type), …] de TOUTES les entités sélectionnées, erreur).
+
+        Une entrée par entité sélectionnée exploitable (les autres sont ignorées).
+        Renvoie ([], message) si la couche est invalide ou la sélection vide/inutilisable.
+        """
+        from qgis.core import QgsVectorLayer
+
+        layer = self.iface.activeLayer()
+        if not isinstance(layer, QgsVectorLayer):
+            return [], (
+                "Activez d'abord une couche vectorielle contenant les entités voulues."
+            )
+        features = layer.selectedFeatures()
+        if not features:
+            return [], (
+                "Aucune entité sélectionnée dans la couche « %s »." % layer.name()
+            )
+        transform = self._layer_transform_to_4326(layer)
+        geoms = []
+        for feature in features:
+            result = self._feature_geometry_wkt(feature, transform)
+            if result is not None:
+                geoms.append(result)
+        if not geoms:
+            return [], (
+                "Aucune géométrie exploitable dans la sélection (entités vides ou de "
+                "type non géré)."
+            )
+        return geoms, None
 
     def edit_geometry(self):
         """Éditer la géométrie enregistrée de la station (ou la numériser si absente)."""
@@ -1181,12 +1297,20 @@ class OccHabDockWidget(QDockWidget):
         self.layers.cleanup()
         self.server_layers.cleanup()
 
-    def _open_station_dialog(self, geom_wkt, geom_type, metrics=None):
-        dialog = StationDialog(
+    def _make_station_dialog(self, *, geom_wkt=None, geom_type=None, metrics=None,
+                             station=None, batch_count=0):
+        """Construire un StationDialog en injectant nomenclatures, JDD, observateurs…
+
+        Point unique d'assemblage partagé par la création (simple / lot) et l'édition,
+        pour éviter que les appels divergent.
+        """
+        return StationDialog(
             self.config,
             geom_wkt=geom_wkt,
             geom_type=geom_type,
             geo_metrics=metrics,
+            station=station,
+            batch_count=batch_count,
             datasets=self._dataset_items(),
             station_nomenclatures=self._station_nomenclatures(),
             habitat_nomenclatures=self._habitat_nomenclatures(),
@@ -1200,6 +1324,11 @@ class OccHabDockWidget(QDockWidget):
             user_names=self._user_names(),
             default_determiner=self._current_user_name(),
             parent=self,
+        )
+
+    def _open_station_dialog(self, geom_wkt, geom_type, metrics=None):
+        dialog = self._make_station_dialog(
+            geom_wkt=geom_wkt, geom_type=geom_type, metrics=metrics
         )
         if not dialog.exec():
             return
@@ -1237,23 +1366,7 @@ class OccHabDockWidget(QDockWidget):
         if full is None:
             return
         was_conflict = full.get("sync_status") == "conflict"
-        dialog = StationDialog(
-            self.config,
-            station=full,
-            datasets=self._dataset_items(),
-            station_nomenclatures=self._station_nomenclatures(),
-            habitat_nomenclatures=self._habitat_nomenclatures(),
-            station_defaults=self._station_defaults(),
-            habitat_defaults=self._habitat_defaults(),
-            abundance_cover_map=self._abundance_cover_map(),
-            habref_search=self._habref_search_fn(),
-            habref_typologies=self._habref_typologies(),
-            observers=self._observers_items(),
-            current_observer=self._current_user_observer(),
-            user_names=self._user_names(),
-            default_determiner=self._current_user_name(),
-            parent=self,
-        )
+        dialog = self._make_station_dialog(station=full)
         if not dialog.exec():
             return
         station, habitats = dialog.get_result()

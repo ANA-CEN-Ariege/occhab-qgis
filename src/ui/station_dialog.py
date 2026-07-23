@@ -56,10 +56,14 @@ class StationDialog(QDialog):
                  habref_typologies=None, observers=None, current_observer=None,
                  user_names=None, default_determiner=None, datasets=None,
                  geo_metrics=None, station_defaults=None, habitat_defaults=None,
-                 abundance_cover_map=None, parent=None):
+                 abundance_cover_map=None, batch_count=0, parent=None):
         super().__init__(parent)
         self.config = config
         self.station = station  # dict existant → mode édition
+        # >0 → création en lot : ce formulaire fournit les métadonnées COMMUNES à
+        # `batch_count` stations (une par géométrie sélectionnée). Nom laissé vide,
+        # géométrie/surface/altitude propres à chacune (renseignées par l'appelant).
+        self.batch_count = batch_count or 0
         self.datasets = datasets or []
         self.geo_metrics = geo_metrics
         self.station_defaults = station_defaults or {}
@@ -84,13 +88,33 @@ class StationDialog(QDialog):
             self.geom_type = geom_type
             self.habitats = []
 
-        self.setWindowTitle(
-            "Modifier la station" if station is not None else "Nouvelle station OccHab"
-        )
+        if station is not None:
+            title = "Modifier la station"
+        elif self.batch_count:
+            title = "Nouvelles stations OccHab (lot)"
+        else:
+            title = "Nouvelle station OccHab"
+        self.setWindowTitle(title)
         self._build()
 
     def _build(self):
         layout = QVBoxLayout(self)
+
+        if self.batch_count:
+            banner = QLabel(
+                "%d stations seront créées depuis la sélection.\n"
+                "Ces métadonnées sont communes à toutes ; chaque station conserve "
+                "sa propre géométrie (surface et altitude calculées automatiquement) "
+                "et son nom reste vide — à renseigner ensuite si besoin.\n"
+                "L'habitat est facultatif : un habitat ajouté ici est appliqué à "
+                "toutes les stations du lot." % self.batch_count
+            )
+            banner.setWordWrap(True)
+            banner.setStyleSheet(
+                "QLabel { background: #fff8e1; padding: 6px; "
+                "border: 1px solid #ffe082; border-radius: 3px; }"
+            )
+            layout.addWidget(banner)
 
         self.station_form = StationForm(
             self.config,
@@ -103,6 +127,9 @@ class StationDialog(QDialog):
         if self.station is not None:
             self.station_form.set_data(self.station)
         self.station_form.set_geometry(self.geom_wkt, self.geom_type, self.geo_metrics)
+        if self.batch_count:  # nom propre à chaque station → laissé vide en lot
+            self.station_form.edit_name.setEnabled(False)
+            self.station_form.edit_name.setPlaceholderText("Laissé vide (création en lot)")
         layout.addWidget(self.station_form)
 
         separator = QFrame()
@@ -197,11 +224,8 @@ class StationDialog(QDialog):
         if not ok:
             QMessageBox.warning(self, "Validation", msg)
             return
-        if not self.habitats:
-            QMessageBox.warning(
-                self, "Validation", "Ajoutez au moins un habitat à la station."
-            )
-            return
+        # L'habitat est facultatif : on peut créer une station (géométrie d'abord),
+        # puis la qualifier plus tard. Voir README §création sans habitat.
         self.accept()
 
     def get_result(self):

@@ -145,18 +145,20 @@ stations du JDD que vos permissions GeoNature vous autorisent à voir.
 ### Saisir une station
 1. **« ＋ Nouvelle station ▾ »** propose : *Dessiner un polygone* / *Dessiner un
    point* (tracé sur la carte, accrochage actif, clic droit pour terminer),
-   *Copier l'entité sélectionnée (autre couche)* (reprend la géométrie d'une entité
-   sélectionnée dans une autre couche, reprojetée en 4326), ou *Sans géométrie*
-   (à tracer plus tard). Surface et altitude se calculent automatiquement pour un
-   polygone.
+   *Copier la ou les entités sélectionnées (autre couche)* (reprend la géométrie
+   d'une entité sélectionnée dans une autre couche, reprojetée en 4326 ;
+   **sélection multiple → une station par entité**, métadonnées communes saisies
+   une seule fois, nom laissé vide), ou *Sans géométrie* (à tracer plus tard).
+   Surface et altitude se calculent automatiquement pour un polygone.
 2. Remplir le **formulaire station**, à **deux niveaux** : l'**Essentiel** (JDD,
    nom, **observateurs**, dates, enjeu, état, commentaire) est visible ; le reste
    (altitude, profondeur, surface, exposition, type de sol, type de mosaïque,
    nature d'objet) est sous **« Détails »** (replié, déplié auto en édition s'il
    est rempli). Le champ **Observateur(s)** est à **autocomplétion** (déroulez ou
    tapez ; les retenus s'affichent dessous, retirables). **Ajouter un ou plusieurs
-   habitats** (recherche HABREF sur le nom cité → remplit `cd_hab` ; la liste
-   affiche le **% de recouvrement** de chacun). La technique de collecte est
+   habitats** (**facultatif** — on peut créer la station géométrie d'abord et la
+   qualifier plus tard ; recherche HABREF sur le nom cité → remplit `cd_hab` ; la
+   liste affiche le **% de recouvrement** de chacun). La technique de collecte est
    **« In situ »** par défaut, la sensibilité **« Non sensible »**.
 3. La station apparaît dans **« Mes stations »**, identifiée par son habitat
    (« 41.2 - Chênaies-charmaies (+N) »), état *À synchroniser*.

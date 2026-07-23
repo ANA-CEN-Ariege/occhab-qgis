@@ -218,9 +218,16 @@ Cliquez **« ＋ Nouvelle station ▾ »** et choisissez d'où vient la géomét
 - **Dessiner un polygone** / **Dessiner un point** — dessinez sur la carte : clic
   gauche pour poser les sommets (l'**accrochage** QGIS est actif, pratique pour se
   caler sur des objets existants), **clic droit** pour terminer.
-- **Copier l'entité sélectionnée (autre couche)** — sélectionnez d'abord une entité
-  dans une **autre couche** (parcellaire, ancien relevé, trace GPS…), puis
-  choisissez ceci : sa forme est reprise (et reprojetée) pour la station.
+- **Copier la ou les entités sélectionnées (autre couche)** — sélectionnez d'abord
+  une **ou plusieurs** entités dans une **autre couche** (parcellaire, ancien relevé,
+  trace GPS…), puis choisissez ceci : leur forme est reprise (et reprojetée) pour la
+  station.
+  - **Une seule** entité sélectionnée → le formulaire habituel s'ouvre.
+  - **Plusieurs** entités sélectionnées → **une station est créée par entité**. Un
+    **seul formulaire** s'ouvre pour les **métadonnées communes** (JDD, dates,
+    observateurs, commentaire, et éventuellement un habitat appliqué à toutes) ; le
+    **nom est laissé vide** (à renseigner ensuite station par station) et la
+    **surface / altitude** sont calculées pour chaque géométrie.
 - **Sans géométrie (à tracer plus tard)** — ouvre directement le formulaire ; vous
   ajouterez la géométrie ensuite via **« Géométrie ▾ »**.
 
@@ -247,9 +254,11 @@ d'elle-même si ces champs sont déjà renseignés.
 > Certains champs (type de sol, mosaïque…) ne s'affichent que si votre instance
 > GeoNature les propose. **Surface** et **altitude** sont calculées automatiquement.
 
-### Étape 3 — Ajouter un ou plusieurs habitats
+### Étape 3 — Ajouter un ou plusieurs habitats (facultatif)
 
-Dans le formulaire, ajoutez au moins un habitat :
+L'habitat n'est **pas obligatoire** : vous pouvez enregistrer une station sans
+habitat (géométrie d'abord) et la **qualifier plus tard** en l'éditant. Pour en
+ajouter, dans le formulaire :
 
 - **Nom cité** — commencez à taper le nom (ou le code) de l'habitat : une
   **liste HABREF** apparaît, préfixée par la typologie (« CORINE biotopes 41.2 -
@@ -271,7 +280,8 @@ chacun, son **% de recouvrement**. Un garde-fou demande confirmation avant de
 
 Validez le formulaire : la station apparaît dans le tableau **« Mes stations
 (local) »**, identifiée par son premier habitat (ex. « 41.2 - Chênaies-charmaies
-(+2) » = 3 habitats), en état **À synchroniser**.
+(+2) » = 3 habitats), en état **À synchroniser**. Une station **sans habitat**
+s'affiche sous son **nom** (ou « (station sans habitat) » si le nom est vide).
 
 ---
 
