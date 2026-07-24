@@ -229,7 +229,8 @@ class OccHabDockWidget(QDockWidget):
         self.table.verticalHeader().setVisible(False)
         self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
-        self.table.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
+        # Multi-sélection (Ctrl/Maj) pour supprimer plusieurs stations d'un coup.
+        self.table.setSelectionMode(QTableWidget.SelectionMode.ExtendedSelection)
         self.table.cellDoubleClicked.connect(lambda _r, _c: self.edit_station())
         self.table.itemSelectionChanged.connect(self._on_selection_changed)
         self.table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
@@ -1511,6 +1512,17 @@ class OccHabDockWidget(QDockWidget):
         item = self.table.item(row, 0)
         return item.data(Qt.ItemDataRole.UserRole) if item else None
 
+    def _selected_station_ids(self):
+        """Ids locaux de TOUTES les lignes sélectionnées (multi-sélection Ctrl/Maj)."""
+        ids = []
+        for index in self.table.selectionModel().selectedRows():
+            item = self.table.item(index.row(), 0)
+            if item is not None:
+                sid = item.data(Qt.ItemDataRole.UserRole)
+                if sid is not None:
+                    ids.append(sid)
+        return ids
+
     def _select_table_row(self, local_id):
         """Sélectionner dans le tableau la ligne d'une station (sync carte → dock)."""
         for row in range(self.table.rowCount()):
@@ -1845,10 +1857,16 @@ class OccHabDockWidget(QDockWidget):
         return ", ".join(outputs)
 
     def delete_selected(self):
-        station_id = self._selected_station_id()
-        if station_id is None:
+        ids = self._selected_station_ids()
+        if not ids:
             QMessageBox.information(self, "OccHab", "Sélectionnez une station.")
             return
+        if len(ids) > 1:
+            self._delete_many_stations(ids)
+            return
+        self._delete_one_station(ids[0])
+
+    def _delete_one_station(self, station_id):
         full = self.db.get_station(station_id)
         if full is None:
             return
@@ -1907,6 +1925,78 @@ class OccHabDockWidget(QDockWidget):
             self.refresh()
         elif btn_server is not None and clicked is btn_server:
             self.db.update_station(station_id, sync_status="to_delete")
+            self.refresh()
+
+    def _delete_many_stations(self, ids):
+        """Suppression groupée (multi-sélection). Deux gestes distincts, non mélangés :
+        retirer les copies LOCALES (sûr, n'affecte pas GeoNature) ou marquer « à
+        supprimer » sur GeoNature (seulement vos stations déjà synchronisées).
+        """
+        stations = [s for s in (self.db.get_station(sid) for sid in ids) if s]
+        if not stations:
+            return
+        on_server = [s for s in stations if s.get("id_station")]
+        never_synced = [s for s in stations if not s.get("id_station")]
+        pending = [s for s in stations if s.get("sync_status") == "pending"]
+        server_mine = [s for s in on_server if s.get("mine", 1)]
+
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Icon.Question)
+        box.setWindowTitle("Supprimer %d stations" % len(stations))
+        box.setText("%d stations sélectionnées." % len(stations))
+        lines = []
+        if never_synced:
+            lines.append(
+                "• %d jamais synchronisée(s) → suppression DÉFINITIVE (locale)."
+                % len(never_synced)
+            )
+        if on_server:
+            lines.append(
+                "• %d déjà sur GeoNature → retirée(s) du local, conservée(s) sur le "
+                "serveur (re-récupérables)." % len(on_server)
+            )
+        if pending:
+            lines.append(
+                "⚠ %d avec des modifications locales non synchronisées : elles seront "
+                "perdues." % len(pending)
+            )
+        info = "\n".join(lines)
+        info += ("\n\n« Retirer de ma base locale » enlève les %d copies locales sans "
+                 "toucher GeoNature." % len(stations))
+        btn_local = box.addButton(
+            "Retirer de ma base locale", QMessageBox.ButtonRole.AcceptRole
+        )
+        btn_server = None
+        if server_mine:
+            info += ("\n« Supprimer sur GeoNature » marque pour suppression les %d "
+                     "station(s) que vous avez créées et déjà synchronisées (réversible "
+                     "jusqu'à la synchro ; les autres de la sélection ne sont pas "
+                     "touchées)." % len(server_mine))
+            btn_server = box.addButton(
+                "Supprimer sur GeoNature (%d)" % len(server_mine),
+                QMessageBox.ButtonRole.DestructiveRole,
+            )
+        btn_cancel = box.addButton("Annuler", QMessageBox.ButtonRole.RejectRole)
+        box.setInformativeText(info)
+        box.setDefaultButton(btn_cancel)  # éviter un geste destructeur par inadvertance
+        box.setEscapeButton(btn_cancel)
+        box.exec()
+        clicked = box.clickedButton()
+        if clicked is btn_local:
+            for station in stations:
+                self.db.delete_station(station["id"])
+            self.iface.messageBar().pushInfo(
+                "OccHab", "%d station(s) retirée(s) de la base locale." % len(stations)
+            )
+            self.refresh()
+        elif btn_server is not None and clicked is btn_server:
+            for station in server_mine:
+                self.db.update_station(station["id"], sync_status="to_delete")
+            self.iface.messageBar().pushInfo(
+                "OccHab",
+                "%d station(s) marquée(s) « à supprimer » (effectif à la prochaine "
+                "synchronisation)." % len(server_mine),
+            )
             self.refresh()
 
     def _ask(self, title, message):

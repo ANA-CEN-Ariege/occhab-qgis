@@ -192,7 +192,7 @@ plugin propose de **remplacer la copie locale par la version du serveur**
 (restauration ; les modifications locales non synchronisées sont alors écrasées).
 
 ### Supprimer
-**« Supprimer »** (une station à la fois) distingue **deux gestes** — base
+**« Supprimer »** distingue **deux gestes** — base
 **locale** vs **serveur** — pour ne pas confondre « nettoyer mon poste » et
 « supprimer la donnée sur GeoNature » :
 - station **non synchronisée** → suppression locale immédiate (confirmation) ;
@@ -204,6 +204,12 @@ plugin propose de **remplacer la copie locale par la version du serveur**
   - **Supprimer sur GeoNature** : marque *À supprimer* (réversible en
     re-cliquant), appliquée à la synchro (`DELETE`). **Uniquement vos données**
     (`id_digitiser`) — masqué pour les stations d'autres utilisateurs.
+
+**Multi-sélection** : sélectionnez plusieurs lignes (Ctrl/Maj) puis *Supprimer* →
+une boîte groupée récapitule la sélection et propose *Retirer de ma base locale*
+(toutes) ou *Supprimer sur GeoNature* (vos stations synchronisées uniquement, les
+autres non touchées). Dans le formulaire station, la liste d'habitats accepte
+aussi la multi-sélection (Ctrl/Maj) pour en **retirer plusieurs** d'un coup.
 
 Ainsi, importer la station d'un collègue pour s'y référer puis la retirer de son
 poste n'a aucun effet sur GeoNature. Garde-fous à la synchro : confirmation avec le nombre + les libellés,

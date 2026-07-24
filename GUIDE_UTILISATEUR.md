@@ -181,9 +181,10 @@ vos **stations locales** avec leurs actions, puis le bloc **Serveur** :
   une fois le JDD choisi. La combo JDD est **cherchable** (tapez pour filtrer).
 - **Mes stations** : le tableau de **vos** saisies. La **barre d'action
   au-dessus** agit sur la **ligne sélectionnée** (grisée sans sélection) :
-  *Éditer*, *Géométrie ▾*, *Zoom*, *Supprimer* (isolé, destructif). Les mêmes
-  actions sont accessibles par **clic-droit** sur une ligne, et **double-clic**
-  ouvre la station. **« ＋ Nouvelle station ▾ »** la crée (voir §6).
+  *Éditer*, *Géométrie ▾*, *Zoom*, *Supprimer* (destructif). *Supprimer* accepte
+  une **multi-sélection** (Ctrl/Maj) pour effacer plusieurs stations d'un coup
+  (voir §10). Les mêmes actions sont accessibles par **clic-droit** sur une ligne,
+  et **double-clic** ouvre la station. **« ＋ Nouvelle station ▾ »** la crée (voir §6).
 - **Serveur** : *Synchroniser*, *Rafraîchir*, *Récupérer une station du serveur…*.
 - **Astuce carte** : double-cliquer une station sur la carte (ou cliquer dessus
   avec l'outil **Identifier des entités**) ouvre son formulaire.
@@ -274,7 +275,8 @@ ajouter, dans le formulaire :
 
 Répétez pour chaque habitat. La **liste des habitats** de la station affiche, pour
 chacun, son **% de recouvrement**. Un garde-fou demande confirmation avant de
-**retirer** un habitat.
+**retirer** un habitat. Pour en retirer **plusieurs d'un coup**, sélectionnez-les
+avec **Ctrl** (ajouter/enlever) ou **Maj** (une plage), puis **« Retirer »**.
 
 ### Étape 4 — Enregistrer
 
@@ -374,6 +376,13 @@ Le bouton **« Supprimer »** distingue **deux gestes différents** :
   - **« Supprimer sur GeoNature »** : marque la station *À supprimer* (réversible
     en re-cliquant), effacée du serveur à la prochaine **synchronisation**.
     *Uniquement pour vos propres données.*
+
+**Plusieurs stations à la fois** : sélectionnez plusieurs lignes dans « Mes
+stations » avec **Ctrl** (ajouter/enlever une ligne) ou **Maj** (une plage), puis
+**« Supprimer »**. Une fenêtre récapitule la sélection (jamais synchronisées /
+déjà sur le serveur / modifications non synchronisées) et propose **« Retirer de
+ma base locale »** (toutes) ou **« Supprimer sur GeoNature »** (uniquement vos
+stations déjà synchronisées, les autres de la sélection ne sont pas touchées).
 
 **En résumé** : importer la station d'un collègue pour la consulter, puis la
 « retirer de ma base locale » n'a **aucun effet** sur GeoNature.

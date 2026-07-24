@@ -3,6 +3,7 @@
 
 """Dialogues de saisie : une station et ses habitats (création et édition)."""
 from qgis.PyQt.QtWidgets import (
+    QAbstractItemView,
     QDialog,
     QDialogButtonBox,
     QFrame,
@@ -136,8 +137,15 @@ class StationDialog(QDialog):
         separator.setFrameShape(QFrame.Shape.HLine)
         layout.addWidget(separator)
 
-        layout.addWidget(QLabel("Habitats de la station (double-clic pour éditer) :"))
+        layout.addWidget(QLabel(
+            "Habitats de la station (double-clic pour éditer ; "
+            "Ctrl/Maj pour en sélectionner plusieurs) :"
+        ))
         self.list_habitats = QListWidget()
+        # Multi-sélection (Ctrl/Maj) pour retirer plusieurs habitats d'un coup.
+        self.list_habitats.setSelectionMode(
+            QAbstractItemView.SelectionMode.ExtendedSelection
+        )
         self.list_habitats.itemDoubleClicked.connect(
             lambda item: self._edit_habitat(self.list_habitats.row(item))
         )
@@ -203,20 +211,25 @@ class StationDialog(QDialog):
             self.list_habitats.item(row).setText(self._habitat_label(edited))
 
     def remove_habitat(self):
-        row = self.list_habitats.currentRow()
-        if row < 0:
-            QMessageBox.information(self, "OccHab", "Sélectionnez un habitat à retirer.")
-            return
-        confirm = QMessageBox.question(
-            self,
-            "Retirer l'habitat",
-            "Retirer l'habitat « %s » de la station ?"
-            % self._habitat_label(self.habitats[row]),
+        rows = sorted(
+            {self.list_habitats.row(item) for item in self.list_habitats.selectedItems()},
+            reverse=True,  # décroissant → les indices restent valides pendant la suppression
         )
-        if confirm != QMessageBox.StandardButton.Yes:
+        if not rows:
+            QMessageBox.information(
+                self, "OccHab", "Sélectionnez un ou plusieurs habitats à retirer."
+            )
             return
-        self.list_habitats.takeItem(row)
-        del self.habitats[row]
+        if len(rows) == 1:
+            question = ("Retirer l'habitat « %s » de la station ?"
+                        % self._habitat_label(self.habitats[rows[0]]))
+        else:
+            question = "Retirer les %d habitats sélectionnés de la station ?" % len(rows)
+        if QMessageBox.question(self, "Retirer l'habitat", question) != QMessageBox.StandardButton.Yes:
+            return
+        for row in rows:
+            self.list_habitats.takeItem(row)
+            del self.habitats[row]
 
     # --------------------------------------------------------------- OK
     def _on_ok(self):

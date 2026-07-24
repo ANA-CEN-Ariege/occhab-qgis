@@ -3,7 +3,7 @@ name=OccHab GeoNature
 qgisMinimumVersion=3.28
 qgisMaximumVersion=3.99
 description=Offline-first data entry for GeoNature's OccHab module (habitat stations) from QGIS, with local SQLite storage and synchronisation to the GeoNature REST API.
-version=0.2.7
+version=0.2.8
 author=Cédric Roy
 email=it@ariegenature.fr
 license=GPL-3.0-or-later
@@ -32,7 +32,11 @@ icon=resources/icons/occhab.svg
 experimental=True
 deprecated=False
 
-changelog=0.2.7 - Local-DB hygiene and retention. The geometry-undo buffer
+changelog=0.2.8 - Multi-selection delete. In "Mes stations", Ctrl/Maj-select
+    several rows and delete them at once (grouped dialog: remove the local copies,
+    or mark your own synced ones for server deletion — the rest untouched). In the
+    station form, Ctrl/Maj-select several habitats and remove them in one go.
+    0.2.7 - Local-DB hygiene and retention. The geometry-undo buffer
     (prev_geom) is freed once a station is synced, and the sync log is capped
     (last 500 entries). New "Nettoyer les stations synchronisées anciennes…"
     (Base locale menu): removes synced, untouched-for-6-months stations from the
