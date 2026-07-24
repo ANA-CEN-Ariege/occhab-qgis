@@ -17,7 +17,7 @@ except ImportError:  # pragma: no cover
 
 DEFAULT_CONFIG = {
     "geonature": {
-        "api_url": "http://localhost:8000/api",
+        "api_url": "https://geonature.fr/geonature/api",
         "verify_ssl": True,
     },
     "database": {
