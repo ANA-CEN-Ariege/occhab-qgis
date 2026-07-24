@@ -300,7 +300,9 @@ sur la carte — **double-clic** / clic avec l'outil **Identifier des entités**
   - *Copier l'entité sélectionnée d'une autre couche* : remplace la géométrie par
     celle d'une entité sélectionnée dans une autre couche.
   - *Rétablir la géométrie précédente* : **annule** le dernier changement de
-    géométrie (re-cliquez pour **refaire** — c'est un échange).
+    géométrie (re-cliquez pour **refaire** — c'est un échange). Disponible tant que
+    la station n'est **pas encore synchronisée** ; une fois envoyée, ce tampon est
+    libéré (l'option se grise).
 
 Toute modification repasse la station en **À synchroniser**.
 
@@ -412,6 +414,14 @@ Bouton **« Base locale… »** (en bas du dock) :
   fichier par type de géométrie). Vous devez être **connecté**.
   > Le **Shapefile** tronque les noms de champs à 10 caractères et limite le texte
   > — préférez le **GeoPackage** si le destinataire l'accepte.
+- **Nettoyer les stations synchronisées anciennes…** — retire de votre base
+  **locale** les stations **déjà synchronisées et non modifiées depuis plus de
+  6 mois**, pour garder la liste « Mes stations » courte et rapide. Elles
+  **restent sur GeoNature** et sont récupérables via *Récupérer une station du
+  serveur*. Les stations **À synchroniser**, **en conflit** ou **à supprimer** ne
+  sont **jamais** touchées. Le plugin affiche le nombre concerné et **demande
+  confirmation** ; après une synchronisation, un rappel discret apparaît si
+  beaucoup de stations anciennes se sont accumulées.
 
 > Pensez à **sauvegarder** régulièrement votre base locale, surtout avant une
 > synchronisation importante.

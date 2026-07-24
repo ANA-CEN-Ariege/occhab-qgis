@@ -301,6 +301,11 @@ class OccHabDockWidget(QDockWidget):
         menu.addAction(
             "Exporter la cartographie du JDD (serveur)…", self.export_jdd_cartography
         )
+        menu.addSeparator()
+        menu.addAction(
+            "Nettoyer les stations synchronisées anciennes…",
+            self._purge_old_synced_stations,
+        )
         btn_storage.setMenu(menu)
         footer.addWidget(btn_storage)
         layout.addLayout(footer)
@@ -1590,6 +1595,39 @@ class OccHabDockWidget(QDockWidget):
         folder = os.path.dirname(str(self.db.db_path))
         QDesktopServices.openUrl(QUrl.fromLocalFile(folder))
 
+    def _purge_old_synced_stations(self):
+        """Retirer du local les stations synchronisées non touchées depuis N mois.
+
+        Ces stations restent sur GeoNature (re-récupérables) : on ne touche jamais
+        aux stations non synchronisées, en conflit ou en attente de suppression.
+        Confirmation explicite + compte-rendu.
+        """
+        months = self.db.RETENTION_MONTHS
+        count = self.db.count_purgeable_stations()
+        if count == 0:
+            QMessageBox.information(
+                self, "OccHab",
+                "Aucune station synchronisée de plus de %d mois à nettoyer." % months,
+            )
+            return
+        confirm = QMessageBox.question(
+            self, "Nettoyer la base locale",
+            "%d station(s) synchronisée(s) et non modifiée(s) depuis plus de %d mois "
+            "vont être retirées de la base LOCALE.\n\n"
+            "Elles restent sur GeoNature et pourront être récupérées via "
+            "« Récupérer une station du serveur ». Continuer ?" % (count, months),
+        )
+        if confirm != QMessageBox.StandardButton.Yes:
+            return
+        removed = self.db.purge_synced_stations()
+        self.logger.info("Purge rétention : %d station(s) retirée(s) du local", removed)
+        self.iface.messageBar().pushInfo(
+            "OccHab",
+            "%d station(s) synchronisée(s) ancienne(s) retirée(s) du local "
+            "(toujours sur GeoNature)." % removed,
+        )
+        self.refresh()
+
     def _backup_db(self):
         import shutil
 
@@ -1986,6 +2024,14 @@ class OccHabDockWidget(QDockWidget):
         status = "success" if failed == 0 and del_failed == 0 else "partial"
         self.db.log_sync("upload", status, message, ok + deleted)
         self.logger.info("Synchronisation : %s", message)
+        # Rappel discret : si beaucoup de stations synchronisées anciennes s'accumulent,
+        # suggérer le nettoyage (menu « Base locale… »). Seuil pour ne pas harceler.
+        purgeable = self.db.count_purgeable_stations()
+        hint = (
+            " — %d station(s) synchronisée(s) ancienne(s) nettoyable(s) via "
+            "« Base locale… »." % purgeable
+            if purgeable >= 20 else ""
+        )
         if conflicts:
             self.iface.messageBar().pushWarning(
                 "OccHab",
@@ -1995,7 +2041,9 @@ class OccHabDockWidget(QDockWidget):
                 % (message, conflicts),
             )
         else:
-            self.iface.messageBar().pushInfo("OccHab", "Synchronisation : %s." % message)
+            self.iface.messageBar().pushInfo(
+                "OccHab", "Synchronisation : %s.%s" % (message, hint)
+            )
         self.refresh()
         self._load_server_stations()  # recharger le contexte serveur (données à jour)
 

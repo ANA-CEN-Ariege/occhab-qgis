@@ -10,6 +10,7 @@ Note : `id_nomenclature_collection_technique` est NOT NULL côté GeoNature. En
 local, on stocke ce que l'utilisateur a saisi ; la conformité est (re)vérifiée
 au moment de la synchronisation.
 """
+import calendar
 import sqlite3
 from datetime import datetime
 from pathlib import Path
@@ -91,6 +92,20 @@ CREATE INDEX IF NOT EXISTS idx_habitats_station ON t_habitats(id_station_local);
 """
 
 
+def _date_months_ago(months, now=None):
+    """Date 'YYYY-MM-DD' située `months` mois avant maintenant (jour ramené au mois).
+
+    Comparaison sur la date seule (pas l'heure) : robuste face aux formats et fuseaux
+    des timestamps stockés, ce qui suffit largement pour un seuil de rétention.
+    """
+    ref = now or datetime.now()
+    total = ref.year * 12 + (ref.month - 1) - months
+    year, month = divmod(total, 12)
+    month += 1
+    day = min(ref.day, calendar.monthrange(year, month)[1])
+    return "%04d-%02d-%02d" % (year, month, day)
+
+
 class OccHabDatabase:
     """Accès CRUD à la base SQLite locale."""
 
@@ -111,6 +126,10 @@ class OccHabDatabase:
         "id_nomenclature_abundance", "id_nomenclature_sensitivity",
         "id_nomenclature_community_interest", "sync_status",
     }
+    # Journal de synchro : nombre d'entrées conservées (journal, pas archive).
+    SYNC_LOG_KEEP = 500
+    # Rétention : purge des stations synchronisées non touchées depuis N mois.
+    RETENTION_MONTHS = 6
 
     def __init__(self, db_path):
         self.db_path = Path(db_path)
@@ -354,7 +373,15 @@ class OccHabDatabase:
 
     def mark_station_synced(self, station_id, id_station, status="synced",
                             server_snapshot=None):
-        fields = {"id_station": id_station, "sync_status": status}
+        fields = {
+            "id_station": id_station,
+            "sync_status": status,
+            # Station envoyée : le tampon d'annulation de géométrie (« Rétablir la
+            # géométrie précédente ») devient caduc. On le libère pour ne pas garder
+            # à vie une copie de géométrie par station synchronisée.
+            "prev_geom": None,
+            "prev_geom_type": None,
+        }
         if server_snapshot is not None:
             fields["server_snapshot"] = server_snapshot
         self.update_station(station_id, **fields)
@@ -375,5 +402,58 @@ class OccHabDatabase:
             " VALUES (?, ?, ?, ?, ?)",
             (datetime.now().isoformat(), direction, status, message, records_count),
         )
+        # Ne conserver que les SYNC_LOG_KEEP entrées les plus récentes (id auto-incrémenté)
+        # pour borner la croissance du journal.
+        cursor.execute(
+            "DELETE FROM t_sync_log WHERE id NOT IN ("
+            "SELECT id FROM t_sync_log ORDER BY id DESC LIMIT ?)",
+            (self.SYNC_LOG_KEEP,),
+        )
         self.connection.commit()
         self.disconnect()
+
+    # ------------------------------------------------------- rétention / purge
+    def _purgeable_station_ids(self, months):
+        """Ids des stations synchronisées non touchées depuis `months` mois.
+
+        Uniquement `sync_status = 'synced'` : toute édition locale (attributs ou
+        géométrie) repasse une station en 'pending', donc 'synced' = non modifiée
+        depuis la synchro. Ancienneté mesurée sur `date_update` (dernière écriture
+        locale), comparée sur la date seule.
+        """
+        cutoff = _date_months_ago(months)
+        self.connect()
+        cursor = self.connection.cursor()
+        cursor.execute(
+            "SELECT id FROM t_stations WHERE sync_status = 'synced' "
+            "AND substr(COALESCE(date_update, date_creation), 1, 10) <= ?",
+            (cutoff,),
+        )
+        ids = [row[0] for row in cursor.fetchall()]
+        self.disconnect()
+        return ids
+
+    def count_purgeable_stations(self, months=None):
+        """Nombre de stations purgeables (cf. `_purgeable_station_ids`)."""
+        if months is None:
+            months = self.RETENTION_MONTHS
+        return len(self._purgeable_station_ids(months))
+
+    def purge_synced_stations(self, months=None):
+        """Retirer du local les stations synchronisées non touchées depuis `months`
+        mois (cascade habitats + observateurs), puis VACUUM. Retourne le nombre retiré.
+
+        Ne touche JAMAIS aux stations 'pending' / 'conflict' / 'to_delete' : seules
+        les copies déjà synchronisées — re-récupérables via « Récupérer du serveur » —
+        sont concernées.
+        """
+        if months is None:
+            months = self.RETENTION_MONTHS
+        ids = self._purgeable_station_ids(months)
+        for station_id in ids:
+            self.delete_station(station_id)  # cascade habitats + observateurs
+        if ids:
+            self.connect()
+            self.connection.execute("VACUUM")  # rendre l'espace libéré au système
+            self.disconnect()
+        return len(ids)

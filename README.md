@@ -221,6 +221,12 @@ locale… »** :
   libellés résolus — **nom d'habitat officiel HABREF** (`GET habref/habitat/<cd_hab>`)
   + code + nom cité, recouvrement, enjeu, état, observateurs, nomenclatures…) en
   **GeoPackage** *et* **Shapefile** (une couche / un fichier par type de géométrie).
+- **Nettoyer les stations synchronisées anciennes** : retire du local les stations
+  **synchronisées et non modifiées depuis plus de 6 mois** (`RETENTION_MONTHS`),
+  puis `VACUUM`. Elles restent sur GeoNature et sont récupérables ; les stations
+  **non synchronisées / en conflit / à supprimer** ne sont **jamais** touchées.
+  Confirmation demandée, et rappel discret après une synchro si beaucoup
+  s'accumulent. But : garder la liste locale courte et rapide.
 
 ---
 
