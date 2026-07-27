@@ -351,6 +351,22 @@ Cliquez **« Synchroniser »** (vous devez être connecté). Le plugin :
 Un **récapitulatif** s'affiche (« X envoyée(s), Y supprimée(s), Z échec(s) »), et
 la couche serveur est rechargée.
 
+### « Cette station n'existe plus sur GeoNature »
+
+Si une station que vous aviez déjà synchronisée a été **supprimée sur GeoNature**
+entre-temps (par un autre utilisateur, ou après une remise à zéro du serveur), il
+n'y a plus rien à mettre à jour. Le plugin le détecte et vous demande :
+
+> « X » n'existe plus sur GeoNature… La recréer comme une nouvelle station ?
+
+- **Oui** → la station est **renvoyée comme une nouvelle saisie** et reçoit un
+  **nouvel identifiant** GeoNature. La réponse vaut pour **toute la
+  synchronisation** en cours.
+- **Non** → rien n'est envoyé ; la station reste **À synchroniser** en local et la
+  question sera reposée à la prochaine synchronisation.
+
+Vos données locales ne sont jamais perdues dans un cas comme dans l'autre.
+
 ### Garde-fous suppression
 
 Pour éviter les effacements accidentels en masse :

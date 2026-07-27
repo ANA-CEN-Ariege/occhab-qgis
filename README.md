@@ -176,6 +176,21 @@ l'entité sélectionnée (autre couche)*. Toute édition repasse la station en
 **« Synchroniser »** envoie les créations/mises à jour et applique les
 suppressions marquées, puis recharge le contexte serveur. Récapitulatif affiché.
 
+Avant d'envoyer une station déjà synchronisée, le plugin **vérifie qu'elle existe
+toujours** sur GeoNature (`GET /occhab/stations/<id>/`) :
+- **absente (HTTP 404)** — supprimée côté serveur : la mise à jour est impossible
+  (le serveur répondrait HTTP 500). Le plugin propose de la **recréer** comme une
+  nouvelle station (question posée **une fois** par synchronisation, valable pour
+  toutes les stations concernées). Si vous refusez, elle reste **« à
+  synchroniser »** en local et rien n'est envoyé ;
+- **modifiée depuis** (empreinte serveur ≠ empreinte mémorisée) : **conflit**, la
+  version serveur n'est pas écrasée ;
+- **contrôle impossible** (réseau, serveur indisponible) : *fail-open*, l'envoi a
+  lieu quand même.
+
+Une suppression serveur portant sur une station **déjà absente** (HTTP 404) n'est
+plus comptée en échec : la base locale est simplement nettoyée.
+
 ### Récupérer / éditer une station serveur
 **« Récupérer une station du serveur… »** offre **deux chemins** :
 - **Depuis la carte (sélection)** : sélectionner des stations dans la couche

@@ -2017,6 +2017,7 @@ class OccHabDockWidget(QDockWidget):
             )
             return
 
+        from ..api.geonature_client import GeoNatureAPIError
         from ..api.payload import (
             build_station_payload,
             extract_id_station,
@@ -2037,7 +2038,17 @@ class OccHabDockWidget(QDockWidget):
             for station in to_delete:
                 try:
                     if station.get("id_station"):
-                        self.client.delete_station(station["id_station"])
+                        try:
+                            self.client.delete_station(station["id_station"])
+                        except GeoNatureAPIError as exc:
+                            if exc.status_code != 404:
+                                raise
+                            # Déjà supprimée sur GeoNature : l'objectif est atteint,
+                            # il reste seulement à nettoyer la base locale.
+                            self.logger.info(
+                                "Station %s déjà absente du serveur : suppression "
+                                "locale seule.", station["id_station"],
+                            )
                     self.db.delete_station(station["id"])
                     deleted += 1
                 except Exception as exc:  # noqa: BLE001
@@ -2049,6 +2060,11 @@ class OccHabDockWidget(QDockWidget):
 
         # --- Créations / mises à jour ---
         ok = failed = conflicts = 0
+        # Stations dont l'id serveur ne correspond plus à rien (supprimées sur
+        # GeoNature) : recréées ou laissées en attente selon la réponse de
+        # l'utilisateur (None = question pas encore posée pour cette synchro).
+        orphans_recreated = orphans_kept = 0
+        recreate_orphans = None
         tech_default = self._habitat_defaults().get("technique")  # « In situ » (cd 1)
         for station in pending:
             full = self.db.get_station(station["id"])
@@ -2059,23 +2075,71 @@ class OccHabDockWidget(QDockWidget):
                 for hab in full["habitats"]:
                     if not hab.get("id_nomenclature_collection_technique"):
                         hab["id_nomenclature_collection_technique"] = tech_default
-            # Conflit : le serveur a-t-il changé depuis notre dernière synchro de CETTE
-            # station ? (empreinte mémorisée ≠ empreinte serveur actuelle). Fail-open :
-            # si le contrôle échoue (réseau…), on synchronise quand même.
-            if full.get("id_station") and full.get("server_snapshot"):
+            # La station existe-t-elle encore côté serveur ? Un id_station mémorisé
+            # peut désigner une station supprimée depuis sur GeoNature : la mise à
+            # jour part alors dans le vide et le serveur répond HTTP 500. On
+            # interroge donc le serveur AVANT d'envoyer quoi que ce soit.
+            # Fail-open : si le contrôle échoue (réseau…), on synchronise quand même.
+            current = None
+            recreated = False  # station orpheline renvoyée comme une création
+            if full.get("id_station"):
                 try:
                     current = self.client.get_station(full["id_station"])
-                    if server_fingerprint(*parse_server_station(current)) != full[
+                except GeoNatureAPIError as exc:
+                    if exc.status_code != 404:
+                        self.logger.warning(
+                            "Contrôle serveur ignoré (station %s) : %s",
+                            full["id_station"], exc,
+                        )
+                    else:
+                        # Identifiant serveur périmé : la seule issue est de
+                        # recréer la station. Question posée UNE fois par synchro.
+                        self.logger.warning(
+                            "Station %s absente du serveur (HTTP 404) : identifiant "
+                            "serveur périmé.", full["id_station"],
+                        )
+                        if recreate_orphans is None:
+                            recreate_orphans = self._ask(
+                                "Station absente de GeoNature",
+                                "« %s » n'existe plus sur GeoNature (supprimée côté "
+                                "serveur) : sa mise à jour est impossible.\n\n"
+                                "La recréer comme une nouvelle station ?\n\n"
+                                "(la réponse vaut pour toute cette synchronisation ; "
+                                "sinon la station reste « à synchroniser » en local)"
+                                % self._station_label(full, full["habitats"]),
+                            )
+                        if not recreate_orphans:
+                            orphans_kept += 1
+                            continue
+                        self.db.detach_from_server(station["id"])
+                        full["id_station"] = None
+                        full["server_snapshot"] = None
+                        for hab in full["habitats"]:
+                            hab["id_habitat"] = None
+                            hab["unique_id_sinp_hab"] = None
+                        recreated = True
+                except Exception as exc:  # noqa: BLE001
+                    self.logger.warning(
+                        "Contrôle serveur ignoré (station %s) : %s",
+                        full["id_station"], exc,
+                    )
+            # Conflit : le serveur a-t-il changé depuis notre dernière synchro de CETTE
+            # station ? (empreinte mémorisée ≠ empreinte serveur actuelle).
+            if current is not None and full.get("server_snapshot"):
+                try:
+                    changed = server_fingerprint(*parse_server_station(current)) != full[
                         "server_snapshot"
-                    ]:
-                        self.db.update_station(station["id"], sync_status="conflict")
-                        conflicts += 1
-                        continue  # ne pas écraser la version serveur
+                    ]
                 except Exception as exc:  # noqa: BLE001
                     self.logger.warning(
                         "Contrôle de conflit ignoré (station %s) : %s",
                         full["id_station"], exc,
                     )
+                    changed = False
+                if changed:
+                    self.db.update_station(station["id"], sync_status="conflict")
+                    conflicts += 1
+                    continue  # ne pas écraser la version serveur
             geojson = wkt_to_geojson(full.get("geom")) if full.get("geom") else None
             payload = build_station_payload(
                 full, full["habitats"], full["observers"], geojson
@@ -2099,6 +2163,8 @@ class OccHabDockWidget(QDockWidget):
                     station["id"], id_station, server_snapshot=snapshot
                 )
                 ok += 1
+                if recreated:
+                    orphans_recreated += 1
             except Exception as exc:  # noqa: BLE001
                 failed += 1
                 self.logger.error("Station %s non synchronisée : %s", station["id"], exc)
@@ -2106,12 +2172,23 @@ class OccHabDockWidget(QDockWidget):
         parts = []
         if ok or failed:
             parts.append("%d envoyée(s), %d échec(s)" % (ok, failed))
+        if orphans_recreated:
+            parts.append(
+                "dont %d recréée(s) (absente(s) du serveur)" % orphans_recreated
+            )
         if deleted or del_failed:
             parts.append("%d supprimée(s), %d échec(s)" % (deleted, del_failed))
+        if orphans_kept:
+            parts.append(
+                "%d absente(s) du serveur, laissée(s) en attente" % orphans_kept
+            )
         if conflicts:
             parts.append("%d conflit(s)" % conflicts)
         message = " | ".join(parts) or "rien à faire"
-        status = "success" if failed == 0 and del_failed == 0 else "partial"
+        status = (
+            "success" if failed == 0 and del_failed == 0 and not orphans_kept
+            else "partial"
+        )
         self.db.log_sync("upload", status, message, ok + deleted)
         self.logger.info("Synchronisation : %s", message)
         # Rappel discret : si beaucoup de stations synchronisées anciennes s'accumulent,
@@ -2129,6 +2206,13 @@ class OccHabDockWidget(QDockWidget):
                 "ré-éditez-la puis resynchronisez pour imposer votre version, ou "
                 "« Récupérer du serveur » pour prendre la version serveur."
                 % (message, conflicts),
+            )
+        elif orphans_kept:
+            self.iface.messageBar().pushWarning(
+                "OccHab",
+                "Synchronisation : %s. %d station(s) n'existent plus sur GeoNature : "
+                "elles restent en local tant qu'elles n'ont pas été recréées."
+                % (message, orphans_kept),
             )
         else:
             self.iface.messageBar().pushInfo(

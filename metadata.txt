@@ -3,7 +3,7 @@ name=OccHab GeoNature
 qgisMinimumVersion=3.28
 qgisMaximumVersion=3.99
 description=Offline-first data entry for GeoNature's OccHab module (habitat stations) from QGIS, with local SQLite storage and synchronisation to the GeoNature REST API.
-version=0.2.8
+version=0.2.9
 author=Cédric Roy
 email=it@ariegenature.fr
 license=GPL-3.0-or-later
@@ -32,7 +32,13 @@ icon=resources/icons/occhab.svg
 experimental=True
 deprecated=False
 
-changelog=0.2.8 - Multi-selection delete. In "Mes stations", Ctrl/Maj-select
+changelog=0.2.9 - Stations deleted server-side no longer break sync. Before
+    pushing an already-synced station, the plugin checks it still exists on
+    GeoNature: a stale id_station used to trigger an endless HTTP 500 on update.
+    Such a station is now offered for re-creation (asked once per sync) or left
+    pending; deleting a station already gone from the server is no longer an
+    error. API errors carry their HTTP status code.
+    0.2.8 - Multi-selection delete. In "Mes stations", Ctrl/Maj-select
     several rows and delete them at once (grouped dialog: remove the local copies,
     or mark your own synced ones for server deletion — the rest untouched). In the
     station form, Ctrl/Maj-select several habitats and remove them in one go.

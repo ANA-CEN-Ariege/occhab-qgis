@@ -371,6 +371,30 @@ class OccHabDatabase:
         """Mémoriser l'empreinte serveur connue d'une station (détection de conflit)."""
         self.update_station(station_id, server_snapshot=snapshot)
 
+    def detach_from_server(self, station_id):
+        """Oublier les identifiants serveur d'une station (et de ses habitats).
+
+        Utilisé quand la station a disparu de GeoNature (supprimée côté serveur) :
+        les id_station/id_habitat mémorisés ne pointent plus sur rien et une mise
+        à jour échouerait. Après appel, la prochaine synchronisation la CRÉE.
+        Les uuid SINP sont eux aussi oubliés : le serveur en attribuera de
+        nouveaux à la re-création.
+        """
+        self.connect()
+        cursor = self.connection.cursor()
+        cursor.execute(
+            "UPDATE t_stations SET id_station = NULL, unique_id_sinp_station = NULL,"
+            " server_snapshot = NULL WHERE id = ?",
+            (station_id,),
+        )
+        cursor.execute(
+            "UPDATE t_habitats SET id_habitat = NULL, unique_id_sinp_hab = NULL"
+            " WHERE id_station_local = ?",
+            (station_id,),
+        )
+        self.connection.commit()
+        self.disconnect()
+
     def mark_station_synced(self, station_id, id_station, status="synced",
                             server_snapshot=None):
         fields = {

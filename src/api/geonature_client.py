@@ -14,7 +14,16 @@ import requests
 
 
 class GeoNatureAPIError(Exception):
-    """Erreur renvoyée par l'API GeoNature."""
+    """Erreur renvoyée par l'API GeoNature.
+
+    `status_code` porte le code HTTP quand la requête a abouti (None pour une
+    erreur réseau) : l'appelant peut ainsi distinguer un 404 (ressource absente
+    du serveur) d'une simple panne de connexion.
+    """
+
+    def __init__(self, message, status_code=None):
+        super().__init__(message)
+        self.status_code = status_code
 
 
 def _error_detail(response):
@@ -84,7 +93,8 @@ class GeoNatureAPIClient:
 
         if response.status_code >= 400:
             raise GeoNatureAPIError(
-                "HTTP %s — %s" % (response.status_code, _error_detail(response))
+                "HTTP %s — %s" % (response.status_code, _error_detail(response)),
+                status_code=response.status_code,
             )
         if not response.text:
             return None

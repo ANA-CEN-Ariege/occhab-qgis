@@ -87,6 +87,31 @@ def test_pending_and_mark_synced(tmp_path):
     assert full["sync_date"] is not None
 
 
+def test_detach_from_server(tmp_path):
+    # Station supprimée sur GeoNature : on oublie les identifiants serveur pour
+    # que la prochaine synchro la recrée au lieu de tenter une mise à jour vaine.
+    db = _make_db(tmp_path)
+    station_id = db.create_station(
+        id_dataset=3, id_station=79, unique_id_sinp_station="uuid-station",
+        server_snapshot="empreinte",
+    )
+    db.add_habitat(
+        station_id, cd_hab=10, nom_cite="h1", id_habitat=42,
+        unique_id_sinp_hab="uuid-hab",
+    )
+
+    db.detach_from_server(station_id)
+
+    full = db.get_station(station_id)
+    assert full["id_station"] is None
+    assert full["unique_id_sinp_station"] is None
+    assert full["server_snapshot"] is None
+    assert full["sync_status"] == "pending"  # toujours à envoyer
+    assert full["habitats"][0]["id_habitat"] is None
+    assert full["habitats"][0]["unique_id_sinp_hab"] is None
+    assert full["habitats"][0]["nom_cite"] == "h1"  # données locales intactes
+
+
 def test_find_by_id_station(tmp_path):
     db = _make_db(tmp_path)
     station_id = db.create_station(id_dataset=3, id_station=77)
