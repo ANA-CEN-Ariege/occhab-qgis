@@ -453,22 +453,26 @@ Bouton **« Base locale… »** (en bas du dock) :
 
 ---
 
-## 13. Les champs « enjeu / état / recouvrement »
+## 13. Les champs « enjeu / état / zone humide / recouvrement »
 
 Le module OccHab de GeoNature n'a pas de champ dédié pour le **niveau d'enjeu**,
-l'**état de conservation** et le **recouvrement**. Le plugin les enregistre de
-façon **normalisée**, **encodés dans les champs de commentaire** d'OccHab (au
-niveau station et/ou habitat), sans détruire le texte libre que vous y mettez.
+l'**état de conservation**, le **statut zone humide** et le **recouvrement**. 
+Le plugin les enregistre de façon **normalisée**, **encodés dans les champs de 
+commentaire** d'OccHab (au niveau station et/ou habitat), sans détruire le texte 
+libre que vous y mettez.
 
-- **Niveau d'enjeu** : Faible / Moyen / Fort / Majeur.
+- **Niveau d'enjeu** : Faible / Moyen / Fort / Majeur (liste déroulante).
 - **État de conservation** : Bon / Moyen (altéré) / Mauvais (dégradé) / Non
-  déterminé.
-- **Recouvrement (%)** : de 0 à 100 ; il **pré-sélectionne** aussi la classe
-  d'**abondance** de l'habitat.
+  déterminé (liste déroulante).
+- **Zone humide** : case à cocher — simple oui/non pour indiquer si la station
+  est en zone humide.
+- **Recouvrement (%)** : de 0 à 100 (habitat seulement) ; il **pré-sélectionne** 
+  aussi la classe d'**abondance** de l'habitat.
 
-Vous les saisissez via des listes déroulantes ; à la relecture (édition), le
-plugin les ré-affiche automatiquement. Côté GeoNature, ces valeurs restent
-ré-extractibles (voir README §6 pour les administrateurs).
+Vous les saisissez dans le formulaire de station (les deux premiers visibles, 
+la zone humide juste dessous, le recouvrement au niveau habitat) ; à la relecture 
+(édition), le plugin les ré-affiche automatiquement. Côté GeoNature, ces valeurs 
+restent ré-extractibles (voir README §6 pour les administrateurs).
 
 ---
 

@@ -4,6 +4,7 @@
 """Formulaire de saisie d'une station OccHab (aligné sur le formulaire GeoNature)."""
 from qgis.PyQt.QtCore import Qt, QDate
 from qgis.PyQt.QtWidgets import (
+    QCheckBox,
     QComboBox,
     QCompleter,
     QDateEdit,
@@ -101,6 +102,10 @@ class StationForm(QWidget):
         self.combo_etat = QComboBox()
         fill_eval_combo(self.combo_etat, ETATS_CONSERVATION)
         form.addRow("État de conservation", self.combo_etat)
+
+        self.check_zone_humide = QCheckBox("Zone humide")
+        self.check_zone_humide.setToolTip("Cochez si la station est en zone humide")
+        form.addRow("", self.check_zone_humide)
 
         self.text_comment = QTextEdit()
         self.text_comment.setPlaceholderText("Commentaire libre…")
@@ -318,6 +323,7 @@ class StationForm(QWidget):
             self.text_comment.toPlainText(),
             enjeu=self.combo_enjeu.currentData(),
             etat_conservation=self.combo_etat.currentData(),
+            zone_humide=self.check_zone_humide.isChecked(),
         )
         observers = self._selected_observers()
         return {
@@ -381,6 +387,7 @@ class StationForm(QWidget):
         codes = decode_eval(comment)
         select_combo_data(self.combo_enjeu, codes.get("enjeu"))
         select_combo_data(self.combo_etat, codes.get("etat_conservation"))
+        self.check_zone_humide.setChecked(codes.get("zone_humide") == "true")
 
         # Déplier « Détails » si la station en contient déjà (ne pas cacher de valeurs).
         detail_keys = (

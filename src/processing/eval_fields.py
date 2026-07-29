@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: 2026 Cédric Roy <it@ariegenature.fr>
 # SPDX-License-Identifier: GPL-3.0-or-later
 
-"""Champs métier ANA (niveau d'enjeu, état de conservation, recouvrement).
+"""Champs métier ANA (niveau d'enjeu, état de conservation, recouvrement, zone humide).
 
 OccHab n'a pas de champ natif exposé pour ces notions. On les stocke, de façon
 normalisée, dans les champs libres OccHab (`comment` de la station,
@@ -9,12 +9,13 @@ normalisée, dans les champs libres OccHab (`comment` de la station,
 
     Texte libre saisi par l'utilisateur.
 
-    [ANA-EVAL] enjeu=fort | etat_conservation=moyen | recouvrement=3 [/ANA-EVAL]
+    [ANA-EVAL] enjeu=fort | etat_conservation=moyen | recouvrement=3 | zone_humide=true [/ANA-EVAL]
 
 - enjeu / etat_conservation : CODE issu d'un référentiel fermé (NIVEAUX_ENJEU,
   ETATS_CONSERVATION).
 - recouvrement : pourcentage (0-100) ; il pilote aussi la nomenclature Abondance
   via `cover_class()` (côté formulaire habitat).
+- zone_humide : booléen (true/false) — simple case à cocher.
 
 N'écrire que des codes/valeurs normalisés permet une ré-extraction fiable côté
 PostgreSQL (voir README §6, vue `ana_occhab.v_occhab_complet` ; pour recouvrement,
@@ -71,11 +72,12 @@ def strip_eval(text):
     return _EVAL_RE.sub("", text or "").strip()
 
 
-def encode_eval(text, enjeu=None, etat_conservation=None, recouvrement=None):
+def encode_eval(text, enjeu=None, etat_conservation=None, recouvrement=None, zone_humide=False):
     """Insérer/mettre à jour le bloc SANS écraser le texte libre existant.
 
     enjeu/etat_conservation sont validés contre leur référentiel (valeur hors
     liste ignorée). `recouvrement` est un pourcentage 0-100 (nombre).
+    `zone_humide` est un booléen.
     """
     human = strip_eval(text)
 
@@ -87,6 +89,8 @@ def encode_eval(text, enjeu=None, etat_conservation=None, recouvrement=None):
     pct = _valid_recouvrement(recouvrement)
     if pct is not None:
         pairs.append("recouvrement=%s" % pct)
+    if zone_humide:
+        pairs.append("zone_humide=true")
 
     if not pairs:
         return human  # rien à encoder → seul le texte humain subsiste

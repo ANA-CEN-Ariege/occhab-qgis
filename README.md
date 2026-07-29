@@ -251,7 +251,7 @@ locale… »** :
 
 ---
 
-## 6. Champs métier ANA (enjeu, état de conservation, recouvrement)
+## 6. Champs métier ANA (enjeu, état de conservation, zone humide, recouvrement)
 
 OccHab n'a pas de champ natif exposé pour ces notions. On les stocke, de façon
 **normalisée**, dans les champs libres OccHab — `comment` (station) et
@@ -260,10 +260,11 @@ OccHab n'a pas de champ natif exposé pour ces notions. On les stocke, de façon
 ```
 Texte libre saisi par l'utilisateur.
 
-[ANA-EVAL] enjeu=fort | etat_conservation=moyen | recouvrement=3 [/ANA-EVAL]
+[ANA-EVAL] enjeu=fort | etat_conservation=moyen | zone_humide=true | recouvrement=3 [/ANA-EVAL]
 ```
 
 - `enjeu` / `etat_conservation` : codes issus de référentiels fermés.
+- `zone_humide` : booléen (`true` ou absent) — simple case à cocher.
 - `recouvrement` : pourcentage 0-100 ; il **pré-sélectionne automatiquement**
   l'Abondance (< 5 % → « très faible », 5-25 %, 25-50 %, 50-75 %, > 75 %) **et**
   alimente le champ natif OccHab `recovery_percentage` (en plus de l'encodage).
@@ -295,6 +296,7 @@ SELECT
     n_mos.label_default                                         AS type_mosaique,
     (regexp_match(s.comment, 'enjeu=([a-z_]+)'))[1]             AS station_niveau_enjeu,
     (regexp_match(s.comment, 'etat_conservation=([a-z_]+)'))[1] AS station_etat_conservation,
+    (regexp_match(s.comment, 'zone_humide=(true|false)'))[1] = 'true' AS station_zone_humide,
     -- ---- Habitat (libellés, pas d'id) ----
     h.id_habitat,
     h.cd_hab,
