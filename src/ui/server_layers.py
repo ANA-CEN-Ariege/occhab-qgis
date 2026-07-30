@@ -103,12 +103,26 @@ class ServerStationLayerManager:
         return ext if ext is not None and not ext.isEmpty() else None
 
     def clear(self):
-        """Retirer la couche serveur (sans toucher au groupe)."""
-        if self._layer_id:
-            try:
-                QgsProject.instance().removeMapLayer(self._layer_id)
-            except (RuntimeError, KeyError):
-                pass
+        """Retirer la/les couche(s) serveur existantes (sans toucher au groupe).
+
+        Recherche par NOM dans le groupe — pas seulement via l'id cache sur
+        l'instance — pour nettoyer aussi une couche orpheline laissée par une
+        session précédente (cache perdu après réouverture du projet ou
+        rechargement du plugin) et dédoublonner d'éventuelles couches héritées
+        d'avant ce correctif. Comme la couche est de toute façon entièrement
+        réécrite dans show(), on ne cherche pas à la réutiliser : on supprime
+        tout ce qui porte ce nom, une nouvelle sera recréée juste après par
+        show().
+        """
+        group = self._find_group()
+        if group is not None:
+            for node in group.findLayers():
+                layer = node.layer()
+                if layer is not None and layer.name() == LAYER_NAME:
+                    try:
+                        QgsProject.instance().removeMapLayer(layer.id())
+                    except (RuntimeError, KeyError):
+                        pass
         self._layer_id = None
 
     def cleanup(self):
@@ -120,6 +134,11 @@ class ServerStationLayerManager:
             root.removeChildNode(group)
 
     # ------------------------------------------------------------- interne
+    @staticmethod
+    def _find_group():
+        """Groupe serveur existant, sans le créer (évite un groupe vide)."""
+        return QgsProject.instance().layerTreeRoot().findGroup(GROUP_NAME)
+
     @staticmethod
     def _group():
         root = QgsProject.instance().layerTreeRoot()

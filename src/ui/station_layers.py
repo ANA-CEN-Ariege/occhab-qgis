@@ -123,7 +123,14 @@ class StationLayerManager:
 
     def cleanup(self):
         """Retirer les couches et le groupe (au déchargement du plugin)."""
-        for layer_id in self._layer_ids.values():
+        ids = set(self._layer_ids.values())
+        group = self._find_group()
+        if group is not None:
+            for node in group.findLayers():
+                layer = node.layer()
+                if layer is not None:
+                    ids.add(layer.id())
+        for layer_id in ids:
             try:
                 QgsProject.instance().removeMapLayer(layer_id)
             except (RuntimeError, KeyError):
@@ -151,20 +158,59 @@ class StationLayerManager:
         layer = QgsProject.instance().mapLayer(layer_id) if layer_id else None
         if layer is not None:
             return layer
+        # Cache Python vide (nouvelle instance du manager : rechargement du
+        # plugin, nouvelle session QGIS, projet .qgz rouvert...) : chercher une
+        # couche de même nom déjà présente dans un groupe existant avant d'en
+        # créer une nouvelle, pour éviter un doublon visuel dans le panneau.
+        group = self._find_group()
+        if group is not None:
+            _, name = _LAYER_DEF[geom_type]
+            reused = self._reuse_layer(group, name)
+            if reused is not None:
+                self._layer_ids[geom_type] = reused.id()
+                return reused
         if not create:
             return None
-        return self._create_layer(geom_type)
+        return self._create_layer(geom_type, group)
 
-    def _create_layer(self, geom_type):
+    def _create_layer(self, geom_type, group=None):
         wkb, name = _LAYER_DEF[geom_type]
         uri = "%s?crs=EPSG:4326%s" % (wkb, _FIELDS_URI)
         layer = QgsVectorLayer(uri, name, "memory")
         layer.setReadOnly(True)
         layer.setRenderer(self._renderer(layer))
         QgsProject.instance().addMapLayer(layer, False)
-        self._group().addLayer(layer)
+        (group or self._group()).addLayer(layer)
         self._layer_ids[geom_type] = layer.id()
         return layer
+
+    @staticmethod
+    def _find_group():
+        """Groupe local existant, sans le créer (évite un groupe vide)."""
+        return QgsProject.instance().layerTreeRoot().findGroup(GROUP_NAME)
+
+    @staticmethod
+    def _reuse_layer(group, name):
+        """Retrouver une couche `name` dans `group` (recherche par nom, pas par id).
+
+        S'il existe plusieurs couches de même nom (doublons hérités d'avant ce
+        correctif), la première est conservée et les suivantes sont supprimées du
+        projet — c'est la donnée en base SQLite qui fait foi, ces couches ne sont
+        qu'un miroir, aucune perte n'est possible.
+        """
+        matches = [
+            node.layer() for node in group.findLayers()
+            if node.layer() is not None and node.layer().name() == name
+        ]
+        if not matches:
+            return None
+        keeper, *extras = matches
+        for extra in extras:
+            try:
+                QgsProject.instance().removeMapLayer(extra.id())
+            except (RuntimeError, KeyError):
+                pass
+        return keeper
 
     @staticmethod
     def _group():

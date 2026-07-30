@@ -438,8 +438,23 @@ occhab/
   en info, pas d'erreur).
 - Une instance OccHab **très ancienne ou fortement personnalisée** pourrait
   diverger du format validé — comparer via `GET /occhab/stations/<id>/`.
-- Les couches locales/serveur sont des **couches mémoire/temporaires** :
-  reconstruites à l'ouverture du dock, non persistées dans le `.qgz`.
+- **Couches locales** (« OccHab (local) ») : couches **mémoire** en lecture
+  seule, reconstruites à chaque rafraîchissement à partir de la base SQLite
+  locale (qui reste la seule source de vérité). QGIS peut néanmoins les
+  embarquer dans un `.qgz` sauvegardé ; à la réouverture, le plugin détecte
+  les couches de même nom déjà présentes dans le groupe et les réutilise
+  (plutôt que d'en recréer des doublons).
+- **Couche serveur** (« OccHab (serveur) ») : contrairement à ce qu'indiquait
+  une version précédente de cette note, il s'agit d'une **vraie couche
+  fichier** (provider OGR, GeoJSON écrit dans le dossier de configuration de
+  l'utilisateur), donc normalement persistable dans un `.qgz`. Son contenu
+  est toutefois entièrement réécrit à chaque changement de JDD ou
+  rafraîchissement ; ne pas s'appuyer sur son état sauvegardé comme source de
+  vérité.
+- Dans les deux cas, ces couches/groupes sont gérés automatiquement par le
+  plugin (un message d'avertissement s'affiche une fois par session à leur
+  première apparition) : ne pas les modifier, renommer ou déplacer
+  manuellement dans le panneau Couches.
 
 ---
 

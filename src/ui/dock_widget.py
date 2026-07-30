@@ -78,6 +78,7 @@ class OccHabDockWidget(QDockWidget):
         self._edit_geom_station_id = None
         self._map_filter_installed = False
         self._server_prompt = None
+        self._occhab_layers_notice_shown = False
         self._build_ui()
         self._install_map_interaction()
         self.refresh()
@@ -716,6 +717,7 @@ class OccHabDockWidget(QDockWidget):
             return
         suffix = " (les miennes)" if self.check_only_mine.isChecked() else ""
         self.label_server.setText("Serveur : %d station(s)%s" % (count, suffix))
+        self._notify_occhab_layers_once()
         if zoom:
             self._zoom_canvas_to_4326(self.server_layers.extent() or self.layers.extent())
 
@@ -1440,6 +1442,27 @@ class OccHabDockWidget(QDockWidget):
         self.btn_sync.setText("Synchroniser (%d)" % n_sync if n_sync else "Synchroniser")
         self._on_selection_changed()
         self.logger.info("Liste rafraîchie : %d station(s)", len(stations))
+        self._notify_occhab_layers_once()
+
+    def _notify_occhab_layers_once(self):
+        """Avertir une seule fois par session que les couches/groupes OccHab
+        gérés par le plugin viennent d'apparaître dans le panneau Couches."""
+        if self._occhab_layers_notice_shown:
+            return
+        has_layers = (
+            bool(self.layers.existing_layers()) or self.server_layers.layer() is not None
+        )
+        if not has_layers:
+            return
+        self._occhab_layers_notice_shown = True
+        self.iface.messageBar().pushInfo(
+            "OccHab",
+            "Les groupes « OccHab (local) » et « OccHab (serveur) » viennent "
+            "d'apparaître dans le panneau Couches : ils sont gérés automatiquement "
+            "par le plugin (couches en lecture seule, reconstruites à chaque "
+            "rafraîchissement) — évitez de les modifier, renommer ou déplacer "
+            "manuellement."
+        )
 
     def zoom_to_stations(self):
         """Zoom adaptatif : station locale sélectionnée, sinon emprise du JDD.

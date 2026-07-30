@@ -199,6 +199,14 @@ vos **stations locales** avec leurs actions, puis le bloc **Serveur** :
 - **OccHab (serveur)** : les stations déjà sur GeoNature pour le JDD choisi, en
   **bleu** et en **lecture seule** (contexte, non modifiable directement).
 
+Ces deux groupes sont gérés automatiquement par le plugin : les couches sont
+en lecture seule et reconstruites à chaque rafraîchissement (la base SQLite
+locale reste la seule source de vérité). Un message s'affiche une fois par
+session lors de leur première apparition dans le panneau Couches pour le
+rappeler — évitez de les modifier, renommer, déplacer ou supprimer
+manuellement : elles seraient simplement recréées au rafraîchissement
+suivant.
+
 ### La colonne « État »
 
 | État affiché       | Signification                                              |
