@@ -4,7 +4,7 @@
 """Dock principal du plugin OccHab : connexion, saisie et synchronisation."""
 import os
 
-from qgis.PyQt.QtCore import Qt, QUrl
+from qgis.PyQt.QtCore import QItemSelection, QItemSelectionModel, Qt, QUrl
 from qgis.PyQt.QtGui import QDesktopServices
 from qgis.PyQt.QtWidgets import (
     QCheckBox,
@@ -28,7 +28,8 @@ from qgis.PyQt.QtWidgets import (
     QWidget,
 )
 
-from ..database.sqlite_local import OccHabDatabase
+from ..database.sqlite_local import BROUILLON, VALIDE, OccHabDatabase
+from ..processing.duplicate import station_template
 from .connection_dialog import ConnectionDialog
 from .station_dialog import StationDialog
 from .station_layers import StationLayerManager
@@ -64,16 +65,25 @@ class OccHabDockWidget(QDockWidget):
         self.db = OccHabDatabase(config.get("local_db.path"))
         self.client = None
         self._user_label = None
+        # Créée avec le menu « Nouvelle station », donc après le branchement du
+        # signal de sélection du tableau : déclarée ici pour rester interrogeable.
+        self.action_duplicate = None
         self.nomenclatures = {}
         self.default_nomenclatures = {}
         self.typologies = []
         self.observers = []
         self.layers = StationLayerManager(self.logger)
+        self.layers.add_selection_listener(self._on_map_selection_changed)
+        self._table_dialog = None  # table attributaire ouverte (non modale)
         self.server_layers = ServerStationLayerManager(
             str(config.user_config_dir / "server_stations.geojson"), self.logger
         )
         self._capture = None
         self._capture_target = None  # None/"new" = nouvelle station ; int = id station à re-géométrer
+        self._duplicate_source = None  # station à copier pour la création en cours
+        # Dates de la dernière saisie, mémorisées pour la session QGIS seulement
+        # (les observateurs, eux, sont persistés dans la configuration).
+        self._session_dates = None
         self._geom_editor = None
         self._edit_geom_station_id = None
         self._map_filter_installed = False
@@ -205,6 +215,12 @@ class OccHabDockWidget(QDockWidget):
             "Zoomer sur la station sélectionnée ; sans sélection, sur l'emprise du JDD.",
         )
         self.btn_zoom.clicked.connect(self.zoom_to_stations)
+        # Toujours actif : la table ne porte pas sur la sélection du tableau.
+        self.btn_table = self._action_button(
+            "Tableau", "/mActionOpenTable.svg",
+            "Voir et modifier stations et habitats en nombre (une ligne par habitat).",
+        )
+        self.btn_table.clicked.connect(self.open_attribute_table)
         self.btn_delete = self._action_button(
             "Supprimer", "/mActionDeleteSelected.svg",
             "Supprimer la station sélectionnée.",
@@ -217,12 +233,15 @@ class OccHabDockWidget(QDockWidget):
         row_actions.addWidget(self.btn_edit)
         row_actions.addWidget(self.btn_geom)
         row_actions.addWidget(self.btn_zoom)
+        row_actions.addWidget(self.btn_table)
         row_actions.addStretch(1)
         row_actions.addWidget(self.btn_delete)
         layout.addLayout(row_actions)
 
         self.table = QTableWidget(0, 3)
-        self.table.setHorizontalHeaderLabels(["Habitat(s)", "Date", "État"])
+        # « Statut » = où en est le travail ; « synchro » = où en est l'envoi.
+        # Deux questions distinctes, nommées toutes les deux dans l'en-tête.
+        self.table.setHorizontalHeaderLabels(["Habitat(s)", "Date", "Statut · synchro"])
         header = self.table.horizontalHeader()
         header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
         header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
@@ -253,6 +272,14 @@ class OccHabDockWidget(QDockWidget):
             "Sélectionnez une ou plusieurs entités dans une autre couche, puis "
             "choisissez ceci. Plusieurs entités → une station par entité, "
             "métadonnées communes saisies une seule fois."
+        )
+        new_menu.addSeparator()
+        self.action_duplicate = new_menu.addAction(
+            "Dupliquer la station sélectionnée", self.duplicate_station
+        )
+        self.action_duplicate.setToolTip(
+            "Reprend le JDD, les dates, les observateurs, les attributs et les "
+            "habitats de la station sélectionnée ; la géométrie est à dessiner."
         )
         new_menu.addSeparator()
         new_menu.addAction("Sans géométrie (à tracer plus tard)", self._new_station_no_geom)
@@ -346,16 +373,53 @@ class OccHabDockWidget(QDockWidget):
 
     def _on_selection_changed(self):
         """Activer la barre d'action seulement quand une station est sélectionnée."""
+        self._maj_barre_action()
+        # Tableau → carte. Le verrou côté couches empêche le retour en boucle.
+        try:
+            self.layers.select_stations(self._selected_station_ids())
+        except Exception as exc:  # noqa: BLE001 - la carte ne doit pas casser la liste
+            self.logger.debug("Sélection carte non appliquée : %s", exc)
+
+    def _maj_barre_action(self):
+        """Activer/désactiver les actions selon la sélection, sans toucher la carte."""
         station_id = self._selected_station_id()
         has = station_id is not None
         for btn in (self.btn_edit, self.btn_geom, self.btn_delete):
             btn.setEnabled(has)
+        if self.action_duplicate is not None:
+            self.action_duplicate.setEnabled(has)
         # « Rétablir la géométrie précédente » : grisé s'il n'y a rien à rétablir.
         has_prev = False
         if has:
             full = self.db.get_station(station_id)
             has_prev = bool(full and full.get("prev_geom"))
         self.action_restore_geom.setEnabled(has_prev)
+
+    def _on_map_selection_changed(self):
+        """Carte → tableau : refléter dans la liste ce qui est sélectionné sur la carte."""
+        ids = set(self.layers.selected_station_ids())
+        modele = self.table.selectionModel()
+        if modele is None:
+            return
+        selection = QItemSelection()
+        derniere_colonne = self.table.columnCount() - 1
+        for row in range(self.table.rowCount()):
+            item = self.table.item(row, 0)
+            if item is not None and item.data(Qt.ItemDataRole.UserRole) in ids:
+                selection.select(
+                    self.table.model().index(row, 0),
+                    self.table.model().index(row, derniere_colonne),
+                )
+        # `blockSignals` : sans lui, la sélection reposée relancerait
+        # `_on_selection_changed`, qui réécrirait la sélection carte.
+        self.table.blockSignals(True)
+        try:
+            modele.select(
+                selection, QItemSelectionModel.SelectionFlag.ClearAndSelect
+            )
+        finally:
+            self.table.blockSignals(False)
+        self._maj_barre_action()
 
     def _action_button(self, text, icon_name, tooltip):
         """Bouton d'action icône + texte (icône du thème QGIS, repli sur le texte)."""
@@ -378,6 +442,7 @@ class OccHabDockWidget(QDockWidget):
         self.table.selectRow(index.row())
         menu = QMenu(self.table)
         menu.addAction("Éditer", self.edit_station)
+        menu.addAction("Dupliquer", self.duplicate_station)
         geom = menu.addMenu("Modifier la géométrie")
         geom.addAction("Redessiner / éditer sur la carte", self.edit_geometry)
         geom.addAction(
@@ -394,26 +459,62 @@ class OccHabDockWidget(QDockWidget):
         menu.addAction("Supprimer", self.delete_selected)
         menu.exec(self.table.viewport().mapToGlobal(pos))
 
-    # (glyphe, libellé, texte, fond OPAQUE, bordure). Fond opaque : le chip reste
-    # lisible même quand la ligne est sélectionnée (surlignage bleu par-dessous).
+    # (glyphe, libellé, couleur du texte, fond, bordure) — état de SYNCHRO.
     _PILL_STYLES = {
+        # Vocabulaire aligné sur le bouton « Synchroniser » : « envoyée » aurait
+        # introduit un second mot pour la même chose.
         "synced": ("✓", "Synchronisée", "#12579f", "#e6effb", "#bcdcf5"),
         "pending": ("↑", "À synchroniser", "#8a4d02", "#fbeedb", "#f0d6ac"),
         "conflict": ("▲", "Conflit", "#b23125", "#fbe4e0", "#f2c4bc"),
         "to_delete": ("✕", "À supprimer", "#566070", "#eceef1", "#d5d9df"),
     }
+    # État MÉTIER (brouillon / validé), distinct de l'état de synchro. Teintes
+    # volontairement éloignées de celles de la synchro : deux familles de couleurs
+    # pour deux questions différentes.
+    _PILL_VALIDATION = {
+        BROUILLON: ("✎", "Brouillon", "#455a64", "#eceff1", "#cfd8dc"),
+        VALIDE: ("✔", "Validée", "#1b5e20", "#e7f3e8", "#c3e0c6"),
+    }
 
-    def _status_pill(self, sync_status, id_station):
-        """Pastille d'état « couleur + icône + texte » (chip opaque)."""
-        glyph, label, fg, bg, border = self._PILL_STYLES.get(
-            sync_status, self._PILL_STYLES["pending"]
-        )
+    def _status_pill(self, station):
+        """Deux pastilles EMPILÉES : état métier, puis état de synchronisation.
+
+        Les deux tenaient sur une seule ligne, la synchro réduite à un glyphe de
+        la couleur du statut — donc illisible. Chacune retrouve ici sa couleur et
+        son libellé. On empile plutôt qu'on juxtapose : dans un dock ancré, la
+        largeur est la ressource rare, la hauteur ne l'est pas.
+        """
+        conteneur = QWidget()
+        conteneur.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        boite = QVBoxLayout(conteneur)
+        boite.setContentsMargins(4, 2, 4, 2)
+        boite.setSpacing(2)
+        validation = station.get("validation_status") or BROUILLON
+        boite.addWidget(self._chip(
+            *self._PILL_VALIDATION.get(validation, self._PILL_VALIDATION[BROUILLON])
+        ))
+        boite.addWidget(self._chip(
+            *self._PILL_STYLES.get(
+                station.get("sync_status"), self._PILL_STYLES["pending"]
+            ),
+            leger=True,
+        ))
+        return conteneur
+
+    @staticmethod
+    def _chip(glyph, label, fg, bg, border, leger=False):
+        """Pastille « couleur + icône + texte » (chip au fond OPAQUE).
+
+        Fond opaque : le chip reste lisible même quand la ligne est sélectionnée
+        (surlignage bleu par-dessous). `leger` distingue la synchro, secondaire,
+        de l'état métier.
+        """
         widget = QLabel("%s %s" % (glyph, label))
         widget.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
         widget.setStyleSheet(
             "QLabel { color: %s; background-color: %s; border: 1px solid %s;"
-            " border-radius: 9px; padding: 1px 8px; margin: 2px 4px; font-weight: 600; }"
-            % (fg, bg, border)
+            " border-radius: 8px; padding: 0px 7px; font-weight: %s; }"
+            % (fg, bg, border, "500" if leger else "700")
         )
         return widget
 
@@ -930,15 +1031,45 @@ class OccHabDockWidget(QDockWidget):
         self.iface.messageBar().pushInfo("OccHab", "Récupération : %s." % ", ".join(parts))
 
     # -------------------------------------------------- saisie + géométrie
+    def _begin_new_station(self, template=None):
+        """Ouvrir une création : `template` = station à copier, None = vierge.
+
+        Toutes les entrées de création passent par ici pour que le modèle de
+        duplication ne survive jamais à la création qui l'a demandé.
+        """
+        self._duplicate_source = template
+
     def _new_station_draw(self, geom_type):
         """Créer une station en dessinant sa géométrie sur la carte."""
+        self._begin_new_station()
         self._capture_target = "new"
         self._start_capture(geom_type)
 
     def _new_station_no_geom(self):
         """Créer une station sans géométrie (à tracer plus tard)."""
+        self._begin_new_station()
         self._capture_target = "new"
         self._open_station_dialog(None, None)
+
+    def duplicate_station(self):
+        """Créer une station reprenant attributs, habitats et observateurs d'une autre.
+
+        La géométrie n'est jamais copiée (deux polygones superposés n'auraient pas
+        de sens) : elle est redessinée, du même type que l'original.
+        """
+        station_id = self._selected_station_id()
+        if station_id is None:
+            QMessageBox.information(self, "OccHab", "Sélectionnez une station à dupliquer.")
+            return
+        full = self.db.get_station(station_id)
+        if full is None:
+            return
+        self._begin_new_station(station_template(full))
+        if full.get("geom"):
+            self._capture_target = "new"
+            self._start_capture(full.get("geom_type") or "polygon")
+        else:  # l'original n'avait pas de géométrie : rien à redessiner
+            self._open_station_dialog(None, None)
 
     # ------------------------------------------ reprise de géométrie (couche)
     def _new_station_from_selection(self):
@@ -952,6 +1083,7 @@ class OccHabDockWidget(QDockWidget):
         if error:
             QMessageBox.information(self, "OccHab", error)
             return
+        self._begin_new_station()
         self._capture_target = None
         if len(geoms) == 1:
             wkt, geom_type = geoms[0]
@@ -1005,6 +1137,8 @@ class OccHabDockWidget(QDockWidget):
             "Création depuis sélection : %d station(s) créée(s), %d échec(s)",
             created, failed,
         )
+        if created:
+            self._remember_last_entry(shared, observers)
         parts = ["%d station(s) créée(s)" % created]
         if habitats:
             parts.append("%d habitat(s) chacune" % len(habitats))
@@ -1200,6 +1334,9 @@ class OccHabDockWidget(QDockWidget):
 
     def _on_capture_cancelled(self):
         self._capture_target = None
+        # Sans cela, une duplication abandonnée en cours de numérisation
+        # contaminerait la prochaine « Nouvelle station ».
+        self._duplicate_source = None
         self.iface.messageBar().pushInfo("OccHab", "Numérisation annulée.")
 
     def _update_geometry(self, station_id, wkt, geom_type, metrics=None):
@@ -1291,6 +1428,11 @@ class OccHabDockWidget(QDockWidget):
 
     def shutdown(self):
         """Nettoyer au déchargement du plugin : capture/édition en cours + couches carte."""
+        if self._table_dialog is not None:
+            # Non modale : sans cela elle survivrait au plugin, avec une base et
+            # des couches disparues sous elle.
+            self._table_dialog.close()
+            self._table_dialog = None
         if self._map_filter_installed:
             try:
                 self.iface.mapCanvas().viewport().removeEventFilter(self)
@@ -1305,12 +1447,34 @@ class OccHabDockWidget(QDockWidget):
         self.layers.cleanup()
         self.server_layers.cleanup()
 
+    def _last_observers(self):
+        """Observateurs de la dernière saisie, pour pré-remplir la suivante."""
+        saved = self.config.get("last_entry.observers") or []
+        return [obs for obs in saved if isinstance(obs, dict) and obs.get("id_role")]
+
+    def _remember_last_entry(self, station, observers):
+        """Retenir observateurs et dates pour pré-remplir la saisie suivante.
+
+        Observateurs : persistés en configuration — une équipe change peu au cours
+        d'une campagne. Dates : gardées pour la session QGIS seulement, pour ne pas
+        traîner une date d'observation périmée d'un jour de terrain sur l'autre.
+        """
+        self.config.set(
+            "last_entry.observers",
+            [
+                {"id_role": o.get("id_role"), "observer_name": o.get("observer_name")}
+                for o in (observers or []) if o.get("id_role")
+            ],
+        )
+        if station.get("date_min") and station.get("date_max"):
+            self._session_dates = (station["date_min"], station["date_max"])
+
     def _make_station_dialog(self, *, geom_wkt=None, geom_type=None, metrics=None,
-                             station=None, batch_count=0):
+                             station=None, batch_count=0, template=None):
         """Construire un StationDialog en injectant nomenclatures, JDD, observateurs…
 
-        Point unique d'assemblage partagé par la création (simple / lot) et l'édition,
-        pour éviter que les appels divergent.
+        Point unique d'assemblage partagé par la création (simple / lot / copie) et
+        l'édition, pour éviter que les appels divergent.
         """
         return StationDialog(
             self.config,
@@ -1319,6 +1483,9 @@ class OccHabDockWidget(QDockWidget):
             geo_metrics=metrics,
             station=station,
             batch_count=batch_count,
+            template=template,
+            last_observers=self._last_observers(),
+            last_dates=self._session_dates,
             datasets=self._dataset_items(),
             station_nomenclatures=self._station_nomenclatures(),
             habitat_nomenclatures=self._habitat_nomenclatures(),
@@ -1335,8 +1502,12 @@ class OccHabDockWidget(QDockWidget):
         )
 
     def _open_station_dialog(self, geom_wkt, geom_type, metrics=None):
+        # Le modèle de duplication ne vaut que pour CETTE création : consommé ici,
+        # qu'on aille au bout ou non.
+        template = self._duplicate_source
+        self._duplicate_source = None
         dialog = self._make_station_dialog(
-            geom_wkt=geom_wkt, geom_type=geom_type, metrics=metrics
+            geom_wkt=geom_wkt, geom_type=geom_type, metrics=metrics, template=template
         )
         if not dialog.exec():
             return
@@ -1357,7 +1528,55 @@ class OccHabDockWidget(QDockWidget):
             self.logger.error("Échec création station : %s", exc)
             QMessageBox.critical(self, "Erreur", "Création impossible : %s" % exc)
             return
+        self._remember_last_entry(station, observers)
         self.refresh()
+
+    def open_attribute_table(self):
+        """Ouvrir la table des stations et habitats du JDD courant."""
+        from .attribute_table import AttributeTableDialog, Contexte
+
+        jdd = self.combo_jdd.currentData() if self.combo_jdd.isEnabled() else None
+        stations = self.db.get_stations_full(id_dataset=jdd)
+        if not stations:
+            QMessageBox.information(
+                self, "OccHab",
+                "Aucune station locale à afficher.\n\nLa table porte sur votre base "
+                "locale : récupérez d'abord les stations du serveur si besoin.",
+            )
+            return
+        # Les deux jeux de nomenclatures sont fusionnés : le registre de champs
+        # les désigne par une clé unique, sans distinguer station et habitat.
+        nomenclatures = dict(self._station_nomenclatures())
+        nomenclatures.update(self._habitat_nomenclatures())
+        if self._table_dialog is not None:  # déjà ouverte : la ramener au premier plan
+            self._table_dialog.raise_()
+            self._table_dialog.activateWindow()
+            return
+        dialog = AttributeTableDialog(
+            self.db,
+            stations,
+            Contexte(
+                nomenclatures=nomenclatures,
+                datasets=self._dataset_items(),
+                # Pour choisir un habitat en masse comme dans le formulaire.
+                habref_search=self._habref_search_fn(),
+                typologies=self._habref_typologies(),
+                observers=self._observers_items(),
+            ),
+            layers=self.layers,
+            logger=self.logger,
+            parent=self,
+        )
+        # NON modale : une fenêtre modale bloquerait le canevas, or la sélection
+        # doit pouvoir se faire sur la carte pendant que la table est ouverte.
+        dialog.setModal(False)
+        dialog.finished.connect(self._on_attribute_table_closed)
+        self._table_dialog = dialog
+        dialog.show()
+
+    def _on_attribute_table_closed(self, _result=None):
+        self._table_dialog = None
+        self.refresh()  # reprendre ce que la table a enregistré
 
     def edit_station(self):
         """Éditer la station sélectionnée dans le tableau (attributs + habitats)."""
@@ -1401,7 +1620,9 @@ class OccHabDockWidget(QDockWidget):
     # --------------------------------------------------------- tableau
     def refresh(self):
         jdd = self.combo_jdd.currentData() if self.combo_jdd.isEnabled() else None
-        all_stations = self.db.get_all_stations()
+        # Chargement en lot : habitats et observateurs arrivent avec les stations,
+        # en 3 requêtes au total (auparavant 3 par station).
+        all_stations = self.db.get_stations_full()
         stations = (
             [s for s in all_stations if s.get("id_dataset") == jdd]
             if jdd is not None else all_stations
@@ -1413,8 +1634,7 @@ class OccHabDockWidget(QDockWidget):
         self.table.setRowCount(0)
         n_conflict = 0
         for station in stations:
-            full = self.db.get_station(station["id"])
-            habitats = full["habitats"] if full else []
+            habitats = station.get("habitats") or []
             station["_nb_habitats"] = len(habitats)
             status = station.get("sync_status")
             if status == "conflict":
@@ -1428,9 +1648,9 @@ class OccHabDockWidget(QDockWidget):
                 item_hab.setToolTip("Observateur(s) : %s" % observers)
             self.table.setItem(row, 0, item_hab)
             self.table.setItem(row, 1, QTableWidgetItem(station.get("date_min") or ""))
-            self.table.setCellWidget(
-                row, 2, self._status_pill(status, station.get("id_station"))
-            )
+            self.table.setCellWidget(row, 2, self._status_pill(station))
+        # Les deux pastilles sont empilées : la hauteur par défaut les tronquerait.
+        self.table.resizeRowsToContents()
         try:
             self.layers.refresh(stations)
         except Exception as exc:  # noqa: BLE001 - la carte ne doit pas casser la liste

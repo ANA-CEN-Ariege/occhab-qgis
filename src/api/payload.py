@@ -15,6 +15,13 @@ pourrait diverger — le cas échéant, comparer avec un GET /occhab/stations/<i
 import hashlib
 import json
 
+try:  # importable dans le paquet (plugin) comme en isolation (tests)
+    from ..processing.eval_fields import decode_eval, merge_eval
+    from ..processing.referentiels import BROUILLON
+except ImportError:  # pragma: no cover - repli hors paquet
+    from eval_fields import decode_eval, merge_eval
+    from referentiels import BROUILLON
+
 
 def build_station_payload(station, habitats, observers, geom_geojson):
     """Construire le GeoJSON Feature attendu par POST /occhab/stations/.
@@ -50,7 +57,12 @@ def build_station_payload(station, habitats, observers, geom_geojson):
         "id_nomenclature_geographic_object": station.get(
             "id_nomenclature_geographic_object"
         ),
-        "comment": station.get("comment"),
+        # L'état métier n'a pas de champ natif : il voyage dans le bloc ANA-EVAL.
+        # La colonne locale fait foi, le commentaire n'est que son transport —
+        # d'où la ré-injection systématique ici plutôt qu'un stockage en double.
+        "comment": merge_eval(
+            station.get("comment"), statut=station.get("validation_status")
+        ) or None,
         "depth_min": station.get("depth_min"),
         "depth_max": station.get("depth_max"),
         "id_nomenclature_type_sol": station.get("id_nomenclature_type_sol"),
@@ -201,6 +213,15 @@ def parse_server_station(feature):
     props = feature.get("properties") or {}
 
     station = {k: props.get(k) for k in _STATION_PROP_KEYS if props.get(k) is not None}
+    # État métier : extrait du bloc puis RETIRÉ du commentaire local, pour que la
+    # colonne `validation_status` reste la seule source de vérité en local.
+    commentaire = props.get("comment")
+    station["validation_status"] = decode_eval(commentaire).get("statut") or BROUILLON
+    nettoye = merge_eval(commentaire, statut=None)
+    if nettoye:
+        station["comment"] = nettoye
+    else:
+        station.pop("comment", None)
     if not station.get("id_station") and feature.get("id"):
         station["id_station"] = feature["id"]
     for key in ("date_min", "date_max"):

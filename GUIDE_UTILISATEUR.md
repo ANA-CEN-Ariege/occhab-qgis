@@ -24,6 +24,7 @@ QGIS. Il couvre l'installation, la première configuration et l'usage quotidien.
 11. [Travailler hors-ligne](#11-travailler-hors-ligne)
 12. [Sauvegarde et export des données](#12-sauvegarde-et-export-des-données)
 13. [Les champs « enjeu / état / recouvrement »](#13-les-champs-enjeu--état--recouvrement)
+13 bis. [Brouillon, validé, et la table des stations](#13-bis-brouillon-validé-et-la-table-des-stations)
 14. [Dépannage (FAQ)](#14-dépannage-faq)
 15. [Glossaire](#15-glossaire)
 
@@ -44,7 +45,12 @@ Concrètement, vous pouvez :
 - **décrire un ou plusieurs habitats** par station, avec recherche assistée dans
   le référentiel **HABREF** (Corine Biotopes, EUNIS…) ;
 - renseigner des champs métier ANA — **niveau d'enjeu**, **état de conservation**,
-  **recouvrement** ;
+  **recouvrement** — et les champs **Natura 2000** (typicité, dynamique,
+  restauration, unité végétale…) ;
+- travailler **en brouillon** et **valider** vos stations quand elles sont
+  abouties ;
+- voir et modifier **toutes vos stations et habitats dans un tableau**, y compris
+  **en masse** sur une sélection ;
 - **synchroniser** vos saisies avec GeoNature (création, modification,
   suppression) ;
 - **consulter** les stations déjà présentes sur le serveur pour vous repérer et
@@ -161,10 +167,11 @@ vos **stations locales** avec leurs actions, puis le bloc **Serveur** :
 │   Serveur : 12 station(s)                                 │
 │─────────────────────────────────────────────────────────│
 │ Mes stations                                    7 locales │
-│ [✏ Éditer] [⬡ Géométrie ▾] [🔍 Zoom]         [🗑 Supprimer]│
+│ [✏ Éditer] [⬡ Géométrie ▾] [🔍 Zoom] [▦ Tableau] [🗑 Suppr.]│
 │  ┌────────────────────┬───────────┬─────────────────┐     │
-│  │ Habitat(s)         │ Date      │ État            │     │
-│  │ 41.711 — Bois de…  │ 2024-06-21│ ✓ Synchronisée  │     │
+│  │ Habitat(s)         │ Date      │ Statut · synchro│     │
+│  │ 41.711 — Bois de…  │ 2024-06-21│ ✔ Validée       │     │
+│  │                    │           │ ✓ Synchronisée  │     │
 │  └────────────────────┴───────────┴─────────────────┘     │
 │  [＋ Nouvelle station ▾]                                  │
 │─────────────────────────────────────────────────────────│
@@ -188,6 +195,11 @@ vos **stations locales** avec leurs actions, puis le bloc **Serveur** :
 - **Serveur** : *Synchroniser*, *Rafraîchir*, *Récupérer une station du serveur…*.
 - **Astuce carte** : double-cliquer une station sur la carte (ou cliquer dessus
   avec l'outil **Identifier des entités**) ouvre son formulaire.
+- **La sélection est commune à la liste et à la carte** : sélectionner des lignes
+  dans la liste met les stations correspondantes en surbrillance sur la carte, et
+  sélectionner des entités sur la carte (outil **Sélectionner**) sélectionne les
+  lignes correspondantes. Pratique pour repérer où se trouve ce que vous êtes en
+  train de modifier — et pour choisir un lot à la souris avant de le traiter.
 
 ### Les couches sur la carte
 
@@ -207,7 +219,19 @@ rappeler — évitez de les modifier, renommer, déplacer ou supprimer
 manuellement : elles seraient simplement recréées au rafraîchissement
 suivant.
 
-### La colonne « État »
+### La colonne « Statut · synchro »
+
+Elle répond à **deux questions différentes**, sur **deux pastilles empilées** —
+la première dit où en est *votre travail*, la seconde où en est *l'envoi*.
+
+**Pastille du haut — statut** (votre travail) :
+
+| Statut         | Signification                                                  |
+|----------------|----------------------------------------------------------------|
+| **✎ Brouillon**| Saisie en cours, sur laquelle vous comptez revenir              |
+| **✔ Validée**  | Travail abouti                                                  |
+
+**Pastille du bas — synchronisation** (l'envoi vers GeoNature) :
 
 | État affiché       | Signification                                              |
 |--------------------|------------------------------------------------------------|
@@ -215,6 +239,10 @@ suivant.
 | **Synchronisée**   | Identique à la version GeoNature                           |
 | **Conflit**        | Modifiée **aussi** sur GeoNature depuis votre dernière synchro — à résoudre |
 | **À supprimer**    | Marquée pour suppression au prochain envoi (réversible)    |
+
+> Les deux sont **indépendants** : un brouillon peut très bien être synchronisé
+> (c'est même le but de la sauvegarde de fin de journée), et une station validée
+> peut rester à envoyer.
 
 ---
 
@@ -237,6 +265,12 @@ Cliquez **« ＋ Nouvelle station ▾ »** et choisissez d'où vient la géomét
     observateurs, commentaire, et éventuellement un habitat appliqué à toutes) ; le
     **nom est laissé vide** (à renseigner ensuite station par station) et la
     **surface / altitude** sont calculées pour chaque géométrie.
+- **Dupliquer la station sélectionnée** — reprend d'une station existante son
+  **JDD, ses dates, ses observateurs, tous ses attributs et ses habitats**, et vous
+  fait **redessiner la géométrie** (du même type que l'original). Pratique quand le
+  même habitat se répète d'un polygone à l'autre. La géométrie n'est jamais copiée,
+  et la nouvelle station est bien une **création** (elle n'écrase pas l'originale).
+  Disponible aussi par **clic droit** sur une ligne du tableau → **« Dupliquer »**.
 - **Sans géométrie (à tracer plus tard)** — ouvre directement le formulaire ; vous
   ajouterez la géométrie ensuite via **« Géométrie ▾ »**.
 
@@ -247,13 +281,23 @@ l'**altitude min/max** sont déjà remplies automatiquement.
 
 Le formulaire est à **deux niveaux**. L'**Essentiel** est toujours visible :
 
-- **Jeu de données (JDD)** — *obligatoire*.
+- **Jeu de données (JDD)** — *obligatoire*. Il est **déjà sélectionné** : le plugin
+  retient le JDD choisi en haut du panneau, une fois pour toutes.
 - **Nom de la station**, **dates** (début / fin).
 - **Observateur(s)** — champ à **autocomplétion** : déroulez pour parcourir la
   liste, ou **tapez** un nom pour filtrer ; l'observateur choisi s'ajoute dessous
-  (retirable par double-clic ou « Retirer »). L'utilisateur connecté est
-  pré-ajouté.
+  (retirable par double-clic ou « Retirer »).
 - **Niveau d'enjeu** / **état de conservation** (voir §13), **Commentaire**.
+
+> **Reprise de la saisie précédente.** Dès la deuxième station, les
+> **observateurs** de la saisie précédente sont **repris automatiquement**, ainsi
+> que les **dates** si vous êtes toujours dans la même session QGIS. Une mention
+> « ↺ … repris de la saisie précédente » l'indique sous les dates — elle est là
+> pour vous inviter à **vérifier la date**. Les observateurs sont mémorisés d'une
+> session à l'autre (une équipe change peu au cours d'une campagne) ; les dates,
+> non : au redémarrage de QGIS, on repart de la date du jour. Tant qu'aucune
+> station n'a été saisie, c'est l'utilisateur connecté qui est pré-ajouté comme
+> observateur.
 
 Les autres champs (**altitude**, **profondeur**, **surface**, **exposition**,
 **type de sol**, **type de mosaïque**, **nature d'objet géographique**) sont sous
@@ -273,6 +317,9 @@ ajouter, dans le formulaire :
   **liste HABREF** apparaît, préfixée par la typologie (« CORINE biotopes 41.2 -
   Chênaies-charmaies »). En choisissant une proposition, le **code `cd_hab`** est
   rempli automatiquement. Le nom cité reste ensuite librement modifiable.
+  Si rien n'apparaît, un message sous le champ vous dit pourquoi : **hors
+  connexion** (la recherche HABREF a besoin du serveur — saisissez alors le nom
+  et le code à la main), erreur du serveur, ou aucun habitat trouvé.
 - **Filtre typologie** — pour cibler la recherche (Corine, EUNIS…).
 - **Déterminateur** — utilisateur connecté par défaut, saisie libre possible.
 - **Technique de collecte** — **« In situ » par défaut**.
@@ -469,9 +516,14 @@ Le plugin les enregistre de façon **normalisée**, **encodés dans les champs d
 commentaire** d'OccHab (au niveau station et/ou habitat), sans détruire le texte 
 libre que vous y mettez.
 
-- **Niveau d'enjeu** : Faible / Moyen / Fort / Majeur (liste déroulante).
-- **État de conservation** : Bon / Moyen (altéré) / Mauvais (dégradé) / Non
-  déterminé (liste déroulante).
+- **Niveau d'enjeu** : Très fort / Fort / Moyen / Faible / Aucun / Inconnu (liste
+  déroulante, du plus fort au plus faible). Les stations saisies avec l'ancienne
+  valeur **« Majeur »** se rouvrent automatiquement sur **« Très fort »** : rien
+  n'est perdu.
+- **État de conservation** : Inconnu / Excellent / Bon / Moyen / Mauvais (liste
+  déroulante). Cette liste suit désormais le **cahier des charges des
+  cartographies Natura 2000 d'Occitanie** (annexe 2). L'ancienne valeur « Non
+  déterminé » se rouvre automatiquement sur **« Inconnu »** : rien n'est perdu.
 - **Zone humide** : case à cocher — simple oui/non pour indiquer si la station
   est en zone humide.
 - **Recouvrement (%)** : de 0 à 100 (habitat seulement) ; il **pré-sélectionne** 
@@ -481,6 +533,75 @@ Vous les saisissez dans le formulaire de station (les deux premiers visibles,
 la zone humide juste dessous, le recouvrement au niveau habitat) ; à la relecture 
 (édition), le plugin les ré-affiche automatiquement. Côté GeoNature, ces valeurs 
 restent ré-extractibles (voir README §6 pour les administrateurs).
+
+---
+
+## 13 bis. Brouillon, validé, et la table des stations
+
+### Travailler en brouillon
+
+Une station porte deux états qu'il ne faut pas confondre :
+
+- **Brouillon** ou **Validée** — où en est *votre* travail. Nouvelle station =
+  brouillon.
+- **À synchroniser / Synchronisée / Conflit** — où en est *l'envoi* vers
+  GeoNature.
+
+La colonne **« Statut · synchro »** les montre sur **deux pastilles empilées**, de couleurs distinctes : le statut au-dessus, la synchronisation en dessous.
+
+**Les brouillons sont bien envoyés à GeoNature** : la synchronisation de fin de
+journée sert aussi de sauvegarde, pour ne pas perdre une journée de terrain si
+l'ordinateur lâche. En contrepartie, ce que voient vos collègues sur GeoNature
+peut être du travail en cours — d'où l'intérêt de valider dès que c'est abouti.
+
+Vous changez le statut dans le formulaire de la station (liste **« Statut »**),
+ou pour tout un lot depuis la table (**« Valider la sélection »**).
+
+### La table des stations et habitats
+
+Le bouton **« Tableau »**, au-dessus de la liste, ouvre une fenêtre qui montre
+tout le JDD courant : **une ligne par habitat**. Une station qui porte trois
+habitats occupe trois lignes ; ses informations de station y sont répétées.
+
+- **Colonnes** : choisissez *Essentiel*, *Natura 2000* ou *Tout*.
+- **Filtres** : statut, synchro, et une zone de recherche (nom de station,
+  habitat, cd_hab). Cliquez un en-tête pour trier.
+- **Modifiez directement dans les cellules.**
+- **La sélection est partagée avec la carte** : la table s'ouvre sans bloquer
+  QGIS, vous pouvez donc sélectionner des polygones à la souris sur la carte pour
+  retrouver leurs lignes ici, ou l'inverse. Une station en mosaïque voit **toutes
+  ses lignes d'habitats** sélectionnées.
+- **Les observateurs** ne se saisissent **pas dans une cellule** (c'est une liste,
+  pas une valeur) mais se posent en lot : **« Appliquer à la sélection… »**,
+  champ *Observateurs*, cochez l'équipe. Cocher le champ sans retenir personne
+  **efface** les observateurs des stations visées.
+- **Corriger une détermination sur tout un lot** : sélectionnez les lignes, puis
+  **« Appliquer à la sélection… »** et servez-vous du champ **« Nom cité »**, qui
+  propose la **recherche HABREF**. Choisir un habitat coche et remplit à la fois
+  le **nom cité** et le **cd_hab** — ils ne peuvent pas être dissociés, sans quoi
+  vous laisseriez des habitats dont le code ne correspond plus au nom.
+
+> ⚠️ Les colonnes **teintées en gris-bleu** sont des champs de la **station** :
+> les modifier sur une ligne les modifie pour **tous les habitats du même
+> polygone**. L'infobulle vous le rappelle.
+
+**Modifier plusieurs lignes d'un coup** — sélectionnez les lignes (Ctrl / Maj),
+puis **« Appliquer à la sélection… »**. Cochez les champs à modifier ; les autres
+restent tels quels. Un récapitulatif vous dit combien de stations et d'habitats
+sont concernés et, surtout, **combien de valeurs déjà renseignées seront
+remplacées**.
+
+**Rien n'est écrit tant que vous n'avez pas cliqué « Enregistrer ».** Les
+cellules modifiées apparaissent en orangé. À l'enregistrement, le plugin :
+
+1. vous avertit si un polygone ne totalise pas 100 % de recouvrement (exigence
+   Natura 2000) — c'est un avertissement, vous pouvez continuer ;
+2. **copie votre base** dans un fichier `…avant-lot-AAAAMMJJ-HHMMSS.db` — c'est
+   votre marche arrière en cas de fausse manœuvre ;
+3. écrit les modifications et repasse les stations en « À synchroniser ».
+
+Une station **validée** que vous retouchez dans la table **repasse en brouillon**
+automatiquement : y revenir, c'est que le travail n'était pas fini.
 
 ---
 

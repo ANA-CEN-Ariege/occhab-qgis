@@ -3,7 +3,7 @@ name=OccHab GeoNature
 qgisMinimumVersion=3.28
 qgisMaximumVersion=3.99
 description=Offline-first data entry for GeoNature's OccHab module (habitat stations) from QGIS, with local SQLite storage and synchronisation to the GeoNature REST API.
-version=0.3.0
+version=0.5.1
 author=Cédric Roy
 email=it@ariegenature.fr
 license=GPL-3.0-or-later
@@ -32,7 +32,96 @@ icon=resources/icons/occhab.svg
 experimental=True
 deprecated=False
 
-changelog=0.3.0 - Champ métier « Zone humide » : case à cocher dans le formulaire
+changelog=0.5.1 - Correction : dans la table, modifier une cellule ne réveillait
+    pas le bouton « Enregistrer » — seule une application en masse mettait
+    l'état à jour, si bien qu'une correction isolée ne pouvait pas être
+    enregistrée. Les observateurs deviennent modifiables en lot (cases à cocher
+    dans « Appliquer à la sélection… ») : ils étaient déclarés non modifiables
+    en cellule, ce qui les excluait aussi de l'édition en masse, et
+    l'enregistrement les ignorait de toute façon. « Non saisissable en
+    cellule » et « non modifiable en lot » sont désormais deux réglages
+    distincts.
+    Recherche HABREF réparée et partagée. Le filtre par typologie
+    et l'autocomplétion disparaissaient purement et simplement hors connexion,
+    sans le moindre message, et une erreur d'API était avalée en silence : on
+    constatait « l'autocomplétion ne marche pas » sans pouvoir savoir pourquoi.
+    Le champ affiche désormais la raison (hors connexion, erreur serveur, aucun
+    résultat) et le filtre typologie reste visible. Correction également d'une
+    remise à zéro du modèle qui pouvait déstabiliser la liste de propositions.
+    Le composant est extrait et réutilisé par l'édition en masse : le nom cité
+    et le cd_hab des habitats sont maintenant modifiables en lot, et un seul
+    choix HABREF renseigne les deux — un code sans son nom serait incohérent.
+    Sélection commune aux tableaux et à la carte : sélectionner
+    des stations dans la liste du dock ou dans la table les met en surbrillance
+    sur la carte, et inversement. Une station en mosaïque sélectionne toutes ses
+    lignes d'habitats. La table attributaire devient non modale, sans quoi le
+    canevas resterait inaccessible pendant qu'elle est ouverte.
+    Statut et synchronisation clairement séparés dans la liste :
+    ils tenaient sur une seule pastille, la synchro réduite à un glyphe de la
+    couleur du statut — donc illisible. Deux pastilles empilées désormais, avec
+    chacune sa couleur et son libellé, sous un en-tête « Statut · synchro » qui
+    nomme les deux questions. Empilées et non juxtaposées : dans un dock ancré,
+    la largeur est la ressource rare.
+    Les dialogues ne dépassent plus l'écran. Le formulaire de
+    station et celui d'habitat défilent, leurs boutons OK / Annuler restant
+    ancrés en bas : sur un écran de portable ils passaient sous le bord et la
+    saisie devenait impossible à valider. Toutes les fenêtres sont bornées à
+    l'écran qui les accueille — celui du dialogue, pas l'écran principal — et le
+    calcul est refait à chaque ouverture, pour suivre un changement de moniteur,
+    de résolution ou le débranchement d'un second écran. Une fenêtre héritant
+    d'une position hors écran est recentrée.
+    0.5.0 - Table attributaire et travail en brouillon. Nouveau bouton
+    « Tableau » : toutes les stations du JDD, une ligne par habitat, colonnes
+    commutables (Essentiel / Natura 2000 / Tout), filtres, tri et édition en
+    place. Un champ de station modifié sur une ligne l'est pour tous les
+    habitats du même polygone. « Appliquer à la sélection… » pousse les mêmes
+    valeurs sur un lot, avec récapitulatif comptant les valeurs écrasées ;
+    « Valider la sélection » fait passer un lot de brouillon à validé. Rien
+    n'est écrit avant « Enregistrer » : contrôle des recouvrements (somme =
+    100 % par polygone) et copie horodatée de la base avant toute écriture en
+    masse. Nouvel état métier brouillon / validé, distinct de l'état de
+    synchronisation et affiché dans la liste ; il voyage jusqu'à GeoNature dans
+    le bloc ANA-EVAL et apparaît dans la vue SQL (les brouillons sont
+    synchronisés : la synchro sert aussi de sauvegarde). Champs Natura 2000
+    désormais saisissables : typicité, dynamique, restauration, critère, PEE et
+    remarque au niveau habitat ; unité végétale, nature de l'observation et
+    échelle de numérisation au niveau station. Colonnes correspondantes
+    ajoutées à l'export. Chargement des stations en lot (3 requêtes au lieu de
+    3 par station) : la liste et la table restent réactives à plusieurs
+    centaines de stations.
+    0.4.0 - Socle Natura 2000. Le bloc ANA-EVAL passe du format
+    « clé=valeur » au JSON : indispensable pour les champs N2000 à texte libre
+    (critère, remarque) et les listes (taxons PEE), qu'un « | » ou un crochet
+    saisi par l'utilisateur cassait. L'ancien format reste lu et se convertit à
+    la première réécriture — aucune migration à lancer. Nouveau module
+    referentiels.py transcrivant l'annexe 2 du cahier des charges des
+    cartographies N2000 d'Occitanie (état de conservation, dynamique,
+    restauration, typicité, unité végétale, nature de l'observation), avec la
+    correspondance vers les codes numériques du rendu réglementaire. L'état de
+    conservation s'aligne sur ce référentiel (Inconnu / Excellent / Bon / Moyen
+    / Mauvais) ; l'ancienne valeur « Non déterminé » est convertie en
+    « Inconnu ». Vue PostgreSQL revue : un cast ::jsonb remplace dix
+    regexp_match (README §6). Les champs N2000 ne sont pas encore proposés dans
+    les formulaires : c'est l'étape suivante.
+    0.3.2 - Saisie en série moins répétitive. Les observateurs de la
+    dernière station créée sont repris automatiquement (mémorisés d'une session
+    à l'autre) et les dates le sont dans la session QGIS courante ; ce qui est
+    repris est signalé sous les dates. Nouvelle action « Dupliquer la station »
+    (menu « ＋ Nouvelle station » et clic droit) : attributs, dates,
+    observateurs et habitats repris, géométrie redessinée. Niveaux d'enjeu :
+    Très fort / Fort / Moyen / Faible / Aucun / Inconnu, affichés du plus fort
+    au plus faible ; l'ancienne valeur « Majeur » est relue et convertie en
+    « Très fort » (sans elle, l'enjeu de ces stations aurait été effacé au
+    premier réenregistrement). Correction : l'édition d'une station remplaçait
+    ses dates d'observation par la date du jour.
+    0.3.1 - Correction : doublons de couches OccHab dans le panneau
+    Couches après sauvegarde/réouverture de projet. Détection par nom des
+    couches existantes (au lieu de cache Python seul) pour réutiliser ou
+    dédoublonner. Notification unique par session expliquant que les couches
+    sont gérées automatiquement par le plugin. Documentation corrigée sur la
+    nature réelle des couches (serveur = vraie couche OGR persistable, pas
+    mémoire temporaire).
+    0.3.0 - Champ métier « Zone humide » : case à cocher dans le formulaire
     station, encodée normalisée dans le commentaire OccHab. Ré-extractible côté
     PostgreSQL via la vue v_occhab_complet (colonne station_zone_humide).
     Documentation mise à jour (README, guide utilisateur).

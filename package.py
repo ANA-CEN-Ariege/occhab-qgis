@@ -19,10 +19,12 @@ import zipfile
 HERE = os.path.dirname(os.path.abspath(__file__))
 TOP = "occhab"  # dossier racine dans le ZIP
 
-# Dossiers exclus (à n'importe quel niveau).
+# Dossiers exclus (à n'importe quel niveau). `.claude` porte de la configuration
+# d'outillage locale (chemins du poste, permissions) : elle n'a rien à faire dans
+# un paquet distribué.
 EXCLUDE_DIRS = {
     "__pycache__", ".git", ".github", ".vscode", ".idea", ".pytest_cache",
-    "htmlcov", ".venv", "venv", "env", "dist", "memory", "tests",
+    ".claude", "htmlcov", ".venv", "venv", "env", "dist", "memory", "tests",
 }
 # Motifs de fichiers exclus.
 EXCLUDE_GLOBS = [

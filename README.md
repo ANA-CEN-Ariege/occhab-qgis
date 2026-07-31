@@ -26,6 +26,15 @@ Développée par l'**ANA-CEN Ariège**.
 - **Calculs automatiques** : surface du polygone (m², ellipsoïdal) et altitude
   min/max (MNT serveur, `POST /geo/altitude`).
 - **Champs métier ANA-CEN Ariège** absents d'OccHab — niveau d'enjeu, état de conservation, recouvrement — saisis de façon normalisée et encodés dans les champs libres (voir §6).
+- **Champs Natura 2000** de l'annexe 2 du cahier des charges d'Occitanie :
+  typicité, dynamique, restauration, critère et PEE (habitat) ; unité végétale,
+  nature de l'observation, échelle de numérisation (station). Voir §6.
+- **Table attributaire** : toutes les stations d'un JDD, **une ligne par
+  habitat**, éditable, avec application en masse sur une sélection (§6 bis).
+- **Travail en brouillon** : chaque station porte un état métier
+  *brouillon / validée*, distinct de son état de synchronisation (§6 bis).
+- **Sélection partagée** entre les tableaux du plugin et la carte, dans les
+  deux sens.
 - **Synchronisation** : création (`POST /occhab/stations/`), mise à jour
   (`POST /occhab/stations/<id>/`) et **suppression** (`DELETE …`) avec garde-fous.
 - **Contexte serveur** : affichage en lecture seule des stations déjà présentes
@@ -59,9 +68,14 @@ Aligné sur le schéma `pr_occhab` réel :
 ### Base SQLite locale (miroir)
 
 `occhab_local.db` : `t_stations`, `t_habitats`, `cor_station_observer`,
-`t_sync_log`. Chaque station porte un `sync_status`
-(`pending` / `synced` / `conflict` / `to_delete`) et un indicateur `mine` (données
-créées par l'utilisateur, seules supprimables via le plugin).
+`t_sync_log`. Chaque station porte **deux états distincts** —
+`sync_status` (`pending` / `synced` / `conflict` / `to_delete`, **technique**) et
+`validation_status` (`brouillon` / `valide`, **métier**, cf. §6 bis) — plus un
+indicateur `mine` (données créées par l'utilisateur, seules supprimables via le
+plugin).
+
+Le chargement d'une liste de stations avec leurs habitats et observateurs passe
+par `get_stations_full()` : **3 requêtes au total**, et non 3 par station.
 
 ---
 
@@ -109,11 +123,15 @@ redémarrer QGIS.
 - **Connexion + JDD** : une barre compacte **repliable** (« changer » pour la
   déplier) ; elle se replie une fois le JDD choisi.
 - **Mes stations** : le tableau de vos saisies locales (Habitat(s) / Date /
-  **État**). **Au-dessus** du tableau, une barre d'action agit sur la **ligne
-  sélectionnée** (grisée sans sélection) : *Éditer*, *Géométrie ▾* (redessiner /
-  éditer, ou copier une entité d'une couche), *Zoom*, et *Supprimer* (isolé à
-  droite). Les mêmes actions sont dans un **menu clic-droit** sur la ligne, et
-  **double-cliquer** une ligne l'ouvre. En dessous : *＋ Nouvelle station ▾*.
+  **Statut · synchro**, ce dernier affichant **deux pastilles empilées** : l'état
+  métier au-dessus, la synchronisation en dessous). **Au-dessus** du tableau, une
+  barre d'action agit sur la **ligne sélectionnée** (grisée sans sélection) :
+  *Éditer*, *Géométrie ▾* (redessiner / éditer, ou copier une entité d'une
+  couche), *Zoom*, *Tableau* (toujours actif — ouvre la table attributaire) et
+  *Supprimer* (isolé à droite). Les mêmes actions sont dans un **menu clic-droit**
+  sur la ligne, et **double-cliquer** une ligne l'ouvre. En dessous :
+  *＋ Nouvelle station ▾*.
+  La **sélection est partagée avec la carte**, dans les deux sens.
 - **Serveur** : *Synchroniser (N)*, *Rafraîchir*, et *Récupérer une station du
   serveur…* (depuis la carte, ou par recherche texte).
 - Le panneau **défile** si son contenu dépasse la hauteur du dock.
@@ -148,7 +166,10 @@ stations du JDD que vos permissions GeoNature vous autorisent à voir.
    *Copier la ou les entités sélectionnées (autre couche)* (reprend la géométrie
    d'une entité sélectionnée dans une autre couche, reprojetée en 4326 ;
    **sélection multiple → une station par entité**, métadonnées communes saisies
-   une seule fois, nom laissé vide), ou *Sans géométrie* (à tracer plus tard).
+   une seule fois, nom laissé vide), *Dupliquer la station sélectionnée* (reprend
+   attributs, dates, observateurs **et habitats** d'une station existante ;
+   géométrie redessinée, jamais copiée — cf. `src/processing/duplicate.py`), ou
+   *Sans géométrie* (à tracer plus tard).
    Surface et altitude se calculent automatiquement pour un polygone.
 2. Remplir le **formulaire station**, à **deux niveaux** : l'**Essentiel** (JDD,
    nom, **observateurs**, dates, enjeu, état, commentaire) est visible ; le reste
@@ -160,6 +181,11 @@ stations du JDD que vos permissions GeoNature vous autorisent à voir.
    qualifier plus tard ; recherche HABREF sur le nom cité → remplit `cd_hab` ; la
    liste affiche le **% de recouvrement** de chacun). La technique de collecte est
    **« In situ »** par défaut, la sensibilité **« Non sensible »**.
+   **Reprise de la saisie précédente** : les **observateurs** de la dernière station
+   créée sont pré-remplis (persistés dans `last_entry.observers` de la
+   configuration) et les **dates** reprises *dans la session QGIS courante* — au
+   redémarrage on repart d'aujourd'hui, pour ne pas traîner une date périmée. Ce qui
+   est repris est signalé sous les dates par une mention « ↺ … ».
 3. La station apparaît dans **« Mes stations »**, identifiée par son habitat
    (« 41.2 - Chênaies-charmaies (+N) »), état *À synchroniser*.
 
@@ -253,29 +279,132 @@ locale… »** :
 
 ## 6. Champs métier ANA (enjeu, état de conservation, zone humide, recouvrement)
 
-OccHab n'a pas de champ natif exposé pour ces notions. On les stocke, de façon
-**normalisée**, dans les champs libres OccHab — `comment` (station) et
-`technical_precision` (habitat) — via un **bloc balisé non destructif** :
+OccHab n'a pas de champ natif exposé pour ces notions, et **le module ne gère pas
+les champs additionnels de GeoNature**. Le seul canal d'écriture reste donc les
+champs texte — `comment` (station) et `technical_precision` (habitat) — dans
+lesquels on insère un **bloc balisé non destructif** contenant du **JSON** :
 
 ```
 Texte libre saisi par l'utilisateur.
 
-[ANA-EVAL] enjeu=fort | etat_conservation=moyen | zone_humide=true | recouvrement=3 [/ANA-EVAL]
+[ANA-EVAL] {"enjeu": "fort", "etat_conservation": "bon", "typicite": "bonne"} [/ANA-EVAL]
 ```
 
-- `enjeu` / `etat_conservation` : codes issus de référentiels fermés.
-- `zone_humide` : booléen (`true` ou absent) — simple case à cocher.
-- `recouvrement` : pourcentage 0-100 ; il **pré-sélectionne automatiquement**
-  l'Abondance (< 5 % → « très faible », 5-25 %, 25-50 %, 50-75 %, > 75 %) **et**
-  alimente le champ natif OccHab `recovery_percentage` (en plus de l'encodage).
-- Le texte humain est **préservé** ; le bloc est remplacé (jamais dupliqué) ;
-  une clé vide n'est pas écrite. Code : `src/processing/eval_fields.py`.
+**Pourquoi JSON** (depuis 0.4.0 — voir « ancien format » plus bas) : les champs
+Natura 2000 comprennent du texte libre (critère, remarque) et des listes (taxons
+PEE). Le format historique `clé=valeur | clé=valeur` ne survivait pas à un `|`,
+un `]` ou un retour à la ligne saisi par l'utilisateur. JSON échappe tout par
+construction, et PostgreSQL le relit d'un **seul cast `::jsonb`** au lieu d'une
+dizaine de `regexp_match`.
+
+### Clés du bloc
+
+| Clé | Où | Valeurs |
+|---|---|---|
+| `statut` | station | `brouillon` · `valide` — **état métier**, injecté au moment de l'envoi depuis la colonne locale `validation_status` (cf. §6 bis) |
+| `enjeu` | station · habitat | `tres_fort` `fort` `moyen` `faible` `aucun` `inconnu` — extension **ANA**, hors cahier des charges N2000 |
+| `etat_conservation` | station · habitat | `inconnu` `excellent` `bon` `moyen` `mauvais` — annexe 2, `id_et_cons` |
+| `dynamique` | habitat | `inconnue` `stable` `progressive_lente` `regressive_lente` `progressive_rapide` `regressive_rapide` — `id_dynam` |
+| `restauration` | habitat | `inconnu` `difficile` `impossible` `possible` `possible_avec_efforts` — `id_restaur` |
+| `typicite` | habitat | `inconnue` `bonne` `moyenne` `mauvaise` — `id_typi` |
+| `unite_vegetale` | station | `non_complexe` `mosaique_non_definie` `mosaique_temporelle` `mosaique_topographique` `mixte` — `id_uv` |
+| `nature_observation` | station | `inconnu` `directe_avec_releve` `directe_sans_releve` `a_distance` `photo_interpretation` `autre` — `id_nat_obs` |
+| `critere` · `remarque` | habitat | texte libre |
+| `pee` | habitat | liste de **3 taxons au plus** (plantes exotiques envahissantes) |
+| `zone_humide` | station | booléen |
+| `recouvrement` | habitat | 0-100 ; **pré-sélectionne** l'Abondance (< 5 %, 5-25 %, 25-50 %, 50-75 %, > 75 %) **et** alimente le champ natif `recovery_percentage` |
+
+Les codes internes sont **textuels** ; leur équivalent **numérique** attendu par
+le rendu réglementaire est donné à part (`CDC_*` dans
+`src/processing/referentiels.py`). Découpler les deux évite de migrer les données
+saisies à chaque ajustement du format de restitution.
+
+> `critere` et `pee` **ne figurent pas** dans le cahier des charges N2000
+> d'Occitanie (vérifié sur les 28 pages : aucun champ « critère d'évaluation »,
+> aucune mention d'espèce exotique envahissante). Ce sont des extensions ANA :
+> aucune colonne ne les accueillera dans le rendu réglementaire.
+
+### Garanties
+
+- Le texte humain est **préservé** ; le bloc est **remplacé, jamais dupliqué**.
+- Les valeurs sont validées **à l'écriture comme à la lecture** : un code hors
+  référentiel n'est pas écrit et est ignoré à la relecture.
+- Les clés sont **triées** : deux enregistrements d'une même saisie produisent le
+  même texte, sinon la détection de conflit signalerait une divergence à chaque
+  synchronisation.
+- **Codes hérités convertis à la relecture** : `enjeu=majeur` → `tres_fort`,
+  `etat_conservation=nd` → `inconnu` (`ALIAS_*` dans `referentiels.py`). Sans
+  cela, rouvrir une telle station l'aurait affichée « non renseigné » et
+  l'enregistrement aurait **effacé** la valeur.
+
+### Ancien format (`clé=valeur`)
+
+Les stations synchronisées avant 0.4.0 portent `[ANA-EVAL] enjeu=fort | … [/ANA-EVAL]`.
+Le plugin **continue de le lire** et le convertit en JSON à la première
+réécriture. Il n'y a donc **pas de migration à lancer** : la conversion se fait
+station par station, au fil des éditions. Corollaire : tant qu'une station n'a
+pas été rééditée, PostgreSQL voit encore l'ancien format — la fonction SQL
+ci-dessous lit **les deux**.
+
+### Ré-extraction côté PostgreSQL
 
 **Limite assumée** : pas de contrainte au niveau base (la normalisation est
-garantie par la saisie + la convention). Ré-extraction côté PostgreSQL via **une
-seule vue à plat**  : **une ligne par habitat** (les stations sans habitat apparaissent aussi), toutes les données station + habitat, **identifiants résolus en libellés** (JDD, habitat HABREF, observateurs, numérisateur, nomenclatures) et champs ANA-EVAL extraits. La géométrie (`geom`) est incluse → la vue est chargeable telle quelle dans QGIS.
+garantie par la saisie + la convention). Ré-extraction via **une seule vue à plat** :
+**une ligne par habitat** (les stations sans habitat apparaissent aussi), toutes les
+données station + habitat, **identifiants résolus en libellés** (JDD, habitat HABREF,
+observateurs, numérisateur, nomenclatures) et champs ANA-EVAL extraits. La géométrie
+(`geom`) est incluse → la vue est chargeable telle quelle dans QGIS.
+
+> ⚠️ **Le SQL ci-dessous n'a pas été exécuté** (aucune instance PostgreSQL
+> disponible au moment de la rédaction). À passer sur une base de test avant la
+> production, en vérifiant en particulier l'échappement de l'expression régulière
+> et le comportement de `eval_json` sur un bloc abîmé.
 
 ```sql
+-- Extraction du bloc ANA-EVAL en jsonb : accepte le format courant (JSON) ET
+-- l'ancien (clé=valeur|…). Renvoie NULL — jamais une erreur — si le bloc est
+-- absent ou a été trituré à la main dans l'interface web GeoNature : une vue qui
+-- casse sur une donnée mal formée serait pire que l'absence d'information.
+CREATE SCHEMA IF NOT EXISTS ana_occhab;
+
+CREATE OR REPLACE FUNCTION ana_occhab.eval_json(txt text)
+RETURNS jsonb LANGUAGE plpgsql IMMUTABLE PARALLEL SAFE AS $$
+DECLARE
+    raw    text;
+    parsed jsonb;
+    pair   text;
+    kv     text[];
+    acc    jsonb := '{}'::jsonb;
+BEGIN
+    raw := trim(substring(txt from '\[ANA-EVAL\](.*)\[/ANA-EVAL\]'));
+    IF raw IS NULL OR raw = '' THEN
+        RETURN NULL;
+    END IF;
+    BEGIN                                   -- format courant : du JSON
+        parsed := raw::jsonb;
+        IF jsonb_typeof(parsed) = 'object' THEN
+            RETURN parsed;
+        END IF;
+    EXCEPTION WHEN others THEN
+        NULL;                               -- pas du JSON → ancien format
+    END;
+    FOREACH pair IN ARRAY string_to_array(raw, '|') LOOP
+        kv := string_to_array(pair, '=');
+        IF array_length(kv, 1) = 2 AND trim(kv[1]) <> '' AND trim(kv[2]) <> '' THEN
+            acc := acc || jsonb_build_object(trim(kv[1]), trim(kv[2]));
+        END IF;
+    END LOOP;
+    RETURN nullif(acc, '{}'::jsonb);
+END $$;
+
+-- Conversion des codes hérités, en miroir de `referentiels.ALIAS_*`.
+CREATE OR REPLACE FUNCTION ana_occhab.enjeu_courant(code text)
+RETURNS text LANGUAGE sql IMMUTABLE PARALLEL SAFE AS
+$$ SELECT CASE code WHEN 'majeur' THEN 'tres_fort' ELSE code END $$;
+
+CREATE OR REPLACE FUNCTION ana_occhab.etat_courant(code text)
+RETURNS text LANGUAGE sql IMMUTABLE PARALLEL SAFE AS
+$$ SELECT CASE code WHEN 'nd' THEN 'inconnu' ELSE code END $$;
 
 CREATE OR REPLACE VIEW gn_exports.v_occhab_complet AS
 SELECT
@@ -294,9 +423,16 @@ SELECT
     n_geo.label_default                                         AS nature_objet_geographique,
     n_sol.label_default                                         AS type_sol,
     n_mos.label_default                                         AS type_mosaique,
-    (regexp_match(s.comment, 'enjeu=([a-z_]+)'))[1]             AS station_niveau_enjeu,
-    (regexp_match(s.comment, 'etat_conservation=([a-z_]+)'))[1] AS station_etat_conservation,
-    (regexp_match(s.comment, 'zone_humide=(true|false)'))[1] = 'true' AS station_zone_humide,
+    -- ---- Station : bloc ANA-EVAL ----
+    -- État MÉTIER : les brouillons sont synchronisés (la synchro sert aussi de
+    -- sauvegarde), donc GeoNature contient du travail en cours. Filtrer sur
+    -- `statut = 'valide'` pour ne consommer que des données abouties.
+    coalesce(es.j ->> 'statut', 'brouillon')                    AS statut,
+    ana_occhab.enjeu_courant(es.j ->> 'enjeu')                  AS station_niveau_enjeu,
+    ana_occhab.etat_courant(es.j ->> 'etat_conservation')       AS station_etat_conservation,
+    (es.j ->> 'zone_humide')::boolean                           AS station_zone_humide,
+    es.j ->> 'unite_vegetale'                                   AS station_unite_vegetale,
+    es.j ->> 'nature_observation'                               AS station_nature_observation,
     -- ---- Habitat (libellés, pas d'id) ----
     h.id_habitat,
     h.cd_hab,
@@ -309,12 +445,22 @@ SELECT
     n_abond.label_default                                       AS abondance,
     n_sens.label_default                                        AS sensibilite,
     n_com.label_default                                         AS interet_communautaire,
-    coalesce(
-        (regexp_match(h.technical_precision, 'recouvrement=([0-9.]+)'))[1]::numeric,
-        h.recovery_percentage
-    )                                                           AS recouvrement_pct,
-    (regexp_match(h.technical_precision, 'enjeu=([a-z_]+)'))[1]             AS habitat_niveau_enjeu,
-    (regexp_match(h.technical_precision, 'etat_conservation=([a-z_]+)'))[1] AS habitat_etat_conservation,
+    -- ---- Habitat : bloc ANA-EVAL ----
+    -- `->>` rend du texte quel que soit le format d'origine (nombre en JSON,
+    -- chaîne dans l'ancien format) : un seul cast couvre les deux.
+    coalesce((eh.j ->> 'recouvrement')::numeric, h.recovery_percentage)
+                                                                AS recouvrement_pct,
+    ana_occhab.enjeu_courant(eh.j ->> 'enjeu')                  AS habitat_niveau_enjeu,
+    ana_occhab.etat_courant(eh.j ->> 'etat_conservation')       AS habitat_etat_conservation,
+    eh.j ->> 'dynamique'                                        AS habitat_dynamique,
+    eh.j ->> 'restauration'                                     AS habitat_restauration,
+    eh.j ->> 'typicite'                                         AS habitat_typicite,
+    eh.j ->> 'critere'                                          AS habitat_critere,
+    eh.j ->> 'remarque'                                         AS habitat_remarque,
+    -- PEE : 3 taxons au plus, restitués en une chaîne « a, b, c ».
+    (SELECT string_agg(t, ', ') FROM jsonb_array_elements_text(
+        CASE WHEN jsonb_typeof(eh.j -> 'pee') = 'array'
+             THEN eh.j -> 'pee' ELSE '[]'::jsonb END) AS t)     AS habitat_pee,
     s.geom_4326                                                 AS geom
 FROM pr_occhab.t_stations s
 LEFT JOIN pr_occhab.t_habitats h   ON h.id_station  = s.id_station
@@ -340,8 +486,93 @@ LEFT JOIN LATERAL (
     FROM pr_occhab.cor_station_observer cso
     JOIN utilisateurs.t_roles r ON r.id_role = cso.id_role
     WHERE cso.id_station = s.id_station
-) obs ON true;
+) obs ON true
+-- Bloc ANA-EVAL décodé une seule fois par ligne.
+LEFT JOIN LATERAL (SELECT ana_occhab.eval_json(s.comment)             AS j) es ON true
+LEFT JOIN LATERAL (SELECT ana_occhab.eval_json(h.technical_precision) AS j) eh ON true;
 ```
+
+Si le volume l'exigeait un jour, `eval_json` étant `IMMUTABLE`, un index
+d'expression GIN est possible :
+`CREATE INDEX ON pr_occhab.t_habitats USING gin (ana_occhab.eval_json(technical_precision));`
+Inutile à l'échelle de quelques milliers de stations — à ne poser que sur constat
+de lenteur.
+
+---
+
+## 6 bis. Brouillon / validé, et la table attributaire
+
+### Deux états, à ne pas confondre
+
+- **`sync_status`** — état **technique** vis-à-vis du serveur (`pending`,
+  `synced`, `conflict`, `to_delete`).
+- **`validation_status`** — état **métier** du travail : `brouillon` ou `valide`
+  (colonne locale `t_stations.validation_status`).
+
+Ils sont **orthogonaux**. Les botanistes reviennent plusieurs fois sur une
+station avant de la figer ; la synchronisation sert entre-temps de **sauvegarde
+de fin de journée**, donc **un brouillon est bien envoyé sur GeoNature**.
+
+Conséquence à connaître : **GeoNature contient du travail en cours**. La colonne
+`statut` de la vue (§6) est là pour permettre de filtrer.
+
+Comme OccHab n'a ni champ natif ni champs additionnels, le statut voyage dans le
+bloc ANA-EVAL. La **colonne locale fait foi** ; le commentaire n'est que son
+transport : il est injecté à la construction du payload et retiré à la relecture
+(`api/payload.py`), pour éviter un stockage en double qui divergerait.
+
+Reprise des bases existantes : à l'ajout de la colonne, les stations `synced`
+deviennent `valide`, les autres `brouillon`. Une station **dupliquée** repart
+toujours en brouillon.
+
+### Table attributaire
+
+**« Tableau »** (barre d'action du dock) ouvre une fenêtre listant les stations
+du JDD courant, **une ligne par habitat** — la géométrie et les champs station
+étant répétés sur les lignes sœurs.
+
+- **Jeux de colonnes** : *Essentiel* / *Natura 2000* / *Tout* (25 colonnes ne
+  tiennent pas à l'écran).
+- **Filtres** statut, synchro, texte libre ; tri par colonne.
+- **Sélection partagée avec la carte**, dans les deux sens (dock et table). La
+  fenêtre est donc **non modale** : modale, elle bloquerait le canevas et rendrait
+  la sélection carte impossible. Les boucles sont coupées par un verrou unique
+  dans `StationLayerManager` — une sélection posée par le code ne notifie pas.
+- **Édition en place**, éditeur adapté au type déclaré dans le registre de champs.
+- Un champ **station** modifié sur une ligne l'est **pour toutes ses lignes
+  sœurs** : les colonnes station sont teintées et le signalent en infobulle.
+- **« Appliquer à la sélection… »** pousse les mêmes valeurs sur un lot ; chaque
+  champ a une case à cocher, sinon valider écraserait tout avec du vide.
+  L'**identité de l'habitat** (`cd_hab` + `nom_cite`) s'y modifie via une
+  **recherche HABREF** (composant `ui/habref_widget.py`, partagé avec le
+  formulaire) : choisir un habitat coche et renseigne **les deux champs**, un
+  code qui ne correspondrait plus à son nom étant une donnée incohérente.
+  En revanche, l'édition **cellule par cellule** du nom cité reste du texte
+  libre — c'est le champ « nom *cité* », qui peut légitimement s'écarter du
+  libellé HABREF.
+- **« Valider la sélection »** passe les stations de brouillon à validé.
+- Le registre distingue **`cellule`** (saisissable dans une cellule) de
+  **`masse`** (modifiable en lot) : les observateurs, liste multi-valuée, sont
+  `cellule=False` mais bien modifiables en masse. Les confondre les rendait
+  intouchables partout.
+
+**Garde-fous** — les modifications sont accumulées **en mémoire** ; rien n'est
+écrit avant « Enregistrer ». Avant l'écriture : récapitulatif comptant les
+**valeurs écrasées** (le seul chiffre qui signale une perte), contrôle des
+recouvrements (somme = 100 % par polygone, exigence N2000 — avertissement, pas
+blocage) et **copie horodatée de la base** (`*.avant-lot-*.db`), qui est
+l'annulation réelle d'une modification portant sur des dizaines de stations.
+
+**Retoucher une station validée la repasse en brouillon** — sauf si le statut a
+été changé explicitement dans la même passe, sans quoi valider la remettrait
+aussitôt en brouillon. ⚠️ Cette règle vaut dans la **table** ; dans le formulaire
+station, la liste « Statut » est **autoritaire** (ce qu'elle affiche est
+enregistré), pour ne pas empêcher de conserver une station validée qu'on rouvre.
+
+**Architecture** — toute la logique risquée (propagation, suivi des
+modifications, application en masse, rétrogradation) est dans
+`processing/grille.py`, **pur et testé sans Qt** ; `ui/attribute_table.py` n'en
+est qu'un adaptateur.
 
 ---
 
@@ -382,6 +613,7 @@ avancés (non exposés dans l'UI) :
 | `geonature.observer_list_id` | `1` | Menu d'observateurs (`OBSERVER_LIST_ID`) |
 | `geonature.occhab_module_code` | `OCCHAB` | Code du module OccHab |
 | `id_dataset` | — | JDD courant |
+| `last_entry.observers` | `[]` | Observateurs de la dernière saisie (pré-remplissage) |
 | `local_db.path` | auto | Chemin de la base SQLite |
 
 ---
@@ -399,9 +631,16 @@ occhab/
     ├── database/     sqlite_local.py            # modèle station/habitat + CRUD
     ├── api/          geonature_client.py        # client REST GeoNature
     │                 payload.py                 # payload + parsing serveur (pur, testé)
-    ├── processing/   eval_fields.py             # enjeu/état/recouvrement (pur, testé)
+    ├── processing/   referentiels.py            # vocabulaires fermés ANA + N2000 (pur, testé)
+    │                 champs.py                  # registre des champs saisissables (pur, testé)
+    │                 eval_fields.py             # bloc ANA-EVAL : encodage JSON (pur, testé)
+    │                 grille.py                  # tampon d'édition en masse (pur, testé)
+    │                 export.py                  # aplatissement cartographie (pur, testé)
+    │                 duplicate.py               # modèle de duplication (pur, testé)
     │                 geometry.py                # WKT/GeoJSON, reprojection 4326
     └── ui/           dock_widget.py             # dock principal
+                      attribute_table.py         # table stations × habitats (adaptateur Qt)
+                      dialog_size.py             # dialogues défilants, bornés à l'écran
                       station_form.py · habitat_form.py · station_dialog.py
                       connection_dialog.py
                       map_tools.py               # capture + édition de géométrie
@@ -414,7 +653,11 @@ occhab/
 
 - Recharger : extension **Plugin Reloader**.
 - Modules purs testables hors QGIS (aucune dépendance PyQGIS) :
-  `eval_fields`, `payload`, `sqlite_local`. Les modules `ui/*`, `geometry`,
+  `referentiels`, `champs`, `eval_fields`, `grille`, `export`, `duplicate`,
+  `payload`, `sqlite_local`. La règle : **tout ce qui peut corrompre des données
+  en silence vit dans un module pur et testé** — l'interface n'en est qu'un
+  adaptateur.
+  Les modules `ui/*`, `geometry`,
   `station_layers`, `server_layers` dépendent de PyQGIS (testables dans QGIS).
 - Le format d'API a été validé par des scripts contre `demo.geonature.fr`
   (création/màj/suppression/récupération réelles).

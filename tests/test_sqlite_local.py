@@ -237,3 +237,117 @@ def test_purge_cascades_and_reports_zero(tmp_path):
     assert db.purge_synced_stations(months=6) == 1
     assert db.get_station(sid) is None                 # station + cascade partis
     assert db.purge_synced_stations(months=6) == 0     # rien à purger → no-op
+
+
+# --------------------------------------------- chargement en lot + état métier
+def test_get_stations_full_charge_enfants(tmp_path):
+    db = _make_db(tmp_path)
+    s1 = db.create_station(id_dataset=3, station_name="A")
+    s2 = db.create_station(id_dataset=3, station_name="B")
+    db.create_station(id_dataset=9, station_name="autre JDD")
+    db.add_habitat(s1, cd_hab=10, nom_cite="h1")
+    db.add_habitat(s1, cd_hab=11, nom_cite="h2")
+    db.add_observer(s1, observer_name="Roy", id_role=5)
+
+    stations = db.get_stations_full()
+
+    assert len(stations) == 3
+    by_name = {s["station_name"]: s for s in stations}
+    assert len(by_name["A"]["habitats"]) == 2
+    assert len(by_name["A"]["observers"]) == 1
+    assert by_name["B"]["habitats"] == []      # station sans enfant : listes vides
+    assert by_name["B"]["observers"] == []
+    assert s2 in (s["id"] for s in stations)
+
+
+def test_get_stations_full_identique_a_get_station(tmp_path):
+    """Le chargement en lot doit rendre exactement ce que rendait le N+1."""
+    db = _make_db(tmp_path)
+    station_id = db.create_station(id_dataset=3, station_name="A", comment="c")
+    db.add_habitat(station_id, cd_hab=10, nom_cite="h1", recovery_percentage=60)
+    db.add_observer(station_id, observer_name="Roy", id_role=5)
+
+    un_par_un = db.get_station(station_id)
+    en_lot = db.get_stations_full()[0]
+
+    assert en_lot == un_par_un
+
+
+def test_get_stations_full_filtre_par_jdd(tmp_path):
+    """Un JDD restreint ne doit pas rapatrier les enfants des autres JDD."""
+    db = _make_db(tmp_path)
+    s1 = db.create_station(id_dataset=3)
+    s2 = db.create_station(id_dataset=9)
+    db.add_habitat(s1, cd_hab=10, nom_cite="dans le JDD 3")
+    db.add_habitat(s2, cd_hab=11, nom_cite="dans le JDD 9")
+
+    stations = db.get_stations_full(id_dataset=3)
+
+    assert len(stations) == 1
+    assert [h["nom_cite"] for h in stations[0]["habitats"]] == ["dans le JDD 3"]
+
+
+def test_nouvelle_station_est_un_brouillon(tmp_path):
+    db = _make_db(tmp_path)
+    station_id = db.create_station(id_dataset=3)
+    assert db.get_station(station_id)["validation_status"] == db_mod.BROUILLON
+
+
+def test_validation_status_modifiable(tmp_path):
+    db = _make_db(tmp_path)
+    station_id = db.create_station(id_dataset=3)
+    db.update_station(station_id, validation_status=db_mod.VALIDE)
+    assert db.get_station(station_id)["validation_status"] == db_mod.VALIDE
+
+
+def test_migration_base_anterieure(tmp_path):
+    """Base créée sans la colonne : ce qui était synchronisé devient « validé »."""
+    import sqlite3
+
+    path = os.path.join(str(tmp_path), "ancienne.db")
+    conn = sqlite3.connect(path)
+    conn.executescript(
+        "CREATE TABLE t_stations (id INTEGER PRIMARY KEY AUTOINCREMENT,"
+        " id_dataset INTEGER NOT NULL, station_name TEXT, sync_status TEXT);"
+        "CREATE TABLE t_habitats (id INTEGER PRIMARY KEY AUTOINCREMENT,"
+        " id_station_local INTEGER NOT NULL, cd_hab INTEGER, nom_cite TEXT);"
+        "CREATE TABLE cor_station_observer (id INTEGER PRIMARY KEY AUTOINCREMENT,"
+        " id_station_local INTEGER NOT NULL, id_role INTEGER, observer_name TEXT);"
+    )
+    conn.execute("INSERT INTO t_stations (id_dataset, station_name, sync_status)"
+                 " VALUES (3, 'deja envoyee', 'synced')")
+    conn.execute("INSERT INTO t_stations (id_dataset, station_name, sync_status)"
+                 " VALUES (3, 'en cours', 'pending')")
+    conn.commit()
+    conn.close()
+
+    db = db_mod.OccHabDatabase(path)  # déclenche la migration
+
+    statuts = {s["station_name"]: s["validation_status"] for s in db.get_all_stations()}
+    assert statuts == {"deja envoyee": db_mod.VALIDE, "en cours": db_mod.BROUILLON}
+
+
+def test_migration_idempotente(tmp_path):
+    """Rouvrir la base ne doit pas re-basculer les statuts choisis par l'utilisateur."""
+    path = os.path.join(str(tmp_path), "occhab_test.db")
+    db = db_mod.OccHabDatabase(path)
+    station_id = db.create_station(id_dataset=3, sync_status="synced")
+    db.update_station(station_id, validation_status=db_mod.BROUILLON)
+
+    rouverte = db_mod.OccHabDatabase(path)
+
+    assert rouverte.get_station(station_id)["validation_status"] == db_mod.BROUILLON
+
+
+def test_constantes_de_statut_alignees_avec_le_referentiel():
+    """`sqlite_local` reste sans dépendance : ses constantes sont dupliquées.
+
+    Ce test est le garde-fou de cette duplication assumée.
+    """
+    import referentiels
+
+    assert db_mod.VALIDATION_STATUSES == tuple(
+        code for code, _ in referentiels.STATUTS_VALIDATION
+    )
+    assert db_mod.BROUILLON == referentiels.BROUILLON
+    assert db_mod.VALIDE == referentiels.VALIDE

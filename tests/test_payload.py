@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 
 """Tests du module pur `payload` (construction et lecture du GeoJSON OccHab)."""
+import eval_fields
 import payload as p
 
 
@@ -102,3 +103,71 @@ def test_server_fingerprint_stable_and_sensitive():
         dict(station, station_name="B"), habitats, observers
     )
     assert len(fingerprint) == 64  # SHA-256 hexdigest
+
+
+# --------------------------------------------- aller-retour de l'état métier
+def test_statut_injecte_dans_le_commentaire_envoye():
+    """Aucun champ natif pour l'état métier : il voyage dans le bloc ANA-EVAL."""
+    feature = p.build_station_payload(
+        {"id_dataset": 3, "comment": "Note de terrain.",
+         "validation_status": "valide"},
+        [], [], {"type": "Point", "coordinates": [1, 2]},
+    )
+
+    envoye = feature["properties"]["comment"]
+    assert "Note de terrain." in envoye
+    assert eval_fields.decode_eval(envoye)["statut"] == "valide"
+
+
+def test_statut_n_ecrase_pas_les_autres_champs_du_bloc():
+    comment = eval_fields.encode_eval("Note.", enjeu="fort", zone_humide=True)
+
+    feature = p.build_station_payload(
+        {"id_dataset": 3, "comment": comment, "validation_status": "brouillon"},
+        [], [], {"type": "Point", "coordinates": [1, 2]},
+    )
+
+    codes = eval_fields.decode_eval(feature["properties"]["comment"])
+    assert codes == {"enjeu": "fort", "zone_humide": True, "statut": "brouillon"}
+
+
+def test_statut_relu_du_serveur_et_retire_du_commentaire():
+    """En local, la colonne fait foi : le commentaire ne doit pas porter le statut."""
+    comment = eval_fields.encode_eval("Note.", enjeu="fort", statut="valide")
+    feature = {
+        "type": "Feature",
+        "geometry": {"type": "Point", "coordinates": [1, 2]},
+        "properties": {"id_station": 7, "id_dataset": 3, "comment": comment},
+    }
+
+    station, _habitats, _observers = p.parse_server_station(feature)
+
+    assert station["validation_status"] == "valide"
+    assert "statut" not in eval_fields.decode_eval(station["comment"])
+    assert eval_fields.decode_eval(station["comment"])["enjeu"] == "fort"
+    assert "Note." in station["comment"]
+
+
+def test_station_serveur_sans_statut_est_un_brouillon():
+    feature = {
+        "type": "Feature",
+        "geometry": {"type": "Point", "coordinates": [1, 2]},
+        "properties": {"id_station": 7, "id_dataset": 3},
+    }
+
+    station, _h, _o = p.parse_server_station(feature)
+
+    assert station["validation_status"] == "brouillon"
+    assert "comment" not in station
+
+
+def test_aller_retour_complet_du_statut():
+    locale = {"id_dataset": 3, "comment": "Note.", "validation_status": "valide"}
+
+    feature = p.build_station_payload(
+        locale, [], [], {"type": "Point", "coordinates": [1, 2]})
+    feature["properties"]["id_station"] = 7
+    revenue, _h, _o = p.parse_server_station(feature)
+
+    assert revenue["validation_status"] == "valide"
+    assert revenue["comment"] == "Note."

@@ -50,6 +50,64 @@ class StationLayerManager:
     def __init__(self, logger=None):
         self.logger = logger
         self._layer_ids = {}  # geom_type -> id de couche
+        self._ecouteurs = []  # callables notifiés d'un changement de sélection carte
+        self._branchees = set()  # ids de couches déjà connectées au signal
+        # Vrai pendant qu'on applique une sélection : sans ce verrou, notifier
+        # relancerait le tableau, qui re-sélectionnerait la carte, en boucle.
+        self._application_en_cours = False
+
+    # -------------------------------------------------------- sélection
+    def add_selection_listener(self, callback):
+        """Être averti quand l'utilisateur change la sélection sur la carte."""
+        if callback not in self._ecouteurs:
+            self._ecouteurs.append(callback)
+
+    def remove_selection_listener(self, callback):
+        if callback in self._ecouteurs:
+            self._ecouteurs.remove(callback)
+
+    def select_stations(self, ids):
+        """Sélectionner sur la carte les entités des stations données (ids locaux)."""
+        voulus = {int(i) for i in ids or [] if i is not None}
+        self._application_en_cours = True
+        try:
+            for layer in self.existing_layers():
+                if voulus:
+                    layer.selectByExpression(
+                        '"id" IN (%s)' % ", ".join(str(i) for i in sorted(voulus))
+                    )
+                else:
+                    layer.removeSelection()
+        finally:
+            self._application_en_cours = False
+
+    def selected_station_ids(self):
+        """Ids locaux des stations actuellement sélectionnées sur la carte."""
+        ids = []
+        for layer in self.existing_layers():
+            for feature in layer.selectedFeatures():
+                try:
+                    ids.append(int(feature["id"]))
+                except (TypeError, ValueError, KeyError):
+                    continue
+        return ids
+
+    def _notifier_selection(self):
+        if self._application_en_cours:
+            return  # sélection posée par nous : ne pas boucler
+        for callback in list(self._ecouteurs):
+            try:
+                callback()
+            except Exception as exc:  # noqa: BLE001 - un écouteur ne doit pas casser la carte
+                if self.logger:
+                    self.logger.warning("Écouteur de sélection en échec : %s", exc)
+
+    def _brancher_selection(self, layer):
+        """Connecter une couche au signal de sélection (une seule fois)."""
+        if layer is None or layer.id() in self._branchees:
+            return
+        layer.selectionChanged.connect(lambda *_: self._notifier_selection())
+        self._branchees.add(layer.id())
 
     # ------------------------------------------------------------- API
     def refresh(self, stations):
@@ -62,8 +120,15 @@ class StationLayerManager:
                 geom = QgsGeometry.fromWkt(wkt)
                 if not geom.isNull():
                     buckets[geom_type].append((station, geom))
-        for geom_type, items in buckets.items():
-            self._update_layer(geom_type, items)
+        # Vider les couches vide aussi leur sélection, ce qui émettrait un
+        # changement de sélection : les tableaux croiraient que l'utilisateur a
+        # tout désélectionné. Une reconstruction n'est pas un geste de l'utilisateur.
+        self._application_en_cours = True
+        try:
+            for geom_type, items in buckets.items():
+                self._update_layer(geom_type, items)
+        finally:
+            self._application_en_cours = False
 
     def existing_layers(self):
         """Couches locales actuellement présentes dans le projet (non nulles)."""
@@ -136,6 +201,7 @@ class StationLayerManager:
             except (RuntimeError, KeyError):
                 pass
         self._layer_ids = {}
+        self._branchees = set()
         root = QgsProject.instance().layerTreeRoot()
         group = root.findGroup(GROUP_NAME)
         if group is not None:
@@ -157,6 +223,7 @@ class StationLayerManager:
         layer_id = self._layer_ids.get(geom_type)
         layer = QgsProject.instance().mapLayer(layer_id) if layer_id else None
         if layer is not None:
+            self._brancher_selection(layer)
             return layer
         # Cache Python vide (nouvelle instance du manager : rechargement du
         # plugin, nouvelle session QGIS, projet .qgz rouvert...) : chercher une
@@ -168,6 +235,7 @@ class StationLayerManager:
             reused = self._reuse_layer(group, name)
             if reused is not None:
                 self._layer_ids[geom_type] = reused.id()
+                self._brancher_selection(reused)
                 return reused
         if not create:
             return None
@@ -182,6 +250,7 @@ class StationLayerManager:
         QgsProject.instance().addMapLayer(layer, False)
         (group or self._group()).addLayer(layer)
         self._layer_ids[geom_type] = layer.id()
+        self._brancher_selection(layer)
         return layer
 
     @staticmethod

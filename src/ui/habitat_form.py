@@ -9,16 +9,15 @@ autocomplétion HABREF : choisir une proposition remplit le `cd_hab` ET propose 
 libellé comme nom cité. Le nom cité reste ensuite librement modifiable sans
 effacer le cd_hab ; le cd_hab est aussi saisissable à la main.
 """
-from qgis.PyQt.QtCore import Qt, QModelIndex, QTimer
-from qgis.PyQt.QtGui import QStandardItem, QStandardItemModel
+from qgis.PyQt.QtCore import Qt
 from qgis.PyQt.QtWidgets import (
     QComboBox,
-    QCompleter,
     QDoubleSpinBox,
     QFormLayout,
     QLineEdit,
     QSpinBox,
     QTextEdit,
+    QToolButton,
     QWidget,
 )
 
@@ -32,10 +31,13 @@ from ..processing.eval_fields import (
     select_combo_data,
     strip_eval,
 )
+from ..processing.referentiels import DYNAMIQUES, RESTAURATIONS, TYPICITES
+from .habref_widget import HabrefSearchEdit
+
+_SEPARATEUR_PEE = " ; "
 
 # Repli hors-ligne : id None (pas un faux id) → comblé par le défaut à la synchro.
 PLACEHOLDER_TECHNIQUES = [(None, "— à renseigner en ligne —")]
-_MIN_SEARCH = 3
 
 
 class HabitatForm(QWidget):
@@ -53,40 +55,23 @@ class HabitatForm(QWidget):
         self._abundance_cover_map = abundance_cover_map or {}  # {classe(1-5): id_nomenclature}
         self._habref_search = habref_search
         self._typologies = typologies or []  # [(cd_typo, nom)]
-        self._typo_names = {cd: name for cd, name in self._typologies}
         self._user_names = user_names or []  # noms proposés pour le déterminateur
         self._default_determiner = default_determiner  # utilisateur connecté par défaut
-        self.combo_typo = None
-        self._pending_query = ""
         self._build()
 
     def _build(self):
         form = QFormLayout(self)
 
         # --- Nom cité (obligatoire) + autocomplétion HABREF ---
-        self.edit_nom_cite = QLineEdit()
-        if self._habref_search is not None:
-            # Filtre par typologie (Corine Biotopes, EUNIS…) pour cibler la recherche.
-            self.combo_typo = QComboBox()
-            self.combo_typo.addItem("Toutes les typologies", None)
-            for cd_typo, name in self._typologies:
-                self.combo_typo.addItem(name, cd_typo)
-            form.addRow("Typologie", self.combo_typo)
-
-            self.edit_nom_cite.setPlaceholderText("Tapez le nom (ou code) de l'habitat…")
-            self._hab_model = QStandardItemModel(self)
-            completer = QCompleter(self._hab_model, self)
-            completer.setCompletionMode(QCompleter.CompletionMode.UnfilteredPopupCompletion)
-            completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
-            completer.activated[QModelIndex].connect(self._on_habitat_chosen)
-            self.edit_nom_cite.setCompleter(completer)
-            self.edit_nom_cite.textEdited.connect(self._on_nom_cite_edited)
-
-            self._search_timer = QTimer(self)
-            self._search_timer.setSingleShot(True)
-            self._search_timer.setInterval(300)
-            self._search_timer.timeout.connect(self._run_habref_search)
-        form.addRow("Nom cité *", self.edit_nom_cite)
+        # Composant partagé avec l'édition en masse : le choix d'un habitat doit
+        # se faire de la même façon aux deux endroits (cf. `habref_widget`).
+        self.habref = HabrefSearchEdit(
+            habref_search=self._habref_search, typologies=self._typologies
+        )
+        self.habref.habitat_choisi.connect(self._on_habitat_chosen)
+        self.edit_nom_cite = self.habref.edit  # compatibilité des appelants
+        self.combo_typo = self.habref.combo_typo
+        form.addRow(self.habref)
 
         # --- Code habitat cd_hab (obligatoire), rempli par l'autocomplétion ---
         self.spin_cdhab = QSpinBox()
@@ -156,44 +141,68 @@ class HabitatForm(QWidget):
         fill_eval_combo(self.combo_etat, ETATS_CONSERVATION)
         form.addRow("État de conservation", self.combo_etat)
 
+        # ============ Natura 2000 (replié par défaut) ============
+        # Six champs de plus sur chaque habitat : hors cartographie N2000 ils
+        # alourdiraient la saisie courante pour rien, d'où le repli.
+        self.btn_n2000 = QToolButton()
+        self.btn_n2000.setAutoRaise(True)
+        self.btn_n2000.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_n2000.setStyleSheet("QToolButton { border: none; font-weight: 600; }")
+        self.btn_n2000.clicked.connect(self._toggle_n2000)
+        form.addRow(self.btn_n2000)
+
+        self.n2000 = QWidget()
+        n2000_form = QFormLayout(self.n2000)
+        n2000_form.setContentsMargins(12, 0, 0, 0)
+
+        self.combo_typicite = QComboBox()
+        fill_eval_combo(self.combo_typicite, TYPICITES)
+        n2000_form.addRow("Typicité", self.combo_typicite)
+
+        self.combo_dynamique = QComboBox()
+        fill_eval_combo(self.combo_dynamique, DYNAMIQUES)
+        n2000_form.addRow("Dynamique", self.combo_dynamique)
+
+        self.combo_restauration = QComboBox()
+        fill_eval_combo(self.combo_restauration, RESTAURATIONS)
+        n2000_form.addRow("Restauration", self.combo_restauration)
+
+        self.text_critere = QTextEdit()
+        self.text_critere.setPlaceholderText(
+            "Critère ayant servi à évaluer l'état de conservation…"
+        )
+        self.text_critere.setMaximumHeight(55)
+        n2000_form.addRow("Critère d'évaluation", self.text_critere)
+
+        self.edit_pee = QLineEdit()
+        self.edit_pee.setPlaceholderText("Taxon 1 ; Taxon 2 ; Taxon 3")
+        self.edit_pee.setToolTip(
+            "Plantes exotiques envahissantes : 3 taxons au plus, séparés par « ; »."
+        )
+        n2000_form.addRow("PEE", self.edit_pee)
+
+        self.text_remarque = QTextEdit()
+        self.text_remarque.setPlaceholderText("Remarque sur l'habitat…")
+        self.text_remarque.setMaximumHeight(55)
+        n2000_form.addRow("Remarque", self.text_remarque)
+
+        form.addRow(self.n2000)
+        self._set_n2000_visible(False)
+
+    def _set_n2000_visible(self, visible):
+        self.n2000.setVisible(visible)
+        self.btn_n2000.setText(
+            ("▾ " if visible else "▸ ")
+            + "Natura 2000 (typicité, dynamique, restauration, PEE…)"
+        )
+
+    def _toggle_n2000(self):
+        self._set_n2000_visible(not self.n2000.isVisible())
+
     # ------------------------------------------------ autocomplétion HABREF
-    def _on_nom_cite_edited(self, text):
-        # On (re)lance la recherche mais on ne touche PAS au cd_hab déjà renseigné.
-        self._pending_query = text.strip()
-        if len(self._pending_query) >= _MIN_SEARCH:
-            self._search_timer.start()
-
-    def _run_habref_search(self):
-        query = self._pending_query
-        if len(query) < _MIN_SEARCH or self._habref_search is None:
-            return
-        cd_typo = self.combo_typo.currentData() if self.combo_typo is not None else None
-        try:
-            results = self._habref_search(query, cd_typo=cd_typo) or []
-        except Exception:  # noqa: BLE001 - la recherche ne doit pas casser la saisie
-            results = []
-        self._hab_model.clear()
-        for item in results:
-            # `search_name` contient déjà « code - nom » (ex. « 41.2 - Chênaies-charmaies »).
-            name = item.get("search_name") or item.get("lb_code") or str(item.get("cd_hab"))
-            typo = item.get("lb_nom_typo") or self._typo_names.get(item.get("cd_typo"), "")
-            label = ("%s %s" % (typo, name)).strip()  # ex. « CORINE_biotopes 41.2 - Chênaies-charmaies »
-            row = QStandardItem(label)
-            row.setData(item, Qt.ItemDataRole.UserRole)
-            self._hab_model.appendRow(row)
-        if self._hab_model.rowCount():
-            self.edit_nom_cite.completer().complete()
-
-    def _on_habitat_chosen(self, index):
-        data = index.data(Qt.ItemDataRole.UserRole)
-        if not isinstance(data, dict):
-            return
-        cd_hab = data.get("cd_hab")
-        if cd_hab is not None:
-            self.spin_cdhab.setValue(int(cd_hab))
-        # Le completer va écrire le libellé affiché ; on force le nom cité au nom HABREF.
-        name = data.get("search_name") or ""
-        QTimer.singleShot(0, lambda: self.edit_nom_cite.setText(name))
+    def _on_habitat_chosen(self, cd_hab, nom):
+        """Une proposition HABREF retenue renseigne le code ET le nom cité."""
+        self.spin_cdhab.setValue(int(cd_hab))
 
     def _on_recouvrement_changed(self, value):
         """Un recouvrement > 0 pré-sélectionne la classe d'abondance correspondante."""
@@ -224,6 +233,12 @@ class HabitatForm(QWidget):
             enjeu=self.combo_enjeu.currentData(),
             etat_conservation=self.combo_etat.currentData(),
             recouvrement=recouvrement,
+            typicite=self.combo_typicite.currentData(),
+            dynamique=self.combo_dynamique.currentData(),
+            restauration=self.combo_restauration.currentData(),
+            critere=self.text_critere.toPlainText(),
+            pee=[p.strip() for p in self.edit_pee.text().split(";") if p.strip()],
+            remarque=self.text_remarque.toPlainText(),
         )
         return {
             "cd_hab": self.spin_cdhab.value() or None,
@@ -263,8 +278,20 @@ class HabitatForm(QWidget):
         precision = habitat.get("technical_precision") or ""
         self.text_precision.setPlainText(strip_eval(precision))
         codes = decode_eval(precision)
+        # `decode_eval` rend des valeurs déjà normalisées (codes hérités convertis).
         select_combo_data(self.combo_enjeu, codes.get("enjeu"))
         select_combo_data(self.combo_etat, codes.get("etat_conservation"))
+        select_combo_data(self.combo_typicite, codes.get("typicite"))
+        select_combo_data(self.combo_dynamique, codes.get("dynamique"))
+        select_combo_data(self.combo_restauration, codes.get("restauration"))
+        self.text_critere.setPlainText(codes.get("critere") or "")
+        self.edit_pee.setText(_SEPARATEUR_PEE.join(codes.get("pee") or []))
+        self.text_remarque.setPlainText(codes.get("remarque") or "")
+        # Déplier la section si l'habitat porte déjà des champs N2000 : ne jamais
+        # cacher une valeur saisie.
+        if any(codes.get(cle) for cle in ("typicite", "dynamique", "restauration",
+                                          "critere", "pee", "remarque")):
+            self._set_n2000_visible(True)
         # Recouvrement : bloc encodé prioritaire, sinon champ natif recovery_percentage.
         rec = codes.get("recouvrement") or habitat.get("recovery_percentage")
         if rec:

@@ -30,6 +30,12 @@ from ..processing.eval_fields import (
     select_combo_data,
     strip_eval,
 )
+from ..processing.referentiels import (
+    BROUILLON,
+    NATURES_OBSERVATION,
+    STATUTS_VALIDATION,
+    UNITES_VEGETALES,
+)
 
 
 class StationForm(QWidget):
@@ -41,13 +47,20 @@ class StationForm(QWidget):
     """
 
     def __init__(self, config=None, nomenclatures=None, observers=None,
-                 current_observer=None, datasets=None, defaults=None, parent=None):
+                 current_observer=None, datasets=None, defaults=None,
+                 last_observers=None, last_dates=None, parent=None):
         super().__init__(parent)
         self.config = config
         self.nomenclatures = nomenclatures or {}
         self._defaults = defaults or {}  # id_nomenclature par défaut (instance)
         self._observers = observers or []  # [(id_role, nom)]
         self._current_observer = current_observer  # {id_role, observer_name} ou None
+        # Reprise de la saisie précédente (création seulement — en édition, les
+        # valeurs de la station l'emportent) : [{id_role, observer_name}] et
+        # ('YYYY-MM-DD', 'YYYY-MM-DD').
+        self._last_observers = last_observers or []
+        self._last_dates = last_dates or ()
+        self._observers_repris = False
         self._datasets = datasets or []  # [(id_dataset, nom)]
         self.combo_dataset = None
         self.spin_dataset = None
@@ -93,6 +106,15 @@ class StationForm(QWidget):
         self.date_max.setCalendarPopup(True)
         form.addRow("Date fin", self.date_max)
 
+        # Mention visible de ce qui a été repris : une date héritée en silence
+        # serait une erreur de donnée difficile à repérer après coup.
+        self.label_repris = QLabel()
+        self.label_repris.setWordWrap(True)
+        self.label_repris.setStyleSheet("color: palette(mid); font-style: italic;")
+        self.label_repris.setVisible(False)
+        form.addRow(self.label_repris)  # pleine largeur : masqué, la ligne disparaît
+        self._show_repris_hint(self._observers_repris, self._apply_last_dates())
+
         # Extension ANA (encodés dans le commentaire, voir README §6) — gardés
         # visibles car souvent renseignés.
         self.combo_enjeu = QComboBox()
@@ -106,6 +128,17 @@ class StationForm(QWidget):
         self.check_zone_humide = QCheckBox("Zone humide")
         self.check_zone_humide.setToolTip("Cochez si la station est en zone humide")
         form.addRow("", self.check_zone_humide)
+
+        # État métier, distinct de l'état de synchronisation : il dit où en est le
+        # travail du botaniste, pas où en est l'envoi au serveur.
+        self.combo_statut = QComboBox()
+        for code, label in STATUTS_VALIDATION:
+            self.combo_statut.addItem(label, code)
+        self.combo_statut.setToolTip(
+            "Brouillon : saisie en cours, sur laquelle vous reviendrez.\n"
+            "Validée : travail abouti. La synchronisation envoie les deux."
+        )
+        form.addRow("Statut", self.combo_statut)
 
         self.text_comment = QTextEdit()
         self.text_comment.setPlaceholderText("Commentaire libre…")
@@ -159,6 +192,27 @@ class StationForm(QWidget):
             select_combo_data(self.combo_mosaique, self._defaults.get("mosaique"))
             details_form.addRow("Type de mosaïque d'habitats", self.combo_mosaique)
 
+        # --- Natura 2000 (annexe 2 du cahier des charges) ---
+        # `unite_vegetale` doit rester cohérent avec le nombre d'habitats saisis :
+        # une unité non complexe n'en porte qu'un.
+        self.combo_unite_veg = QComboBox()
+        fill_eval_combo(self.combo_unite_veg, UNITES_VEGETALES)
+        details_form.addRow("Unité végétale (N2000)", self.combo_unite_veg)
+
+        self.combo_nature_obs = QComboBox()
+        fill_eval_combo(self.combo_nature_obs, NATURES_OBSERVATION)
+        details_form.addRow("Nature de l'observation (N2000)", self.combo_nature_obs)
+
+        self.spin_echelle = QSpinBox()
+        self.spin_echelle.setRange(0, 1_000_000)
+        self.spin_echelle.setPrefix("1: ")
+        self.spin_echelle.setSpecialValueText("—")  # 0 = non renseigné
+        self.spin_echelle.setToolTip(
+            "Échelle de numérisation, obligatoire au cahier des charges N2000 "
+            "(ex. 5000 pour du 1:5 000)."
+        )
+        details_form.addRow("Échelle de numérisation", self.spin_echelle)
+
         self.combo_exposure = QComboBox()
         fill_eval_combo(self.combo_exposure, self.nomenclatures.get("exposure", []))
         select_combo_data(self.combo_exposure, self._defaults.get("exposure"))
@@ -190,6 +244,30 @@ class StationForm(QWidget):
 
     def _toggle_details(self):
         self._set_details_visible(not self.details.isVisible())
+
+    # ------------------------------------------- reprise de la saisie précédente
+    def _apply_last_dates(self):
+        """Reprendre les dates de la saisie précédente. True si appliquées."""
+        applied = False
+        for widget, value in zip((self.date_min, self.date_max), self._last_dates):
+            date = QDate.fromString((value or "")[:10], "yyyy-MM-dd")
+            if date.isValid():
+                widget.setDate(date)
+                applied = True
+        return applied
+
+    def _show_repris_hint(self, observers, dates):
+        """Signaler ce qui vient de la saisie précédente (rien affiché sinon)."""
+        if observers and dates:
+            text = "↺ Observateurs et dates repris de la saisie précédente — vérifiez la date."
+        elif observers:
+            text = "↺ Observateurs repris de la saisie précédente."
+        elif dates:
+            text = "↺ Dates reprises de la saisie précédente — vérifiez-les."
+        else:
+            return
+        self.label_repris.setText(text)
+        self.label_repris.setVisible(True)
 
     # -------------------------------------------------------- observateurs
     def _build_observers_widget(self):
@@ -230,13 +308,19 @@ class StationForm(QWidget):
         self.btn_remove_observer.clicked.connect(self._remove_current_observer)
         box.addWidget(self.btn_remove_observer)
 
-        # Pré-remplir avec l'utilisateur connecté (observateur par défaut).
-        current = self._current_observer
-        if current and current.get("id_role"):
-            self._add_observer(
-                current["id_role"],
-                current.get("observer_name") or str(current["id_role"]),
-            )
+        # Pré-remplir avec l'équipe de la saisie précédente si elle est connue
+        # (elle change peu au cours d'une campagne), sinon avec l'utilisateur
+        # connecté (comportement par défaut historique).
+        if self._last_observers:
+            self._apply_observers(self._last_observers)
+            self._observers_repris = bool(self._selected)
+        if not self._selected:
+            current = self._current_observer
+            if current and current.get("id_role"):
+                self._add_observer(
+                    current["id_role"],
+                    current.get("observer_name") or str(current["id_role"]),
+                )
         return container
 
     def _on_observer_picked(self, index):
@@ -324,10 +408,14 @@ class StationForm(QWidget):
             enjeu=self.combo_enjeu.currentData(),
             etat_conservation=self.combo_etat.currentData(),
             zone_humide=self.check_zone_humide.isChecked(),
+            unite_vegetale=self.combo_unite_veg.currentData(),
+            nature_observation=self.combo_nature_obs.currentData(),
+            echelle=self.spin_echelle.value() or None,
         )
         observers = self._selected_observers()
         return {
             "id_dataset": self._id_dataset(),
+            "validation_status": self.combo_statut.currentData() or BROUILLON,
             "station_name": self.edit_name.text().strip() or None,
             "date_min": self.date_min.date().toString("yyyy-MM-dd"),
             "date_max": self.date_max.date().toString("yyyy-MM-dd"),
@@ -353,11 +441,22 @@ class StationForm(QWidget):
             "created_by": _current_user(),
         }
 
-    def set_data(self, station):
+    def set_data(self, station, repris=False):
+        """Remplir le formulaire depuis une station existante.
+
+        `repris=True` en duplication : les valeurs viennent d'une AUTRE station,
+        ce qui est signalé à l'utilisateur (la date surtout).
+        """
         if station.get("id_dataset"):
             self._select_dataset(int(station["id_dataset"]))
         self.edit_name.setText(station.get("station_name") or "")
         self._apply_observers(station.get("observers", []))
+        # Dates de la station : sans cela le formulaire garderait la date du jour
+        # et l'enregistrement écraserait la date d'observation d'origine.
+        for widget, key in ((self.date_min, "date_min"), (self.date_max, "date_max")):
+            date = QDate.fromString((station.get(key) or "")[:10], "yyyy-MM-dd")
+            if date.isValid():
+                widget.setDate(date)
         if station.get("altitude_min"):
             self.spin_alt_min.setValue(int(station["altitude_min"]))
         if station.get("altitude_max"):
@@ -385,9 +484,28 @@ class StationForm(QWidget):
         comment = station.get("comment") or ""
         self.text_comment.setPlainText(strip_eval(comment))
         codes = decode_eval(comment)
+        # `decode_eval` rend des valeurs déjà normalisées (codes hérités convertis,
+        # zone_humide en booléen) : rien à retraiter ici.
         select_combo_data(self.combo_enjeu, codes.get("enjeu"))
         select_combo_data(self.combo_etat, codes.get("etat_conservation"))
-        self.check_zone_humide.setChecked(codes.get("zone_humide") == "true")
+        self.check_zone_humide.setChecked(bool(codes.get("zone_humide")))
+        select_combo_data(self.combo_unite_veg, codes.get("unite_vegetale"))
+        select_combo_data(self.combo_nature_obs, codes.get("nature_observation"))
+        if codes.get("echelle"):
+            self.spin_echelle.setValue(int(codes["echelle"]))
+        statut = station.get("validation_status") or BROUILLON
+        index = self.combo_statut.findData(statut)
+        if index >= 0:
+            self.combo_statut.setCurrentIndex(index)
+
+        # La station chargée fait autorité : la mention de reprise éventuellement
+        # affichée à la construction n'a plus lieu d'être (sauf duplication).
+        self.label_repris.setVisible(False)
+        if repris:
+            self.label_repris.setText(
+                "↺ Valeurs reprises de la station dupliquée — vérifiez la date et le nom."
+            )
+            self.label_repris.setVisible(True)
 
         # Déplier « Détails » si la station en contient déjà (ne pas cacher de valeurs).
         detail_keys = (
@@ -396,7 +514,9 @@ class StationForm(QWidget):
             "id_nomenclature_geographic_object", "id_nomenclature_type_sol",
             "id_nomenclature_type_mosaique_habitat",
         )
-        if any(station.get(k) for k in detail_keys):
+        detail_eval = ("unite_vegetale", "nature_observation", "echelle")
+        if (any(station.get(k) for k in detail_keys)
+                or any(codes.get(k) for k in detail_eval)):
             self._set_details_visible(True)
 
 

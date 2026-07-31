@@ -6,6 +6,15 @@
 Modèle : station (spatiale) 1→N habitats (non-spatiaux) ; observateurs en
 relation N-N ; files d'attente et journal de synchronisation.
 
+**Deux états, à ne pas confondre** :
+
+- `sync_status` — état **technique** vis-à-vis du serveur (`pending`, `synced`,
+  `conflict`, `to_delete`).
+- `validation_status` — état **métier** du travail du botaniste (`brouillon`,
+  `valide`). Les deux sont orthogonaux : une station peut être un brouillon déjà
+  synchronisé (la synchro sert aussi de sauvegarde en fin de journée), ou validée
+  et en attente d'envoi.
+
 Note : `id_nomenclature_collection_technique` est NOT NULL côté GeoNature. En
 local, on stocke ce que l'utilisateur a saisi ; la conformité est (re)vérifiée
 au moment de la synchronisation.
@@ -42,6 +51,7 @@ CREATE TABLE IF NOT EXISTS t_stations (
     id_nomenclature_type_mosaique_habitat INTEGER,
     date_creation TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     date_update TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    validation_status TEXT DEFAULT 'brouillon',
     sync_status TEXT DEFAULT 'pending',
     sync_date TIMESTAMP,
     created_by TEXT,
@@ -87,8 +97,14 @@ CREATE TABLE IF NOT EXISTS t_sync_log (
     records_count INTEGER
 );
 
+-- Index des colonnes présentes depuis l'origine. Ceux qui portent sur une
+-- colonne ajoutée après coup sont créés dans `_migrate()`, APRÈS l'ALTER TABLE :
+-- ici, `CREATE TABLE IF NOT EXISTS` ne touche pas une table existante, donc la
+-- colonne n'existerait pas encore et l'ouverture de toute base antérieure
+-- échouerait.
 CREATE INDEX IF NOT EXISTS idx_stations_sync ON t_stations(sync_status);
 CREATE INDEX IF NOT EXISTS idx_habitats_station ON t_habitats(id_station_local);
+CREATE INDEX IF NOT EXISTS idx_observers_station ON cor_station_observer(id_station_local);
 """
 
 
@@ -106,6 +122,13 @@ def _date_months_ago(months, now=None):
     return "%04d-%02d-%02d" % (year, month, day)
 
 
+# État métier d'une station (cf. docstring du module). BROUILLON par défaut :
+# une station qui vient d'être créée n'est jamais un travail figé.
+BROUILLON = "brouillon"
+VALIDE = "valide"
+VALIDATION_STATUSES = (BROUILLON, VALIDE)
+
+
 class OccHabDatabase:
     """Accès CRUD à la base SQLite locale."""
 
@@ -117,7 +140,8 @@ class OccHabDatabase:
         "id_nomenclature_geographic_object", "id_nomenclature_exposure",
         "id_nomenclature_type_sol", "id_nomenclature_area_surface_calculation",
         "id_nomenclature_type_mosaique_habitat",
-        "created_by", "updated_by", "sync_status", "mine", "server_snapshot",
+        "created_by", "updated_by", "sync_status", "validation_status",
+        "mine", "server_snapshot",
     }
     HABITAT_COLS = {
         "id_habitat", "unique_id_sinp_hab", "cd_hab", "nom_cite", "determiner",
@@ -173,6 +197,26 @@ class OccHabDatabase:
             self.connection.execute(
                 "ALTER TABLE t_stations ADD COLUMN prev_geom_type TEXT"
             )
+        if "validation_status" not in cols:
+            # SQLite n'accepte pas de paramètre dans un DEFAULT d'ALTER TABLE :
+            # il lui faut un littéral. `BROUILLON` est une constante du module,
+            # jamais une saisie utilisateur.
+            self.connection.execute(
+                "ALTER TABLE t_stations ADD COLUMN validation_status TEXT"
+                " DEFAULT '%s'" % BROUILLON  # nosec B608
+            )
+            # Reprise des données existantes, une seule fois (à l'ajout de la
+            # colonne) : ce qui est déjà parti sur GeoNature était considéré
+            # comme abouti ; tout le reste est du travail en cours.
+            self.connection.execute(
+                "UPDATE t_stations SET validation_status = ? WHERE sync_status = 'synced'",
+                (VALIDE,),
+            )
+        # Après l'ALTER : la colonne est garantie, l'index peut être posé.
+        self.connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_stations_validation"
+            " ON t_stations(validation_status)"
+        )
 
     # --------------------------------------------------------- stations
     def create_station(self, **fields):
@@ -243,6 +287,63 @@ class OccHabDatabase:
         rows = [dict(r) for r in cursor.fetchall()]
         self.disconnect()
         return rows
+
+    def get_stations_full(self, id_dataset=None):
+        """Toutes les stations AVEC leurs habitats et observateurs, en 3 requêtes.
+
+        Équivaut à `get_station()` appliqué à chaque station, mais sans le N+1 :
+        l'appel par station coûtait 3 requêtes ET 3 ouvertures de connexion, soit
+        plusieurs milliers d'allers-retours dès quelques centaines de stations.
+        C'est le chargement utilisé par la liste du dock et par la table
+        attributaire.
+
+        Args:
+            id_dataset: restreindre à un jeu de données (None = tous).
+
+        Returns:
+            liste de dicts station, chacun avec ses clés `habitats` et
+            `observers` (listes, éventuellement vides), triés comme
+            `get_all_stations` (plus récentes d'abord).
+        """
+        self.connect()
+        try:
+            cursor = self.connection.cursor()
+            if id_dataset is not None:
+                cursor.execute(
+                    "SELECT * FROM t_stations WHERE id_dataset = ? ORDER BY id DESC",
+                    (id_dataset,),
+                )
+            else:
+                cursor.execute("SELECT * FROM t_stations ORDER BY id DESC")
+            stations = [dict(row) for row in cursor.fetchall()]
+            by_id = {}
+            for station in stations:
+                station["habitats"] = []
+                station["observers"] = []
+                by_id[station["id"]] = station
+            if not by_id:
+                return stations
+
+            # Enfants filtrés côté SQL : un JDD restreint ne doit pas rapatrier
+            # les habitats de toute la base.
+            for table, key in (("t_habitats", "habitats"),
+                               ("cor_station_observer", "observers")):
+                if id_dataset is not None:
+                    # Nom de table issu d'un littéral du code, jamais d'une saisie.
+                    cursor.execute(
+                        "SELECT c.* FROM %s c JOIN t_stations s"  # nosec B608
+                        " ON s.id = c.id_station_local WHERE s.id_dataset = ?" % table,
+                        (id_dataset,),
+                    )
+                else:
+                    cursor.execute("SELECT * FROM %s" % table)  # nosec B608
+                for row in cursor.fetchall():
+                    station = by_id.get(row["id_station_local"])
+                    if station is not None:  # orphelin éventuel : ignoré
+                        station[key].append(dict(row))
+            return stations
+        finally:
+            self.disconnect()
 
     def update_station(self, station_id, **fields):
         data = {k: v for k, v in fields.items() if k in self.STATION_COLS}

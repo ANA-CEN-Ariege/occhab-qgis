@@ -1,49 +1,61 @@
 # SPDX-FileCopyrightText: 2026 Cédric Roy <it@ariegenature.fr>
 # SPDX-License-Identifier: GPL-3.0-or-later
 
-"""Champs métier ANA (niveau d'enjeu, état de conservation, recouvrement, zone humide).
+"""Champs métier ANA / Natura 2000 encodés dans les champs libres d'OccHab.
 
-OccHab n'a pas de champ natif exposé pour ces notions. On les stocke, de façon
-normalisée, dans les champs libres OccHab (`comment` de la station,
-`technical_precision` de l'habitat) via un bloc balisé non destructif :
+OccHab n'a pas de champ natif pour ces notions, et le module ne gère pas les
+champs additionnels de GeoNature : le seul canal d'écriture reste les champs
+texte — `comment` (station) et `technical_precision` (habitat). On y insère un
+**bloc balisé non destructif** dont le contenu est du **JSON** :
 
     Texte libre saisi par l'utilisateur.
 
-    [ANA-EVAL] enjeu=fort | etat_conservation=moyen | recouvrement=3 | zone_humide=true [/ANA-EVAL]
+    [ANA-EVAL] {"enjeu": "fort", "etat_conservation": "bon", "typicite": "bonne"} [/ANA-EVAL]
 
-- enjeu / etat_conservation : CODE issu d'un référentiel fermé (NIVEAUX_ENJEU,
-  ETATS_CONSERVATION).
-- recouvrement : pourcentage (0-100) ; il pilote aussi la nomenclature Abondance
-  via `cover_class()` (côté formulaire habitat).
-- zone_humide : booléen (true/false) — simple case à cocher.
+**Pourquoi JSON** : les champs Natura 2000 comprennent du texte libre (critère,
+remarque) et des listes (taxons). Le format historique `clé=valeur | clé=valeur`
+ne survivait pas à un `|`, un `]` ou un retour à la ligne saisis par
+l'utilisateur. JSON échappe tout par construction, et PostgreSQL le relit d'un
+seul cast `::jsonb` au lieu d'une dizaine de `regexp_match` (voir README §6).
 
-N'écrire que des codes/valeurs normalisés permet une ré-extraction fiable côté
-PostgreSQL (voir README §6, vue `ana_occhab.v_occhab_complet` ; pour recouvrement,
-capturer `[0-9.]+`).
+**L'ancien format reste lu** : les stations déjà synchronisées le portent. Le
+décodage l'accepte et le convertit ; la première réécriture les fait passer en
+JSON, sans jamais toucher au texte humain.
 
-Ce module ne dépend que de la bibliothèque standard.
+Les valeurs sont **validées à l'écriture comme à la lecture** contre les
+référentiels (`referentiels.py`) : un code hors liste n'est pas écrit, et un code
+hérité est converti au passage. Ce module ne dépend que de la bibliothèque
+standard.
 """
+import json
 import re
 
-# --- Référentiels fermés (codes normalisés). ---------------------------------
-# À terme, adosser ces codes à une nomenclature GeoNature dédiée
-# (mnémoniques ANA_ENJEU / ANA_ETAT_CONSERV).
-NIVEAUX_ENJEU = [
-    ("faible", "Faible"),
-    ("moyen", "Moyen"),
-    ("fort", "Fort"),
-    ("majeur", "Majeur"),
-]
+try:  # importable dans le paquet (plugin) comme en isolation (tests)
+    from . import referentiels as ref
+except ImportError:  # pragma: no cover - repli hors paquet
+    import referentiels as ref
 
-ETATS_CONSERVATION = [
-    ("bon", "Bon"),
-    ("moyen", "Moyen / altéré"),
-    ("mauvais", "Mauvais / dégradé"),
-    ("nd", "Non déterminé"),
-]
+# Ré-exports : les formulaires peuplent leurs menus depuis ces listes.
+NIVEAUX_ENJEU = ref.NIVEAUX_ENJEU
+ETATS_CONSERVATION = ref.ETATS_CONSERVATION
 
-CODES_ENJEU = {code for code, _ in NIVEAUX_ENJEU}
-CODES_ETAT = {code for code, _ in ETATS_CONSERVATION}
+# --- Description des clés du bloc. -------------------------------------------
+# Codes fermés : {clé: (codes valides, alias des codes hérités)}.
+_CODE_FIELDS = {
+    "statut": (ref.codes(ref.STATUTS_VALIDATION), {}),
+    "enjeu": (ref.codes(ref.NIVEAUX_ENJEU), ref.ALIAS_ENJEU),
+    "etat_conservation": (ref.codes(ref.ETATS_CONSERVATION), ref.ALIAS_ETAT),
+    "dynamique": (ref.codes(ref.DYNAMIQUES), {}),
+    "restauration": (ref.codes(ref.RESTAURATIONS), {}),
+    "typicite": (ref.codes(ref.TYPICITES), {}),
+    "unite_vegetale": (ref.codes(ref.UNITES_VEGETALES), {}),
+    "nature_observation": (ref.codes(ref.NATURES_OBSERVATION), {}),
+}
+_TEXT_FIELDS = ("critere", "remarque")
+_LIST_FIELDS = {"pee": 3}  # plantes exotiques envahissantes : 3 taxons au plus
+# Entiers bornés : {clé: (mini, maxi)}. `echelle` = échelle de numérisation,
+# obligatoire au cahier des charges N2000 (ex. 5000 pour du 1:5 000).
+_INT_FIELDS = {"echelle": (1, 1_000_000)}
 
 # --- Convention d'encodage. ---------------------------------------------------
 EVAL_START = "[ANA-EVAL]"
@@ -51,19 +63,104 @@ EVAL_END = "[/ANA-EVAL]"
 _EVAL_RE = re.compile(re.escape(EVAL_START) + r"(.*?)" + re.escape(EVAL_END), re.DOTALL)
 
 
-def decode_eval(text):
-    """Extraire {clé: code} depuis un champ libre. {} si aucun bloc."""
-    if not text:
-        return {}
-    match = _EVAL_RE.search(text)
-    if not match:
-        return {}
+def normalize_enjeu(code):
+    """Code d'enjeu courant correspondant à `code` (éventuellement hérité)."""
+    return ref.normalize(code, ref.ALIAS_ENJEU)
+
+
+def normalize_etat(code):
+    """Code d'état de conservation courant correspondant à `code`."""
+    return ref.normalize(code, ref.ALIAS_ETAT)
+
+
+def _without_markers(text):
+    """Retirer les balises du bloc d'un texte libre.
+
+    Ce sont NOS délimiteurs : JSON échappe les guillemets, pas les crochets. Une
+    balise saisie par l'utilisateur — ou collée avec un commentaire recopié
+    depuis une autre station via l'interface web — ferait couper le bloc au
+    mauvais endroit à la relecture, et ses valeurs seraient silencieusement
+    perdues au premier réenregistrement.
+    """
+    return (text or "").replace(EVAL_START, "").replace(EVAL_END, "")
+
+
+def _clean(key, value):
+    """Valeur normalisée à écrire pour `key`, ou None si rien à écrire.
+
+    Sert à l'encodage **et** au décodage : la validation et la conversion des
+    codes hérités se font ainsi au même endroit, dans les deux sens.
+    """
+    if key in _CODE_FIELDS:
+        valid, alias = _CODE_FIELDS[key]
+        code = ref.normalize(value, alias)
+        return code if code in valid else None
+    if key == "recouvrement":
+        return _valid_recouvrement(value)
+    if key in _INT_FIELDS:
+        mini, maxi = _INT_FIELDS[key]
+        if isinstance(value, bool):
+            return None
+        try:
+            number = int(float(value))
+        except (TypeError, ValueError):
+            return None
+        return number if mini <= number <= maxi else None
+    if key == "zone_humide":
+        if isinstance(value, str):  # ancien format : la valeur était textuelle
+            value = value.strip().lower() in ("true", "1", "oui")
+        return True if value else None
+    if key in _TEXT_FIELDS:
+        text = _without_markers(value).strip() if isinstance(value, str) else ""
+        return text or None
+    if key in _LIST_FIELDS:
+        if isinstance(value, str):  # une valeur seule vaut une liste d'un élément
+            value = [value]
+        items = [_without_markers(str(v)).strip() for v in (value or [])]
+        items = [item for item in items if item]
+        return items[: _LIST_FIELDS[key]] or None
+    return None  # clé inconnue : ignorée, le bloc reste normalisé
+
+
+def _raw_block(text):
+    """Contenu brut entre les balises, ou None s'il n'y a pas de bloc."""
+    match = _EVAL_RE.search(text or "")
+    return match.group(1).strip() if match else None
+
+
+def _parse_legacy(raw):
+    """Ancien format `clé=valeur | clé=valeur` → dict."""
     result = {}
-    for part in match.group(1).split("|"):
+    for part in raw.split("|"):
         if "=" in part:
             key, value = (piece.strip() for piece in part.split("=", 1))
             if value:
                 result[key] = value
+    return result
+
+
+def decode_eval(text):
+    """Extraire {clé: valeur} depuis un champ libre. {} si aucun bloc.
+
+    Accepte le bloc JSON comme l'ancien `clé=valeur`. Les valeurs renvoyées sont
+    **déjà normalisées** (codes hérités convertis, valeurs hors référentiel
+    écartées, `zone_humide` en booléen, `recouvrement` en nombre) : les appelants
+    n'ont rien à retraiter.
+    """
+    raw = _raw_block(text)
+    if raw is None:
+        return {}
+    try:
+        data = json.loads(raw)
+    except ValueError:
+        data = None
+    if not isinstance(data, dict):
+        data = _parse_legacy(raw)
+    result = {}
+    for key, value in data.items():
+        cleaned = _clean(key, value)
+        if cleaned is not None:
+            result[key] = cleaned
     return result
 
 
@@ -72,36 +169,54 @@ def strip_eval(text):
     return _EVAL_RE.sub("", text or "").strip()
 
 
-def encode_eval(text, enjeu=None, etat_conservation=None, recouvrement=None, zone_humide=False):
+def encode_eval(text, **values):
     """Insérer/mettre à jour le bloc SANS écraser le texte libre existant.
 
-    enjeu/etat_conservation sont validés contre leur référentiel (valeur hors
-    liste ignorée). `recouvrement` est un pourcentage 0-100 (nombre).
-    `zone_humide` est un booléen.
+    Chaque valeur est validée (`_clean`) : une clé inconnue, vide ou hors
+    référentiel n'est pas écrite. Les clés sont triées pour que deux
+    enregistrements successifs d'une même saisie produisent le même texte (sans
+    quoi la détection de conflit verrait une différence à chaque fois).
     """
-    human = strip_eval(text)
+    # strip_eval retire les blocs complets ; _without_markers, les balises
+    # orphelines qui feraient dérailler la prochaine relecture.
+    human = _without_markers(strip_eval(text)).strip()
 
-    pairs = []
-    if enjeu in CODES_ENJEU:
-        pairs.append("enjeu=%s" % enjeu)
-    if etat_conservation in CODES_ETAT:
-        pairs.append("etat_conservation=%s" % etat_conservation)
-    pct = _valid_recouvrement(recouvrement)
-    if pct is not None:
-        pairs.append("recouvrement=%s" % pct)
-    if zone_humide:
-        pairs.append("zone_humide=true")
+    data = {}
+    for key, value in values.items():
+        cleaned = _clean(key, value)
+        if cleaned is not None:
+            data[key] = cleaned
 
-    if not pairs:
+    if not data:
         return human  # rien à encoder → seul le texte humain subsiste
 
-    block = "%s %s %s" % (EVAL_START, " | ".join(pairs), EVAL_END)
+    block = "%s %s %s" % (
+        EVAL_START, json.dumps(data, ensure_ascii=False, sort_keys=True), EVAL_END,
+    )
     return ("%s\n\n%s" % (human, block)).strip() if human else block
+
+
+def merge_eval(text, **values):
+    """Mettre à jour CERTAINES clés du bloc, en conservant les autres.
+
+    `encode_eval` remplace le bloc entier : il convient au formulaire, qui
+    connaît toutes les valeurs. Pour une écriture partielle — changer le seul
+    statut de validation sans rouvrir la station — il faut relire l'existant et
+    fusionner, sinon l'enjeu, la typicité et le reste seraient effacés au
+    passage. Une valeur à None **supprime** la clé.
+    """
+    data = decode_eval(text)
+    for key, value in values.items():
+        if value is None:
+            data.pop(key, None)
+        else:
+            data[key] = value
+    return encode_eval(text, **data)
 
 
 def _valid_recouvrement(value):
     """Normaliser un pourcentage de recouvrement (0<v<=100), ou None."""
-    if value is None:
+    if value is None or isinstance(value, bool):
         return None
     try:
         val = float(value)
@@ -129,14 +244,6 @@ def cover_class(percentage):
     if pct <= 75:
         return 4
     return 5
-
-
-def label_for(items, code, default=""):
-    """Libellé d'un code dans un référentiel (NIVEAUX_ENJEU / ETATS_CONSERVATION)."""
-    for value, label in items:
-        if value == code:
-            return label
-    return default
 
 
 # --- Aides pour les QComboBox (le code est stocké en itemData). --------------

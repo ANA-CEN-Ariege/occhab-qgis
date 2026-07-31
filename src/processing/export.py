@@ -20,15 +20,20 @@ except ImportError:  # pragma: no cover - repli hors paquet
 
 # Ordre des colonnes de sortie (le driver Shapefile tronquera les noms à 10 car.).
 STATION_FIELDS = [
-    "id_station", "nom_station", "jdd", "date_min", "date_max", "observateurs",
-    "numerisateur", "altitude_min", "altitude_max", "profondeur_min",
-    "profondeur_max", "surface_m2", "exposition", "methode_surface",
-    "nature_objet", "type_sol", "type_mosaique", "st_enjeu", "st_etat_cons",
+    "id_station", "nom_station", "jdd", "statut", "date_min", "date_max",
+    "observateurs", "numerisateur", "altitude_min", "altitude_max",
+    "profondeur_min", "profondeur_max", "surface_m2", "exposition",
+    "methode_surface", "nature_objet", "type_sol", "type_mosaique",
+    "st_enjeu", "st_etat_cons", "st_zone_humide",
+    # Natura 2000 (annexe 2 : id_uv, id_nat_obs, echelle)
+    "unite_vegetale", "nature_obs", "echelle",
 ]
 HABITAT_FIELDS = [
     "id_habitat", "cd_hab", "code_habref", "habitat_officiel", "nom_cite",
     "determinateur", "recouvrement", "technique", "determination", "abondance",
     "sensibilite", "interet_com", "hab_enjeu", "hab_etat_cons",
+    # Natura 2000 (annexe 2 : id_typi, id_dynam, id_restaur) + extensions ANA
+    "typicite", "dynamique", "restauration", "critere", "pee", "remarque",
 ]
 FIELDS = STATION_FIELDS + HABITAT_FIELDS
 NUMERIC_FIELDS = {
@@ -92,6 +97,11 @@ def flatten_cartography(stations, nomenclature_label=None, jdd_name=None,
             ),
             "st_enjeu": st_eval.get("enjeu"),
             "st_etat_cons": st_eval.get("etat_conservation"),
+            "st_zone_humide": st_eval.get("zone_humide"),
+            "statut": station.get("validation_status"),
+            "unite_vegetale": st_eval.get("unite_vegetale"),
+            "nature_obs": st_eval.get("nature_observation"),
+            "echelle": st_eval.get("echelle"),
         }
         for habitat in (habitats or [None]):
             row = dict.fromkeys(FIELDS)
@@ -123,6 +133,13 @@ def flatten_cartography(stations, nomenclature_label=None, jdd_name=None,
                     ),
                     "hab_enjeu": hab_eval.get("enjeu"),
                     "hab_etat_cons": hab_eval.get("etat_conservation"),
+                    "typicite": hab_eval.get("typicite"),
+                    "dynamique": hab_eval.get("dynamique"),
+                    "restauration": hab_eval.get("restauration"),
+                    "critere": hab_eval.get("critere"),
+                    # Liste de taxons → une chaîne : un shapefile n'a pas de type liste.
+                    "pee": " ; ".join(hab_eval.get("pee") or []) or None,
+                    "remarque": hab_eval.get("remarque"),
                 })
             row["_geom"] = station.get("geom")
             row["_geom_type"] = station.get("geom_type")

@@ -13,8 +13,10 @@ from qgis.PyQt.QtWidgets import (
     QMessageBox,
     QPushButton,
     QVBoxLayout,
+    QWidget,
 )
 
+from .dialog_size import ajuster_a_l_ecran, rendre_defilant
 from .habitat_form import HabitatForm
 from .station_form import StationForm
 
@@ -31,11 +33,17 @@ class _FormDialog(QDialog):
         self.setWindowTitle(title)
         self.form = form
         layout = QVBoxLayout(self)
-        layout.addWidget(form)
+        # Le formulaire défile ; les boutons restent hors de la zone défilante,
+        # donc toujours atteignables même sur un petit écran.
+        layout.addWidget(rendre_defilant(form), 1)
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
         buttons.accepted.connect(self._on_ok)
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        ajuster_a_l_ecran(self)
 
     def _on_ok(self):
         ok, msg = self.form.validate()
@@ -57,10 +65,18 @@ class StationDialog(QDialog):
                  habref_typologies=None, observers=None, current_observer=None,
                  user_names=None, default_determiner=None, datasets=None,
                  geo_metrics=None, station_defaults=None, habitat_defaults=None,
-                 abundance_cover_map=None, batch_count=0, parent=None):
+                 abundance_cover_map=None, batch_count=0, template=None,
+                 last_observers=None, last_dates=None, parent=None):
         super().__init__(parent)
         self.config = config
         self.station = station  # dict existant → mode édition
+        # dict SANS identifiants (cf. processing.duplicate) → mode duplication :
+        # on pré-remplit comme en édition mais on CRÉE une nouvelle station.
+        self.template = template if station is None else None
+        # Reprise de la saisie précédente : création vierge uniquement.
+        pure_creation = station is None and self.template is None
+        self.last_observers = last_observers if pure_creation else None
+        self.last_dates = last_dates if pure_creation else None
         # >0 → création en lot : ce formulaire fournit les métadonnées COMMUNES à
         # `batch_count` stations (une par géométrie sélectionnée). Nom laissé vide,
         # géométrie/surface/altitude propres à chacune (renseignées par l'appelant).
@@ -80,6 +96,7 @@ class StationDialog(QDialog):
         self.default_determiner = default_determiner
 
         # En édition, la géométrie et les habitats viennent de la station existante.
+        # En duplication, les habitats sont copiés mais la géométrie est la nouvelle.
         if station is not None:
             self.geom_wkt = geom_wkt if geom_wkt is not None else station.get("geom")
             self.geom_type = geom_type if geom_type is not None else station.get("geom_type")
@@ -87,10 +104,12 @@ class StationDialog(QDialog):
         else:
             self.geom_wkt = geom_wkt
             self.geom_type = geom_type
-            self.habitats = []
+            self.habitats = [dict(h) for h in (self.template or {}).get("habitats", [])]
 
         if station is not None:
             title = "Modifier la station"
+        elif self.template is not None:
+            title = "Nouvelle station OccHab (copie)"
         elif self.batch_count:
             title = "Nouvelles stations OccHab (lot)"
         else:
@@ -100,6 +119,11 @@ class StationDialog(QDialog):
 
     def _build(self):
         layout = QVBoxLayout(self)
+        # Tout le contenu va dans une zone défilante ; seuls les boutons de
+        # validation restent ancrés en bas (cf. `dialog_size`).
+        contenu = QWidget()
+        corps = QVBoxLayout(contenu)
+        corps.setContentsMargins(0, 0, 0, 0)
 
         if self.batch_count:
             banner = QLabel(
@@ -115,7 +139,7 @@ class StationDialog(QDialog):
                 "QLabel { background: #fff8e1; padding: 6px; "
                 "border: 1px solid #ffe082; border-radius: 3px; }"
             )
-            layout.addWidget(banner)
+            corps.addWidget(banner)
 
         self.station_form = StationForm(
             self.config,
@@ -124,20 +148,24 @@ class StationDialog(QDialog):
             current_observer=self.current_observer,
             datasets=self.datasets,
             defaults=self.station_defaults,
+            last_observers=self.last_observers,
+            last_dates=self.last_dates,
         )
         if self.station is not None:
             self.station_form.set_data(self.station)
+        elif self.template is not None:
+            self.station_form.set_data(self.template, repris=True)
         self.station_form.set_geometry(self.geom_wkt, self.geom_type, self.geo_metrics)
         if self.batch_count:  # nom propre à chaque station → laissé vide en lot
             self.station_form.edit_name.setEnabled(False)
             self.station_form.edit_name.setPlaceholderText("Laissé vide (création en lot)")
-        layout.addWidget(self.station_form)
+        corps.addWidget(self.station_form)
 
         separator = QFrame()
         separator.setFrameShape(QFrame.Shape.HLine)
-        layout.addWidget(separator)
+        corps.addWidget(separator)
 
-        layout.addWidget(QLabel(
+        corps.addWidget(QLabel(
             "Habitats de la station (double-clic pour éditer ; "
             "Ctrl/Maj pour en sélectionner plusieurs) :"
         ))
@@ -146,10 +174,14 @@ class StationDialog(QDialog):
         self.list_habitats.setSelectionMode(
             QAbstractItemView.SelectionMode.ExtendedSelection
         )
+        # Bornée : une liste extensible dans une zone défilante donnerait deux
+        # ascenseurs imbriqués.
+        self.list_habitats.setMinimumHeight(90)
+        self.list_habitats.setMaximumHeight(220)
         self.list_habitats.itemDoubleClicked.connect(
             lambda item: self._edit_habitat(self.list_habitats.row(item))
         )
-        layout.addWidget(self.list_habitats)
+        corps.addWidget(self.list_habitats)
         for habitat in self.habitats:
             self.list_habitats.addItem(self._habitat_label(habitat))
 
@@ -161,12 +193,17 @@ class StationDialog(QDialog):
         row.addWidget(btn_add)
         row.addWidget(btn_remove)
         row.addStretch(1)
-        layout.addLayout(row)
+        corps.addLayout(row)
 
+        layout.addWidget(rendre_defilant(contenu), 1)
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
         buttons.accepted.connect(self._on_ok)
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        ajuster_a_l_ecran(self)
 
     # ------------------------------------------------------------ habitats
     @staticmethod

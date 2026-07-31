@@ -19,6 +19,8 @@ from qgis.PyQt.QtWidgets import (
     QVBoxLayout,
 )
 
+from .dialog_size import ajuster_a_l_ecran
+
 
 class ServerStationPicker(QDialog):
     """Sélecteur texte de stations serveur (récupération vers la base locale)."""
@@ -27,7 +29,7 @@ class ServerStationPicker(QDialog):
         """`stations` : liste de dicts {id_station, habitat, date, observer}."""
         super().__init__(parent)
         self.setWindowTitle("Récupérer du serveur")
-        self.resize(480, 440)
+        self._taille_voulue = (480, 440)
 
         layout = QVBoxLayout(self)
         intro = QLabel(
@@ -101,3 +103,7 @@ class ServerStationPicker(QDialog):
                 except (TypeError, ValueError):
                     pass
         return ids
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        ajuster_a_l_ecran(self, *self._taille_voulue)
