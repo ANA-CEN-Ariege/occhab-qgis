@@ -248,16 +248,21 @@ class Grille:
         self._modifies = set()
 
     # ------------------------------------------------------- cohérence
-    def recouvrements_incoherents(self):
+    def recouvrements_incoherents(self, stations=None):
         """Stations dont la somme des recouvrements s'écarte de 100 %.
 
         Exigence du cahier des charges N2000 pour un polygone en mosaïque. Les
         stations dont aucun habitat n'a de recouvrement sont ignorées : ne pas
         avoir renseigné n'est pas une incohérence.
+
+        `stations` restreint le contrôle à un sous-ensemble. Sans lui, toute la
+        grille est passée en revue — et l'utilisateur se voyait réclamer un
+        arbitrage sur des stations qu'il n'avait pas touchées, à chaque
+        enregistrement.
         """
         champ = ch.par_cle(ch.HABITAT, "recouvrement")
         fautives = []
-        for station in self.stations:
+        for station in (self.stations if stations is None else stations):
             habitats = station.get("habitats") or []
             valeurs = [ch.lire(h, champ) for h in habitats]
             renseignees = [v for v in valeurs if isinstance(v, (int, float))]

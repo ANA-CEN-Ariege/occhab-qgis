@@ -21,6 +21,7 @@ from qgis.PyQt.QtWidgets import (
     QMessageBox,
     QPushButton,
     QScrollArea,
+    QSizePolicy,
     QTableWidget,
     QTableWidgetItem,
     QToolButton,
@@ -31,6 +32,7 @@ from qgis.PyQt.QtWidgets import (
 from ..database.sqlite_local import BROUILLON, VALIDE, OccHabDatabase
 from ..processing.duplicate import station_template
 from .connection_dialog import ConnectionDialog
+from .flow_layout import widget_reflowable
 from .station_dialog import StationDialog
 from .station_layers import StationLayerManager
 from .server_layers import ServerStationLayerManager
@@ -161,6 +163,10 @@ class OccHabDockWidget(QDockWidget):
         det_v.addLayout(row_jdd)
 
         self.check_only_mine = QCheckBox("N'afficher que mes stations serveur")
+        # Libellé long : sans cela il impose sa largeur au panneau entier.
+        self.check_only_mine.setSizePolicy(
+            QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred
+        )
         self.check_only_mine.setEnabled(False)  # activé une fois connecté (JDD chargés)
         self.check_only_mine.setToolTip(
             "Sur la carte serveur, ne montrer que les stations dont je suis le "
@@ -227,16 +233,16 @@ class OccHabDockWidget(QDockWidget):
         )
         self.btn_delete.clicked.connect(self.delete_selected)
         self.btn_delete.setStyleSheet("QToolButton { color: #b23125; }")
-        row_actions = QHBoxLayout()
-        row_actions.setSpacing(3)
-        row_actions.setContentsMargins(0, 0, 0, 0)
-        row_actions.addWidget(self.btn_edit)
-        row_actions.addWidget(self.btn_geom)
-        row_actions.addWidget(self.btn_zoom)
-        row_actions.addWidget(self.btn_table)
-        row_actions.addStretch(1)
-        row_actions.addWidget(self.btn_delete)
-        layout.addLayout(row_actions)
+        # Disposition qui replie : une QHBoxLayout aurait imposé sa largeur
+        # (547 px mesurés) au panneau entier et fait couper le contenu dès que
+        # le dock est rétréci. Les boutons gardent ici leurs libellés et passent
+        # à la ligne. « Supprimer » perd sa mise à l'écart par un ressort — sa
+        # couleur rouge reste sa marque distinctive.
+        layout.addWidget(widget_reflowable(
+            [self.btn_edit, self.btn_geom, self.btn_zoom, self.btn_table,
+             self.btn_delete],
+            spacing=3,
+        ))
 
         self.table = QTableWidget(0, 3)
         # « Statut » = où en est le travail ; « synchro » = où en est l'envoi.
@@ -320,6 +326,12 @@ class OccHabDockWidget(QDockWidget):
         db_path = str(self.db.db_path)
         self.label_db = QLabel("Base locale : %s" % os.path.basename(db_path))
         self.label_db.setToolTip(db_path)
+        # Sans cela ce libellé impose sa largeur entière au panneau (400 px) et
+        # fait couper le pied dès qu'on rétrécit le dock. Le chemin complet reste
+        # dans l'infobulle.
+        self.label_db.setSizePolicy(
+            QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred
+        )
         footer.addWidget(self.label_db)
         footer.addStretch(1)
         btn_storage = QPushButton("Base locale…")
@@ -344,6 +356,10 @@ class OccHabDockWidget(QDockWidget):
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.Shape.NoFrame)
+        # Filet de sécurité : sous cette largeur, un ascenseur horizontal apparaît
+        # au lieu de couper le contenu. Au-dessus, tout doit tenir de lui-même —
+        # c'est le rôle de la barre d'actions repliable et des libellés élidables.
+        container.setMinimumWidth(220)
         scroll.setWidget(container)
         self.setWidget(scroll)
         self._update_conn_summary()
@@ -567,7 +583,13 @@ class OccHabDockWidget(QDockWidget):
             if id_dataset is not None:
                 self.combo_jdd.addItem(str(name), id_dataset)
         if self.combo_jdd.count() > 1:
-            self.combo_jdd.setCurrentIndex(1)  # premier JDD réel par défaut
+            # Restaurer le JDD choisi précédemment. Il est enregistré à chaque
+            # changement (`_on_jdd_changed`) mais n'était jamais relu : toute
+            # reconnexion basculait sur le premier JDD de la liste, et si les
+            # stations locales étaient ailleurs, le panneau paraissait VIDE.
+            memorise = self.config.get("id_dataset")
+            index = self.combo_jdd.findData(memorise) if memorise is not None else -1
+            self.combo_jdd.setCurrentIndex(index if index > 0 else 1)
         self.combo_jdd.blockSignals(False)
         self.combo_jdd.setEnabled(self.combo_jdd.count() > 1)
         self.check_only_mine.setEnabled(self.combo_jdd.count() > 1)
@@ -1548,10 +1570,14 @@ class OccHabDockWidget(QDockWidget):
         # les désigne par une clé unique, sans distinguer station et habitat.
         nomenclatures = dict(self._station_nomenclatures())
         nomenclatures.update(self._habitat_nomenclatures())
-        if self._table_dialog is not None:  # déjà ouverte : la ramener au premier plan
-            self._table_dialog.raise_()
-            self._table_dialog.activateWindow()
-            return
+        if self._table_dialog is not None:
+            if self._table_dialog.isVisible():  # déjà ouverte : au premier plan
+                self._table_dialog.raise_()
+                self._table_dialog.activateWindow()
+                return
+            # Fermée sans nous prévenir : la référence périmée rendait le bouton
+            # inopérant. On la jette et on rouvre une fenêtre neuve.
+            self._table_dialog = None
         dialog = AttributeTableDialog(
             self.db,
             stations,

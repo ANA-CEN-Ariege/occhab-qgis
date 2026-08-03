@@ -3,7 +3,7 @@ name=OccHab GeoNature
 qgisMinimumVersion=3.28
 qgisMaximumVersion=3.99
 description=Offline-first data entry for GeoNature's OccHab module (habitat stations) from QGIS, with local SQLite storage and synchronisation to the GeoNature REST API.
-version=0.5.4
+version=0.5.5
 author=Cédric Roy
 email=it@ariegenature.fr
 license=GPL-3.0-or-later
@@ -32,7 +32,32 @@ icon=resources/icons/occhab.svg
 experimental=True
 deprecated=False
 
-changelog=0.5.4 - Correction : les stations validées dans la table restaient
+changelog=0.5.5 - Correction : le bouton « Tableau » ne rouvrait plus la table
+    après l'avoir fermée une fois. La fenêtre se masquait sans émettre le signal
+    de fermeture, le panneau gardait sa référence et le bouton devenait
+    inopérant jusqu'au rechargement du plugin. Défaut présent depuis la 0.5.1.
+    Le panneau ne se coupe plus à droite quand on le rétrécit. La barre
+    « Éditer / Géométrie / Zoom / Tableau / Supprimer » imposait à elle seule
+    547 pixels de large — plus qu'un panneau ancré courant — et tout ce qui
+    dépassait était coupé sans être atteignable. Ses boutons passent désormais à
+    la ligne en gardant leurs libellés, et les libellés longs du pied acceptent
+    de rétrécir : le panneau descend de 569 à 255 pixels.
+    Le jeu de données choisi est enfin retenu. Il était enregistré à chaque
+    changement mais jamais relu : toute reconnexion rebasculait sur le premier
+    JDD de la liste, et si les stations locales étaient ailleurs le panneau
+    paraissait vide alors que rien n'était perdu.
+    Moins de fenêtres à l'enregistrement d'un lot. La confirmation ne s'affiche
+    plus que si des valeurs déjà renseignées seraient remplacées — sans
+    écrasement, rien n'est écrit en base avant « Enregistrer » et les cellules
+    modifiées sont déjà signalées en orangé. L'avertissement de recouvrement ne
+    porte plus que sur les stations dont un habitat a changé : modifier un champ
+    de station ne peut pas altérer une somme de recouvrements, et il ressortait
+    jusqu'ici des stations incomplètes de longue date, sans rapport avec le lot.
+    La copie préalable de la base n'est faite qu'à partir de 5 stations, son
+    chemin part au journal plutôt que dans une boîte de dialogue, et seules les
+    5 dernières copies sont conservées — rien ne les supprimait, elles
+    s'accumulaient sans limite.
+    0.5.4 - Correction : les stations validées dans la table restaient
     affichées « Brouillon » dans la liste du dock. La table étant non modale
     depuis 0.5.1, elle peut rester ouverte des heures ; le dock ne se
     rafraîchissait qu'à sa fermeture et montrait donc l'état d'avant

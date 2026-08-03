@@ -509,6 +509,11 @@ class AttributeTableDialog(QDialog):
     #: l'interface afficherait sinon l'état d'avant le lot.
     donnees_enregistrees = pyqtSignal()
 
+    #: Nombre de stations à partir duquel la base est copiée avant écriture.
+    SEUIL_SAUVEGARDE = 5
+    #: Nombre de copies préalables conservées (les plus anciennes sont purgées).
+    SAUVEGARDES_CONSERVEES = 5
+
     def __init__(self, db, stations, contexte, layers=None, logger=None, parent=None):
         super().__init__(parent)
         self.setWindowTitle("OccHab — Stations et habitats")
@@ -749,7 +754,11 @@ class AttributeTableDialog(QDialog):
             QMessageBox.information(self, "OccHab", "Aucun champ coché : rien à appliquer.")
             return
         apercu = self.grille.previsualiser(lignes, valeurs)
-        if not self._confirmer(valeurs, apercu):
+        # Ne demander confirmation que si des valeurs déjà renseignées seraient
+        # remplacées : c'est la seule perte possible. Sans écrasement, la
+        # modification reste en mémoire, apparaît en orangé, et « Enregistrer »
+        # est de toute façon nécessaire — confirmer n'apportait rien.
+        if apercu["ecrasements"] and not self._confirmer(valeurs, apercu):
             return
         self.grille.appliquer(lignes, valeurs)
         self.model.rafraichir_tout()
@@ -801,7 +810,8 @@ class AttributeTableDialog(QDialog):
         # Une station validée sur laquelle on est revenu redevient un brouillon.
         self.grille.retrograder_statuts()
 
-        sauvegarde = self._sauvegarder_base()
+        sauvegarde = (self._sauvegarder_base()
+                      if len(modifiees) >= self.SEUIL_SAUVEGARDE else None)
         ecrites = echecs = disparues = 0
         for station in modifiees:
             try:
@@ -829,7 +839,10 @@ class AttributeTableDialog(QDialog):
         if echecs:
             message += " %d échec(s) — voir le journal." % echecs
         if sauvegarde:
-            message += "\nSauvegarde préalable : %s" % sauvegarde
+            # Le chemin complet part au journal : on n'en a besoin qu'au moment
+            # de restaurer, et le dossier s'ouvre depuis « Base locale… ».
+            message += ("\nUne copie de la base a été faite avant l'opération "
+                        "(menu « Base locale… »).")
         QMessageBox.information(self, "OccHab", message)
 
     def _ecrire_station(self, station):
@@ -874,8 +887,16 @@ class AttributeTableDialog(QDialog):
 
         Avertissement, pas blocage : une cartographie en cours de saisie est
         légitimement incomplète.
+
+        Restreint aux stations dont un HABITAT a changé : le recouvrement est un
+        champ d'habitat, modifier un champ de station ne peut pas en altérer la
+        somme. Sans ce filtre, changer « Nature de l'observation » faisait
+        ressortir des stations incomplètes de longue date, sans aucun rapport
+        avec le lot en cours.
         """
-        fautives = self.grille.recouvrements_incoherents()
+        concernees = [station for station in self.grille.modifications()
+                      if self.grille.habitats_modifies(station)]
+        fautives = self.grille.recouvrements_incoherents(concernees)
         if not fautives:
             return True
         apercu = "\n".join(
@@ -893,7 +914,10 @@ class AttributeTableDialog(QDialog):
         """Copier la base avant une écriture en masse. Renvoie le chemin, ou None.
 
         C'est la seule annulation réelle d'une modification portant sur des
-        dizaines de stations ; elle coûte une copie de fichier.
+        dizaines de stations ; elle coûte une copie de fichier. En dessous de
+        `SEUIL_SAUVEGARDE` stations on s'en passe : refaire la main quelques
+        corrections ne justifie pas une copie complète, et l'édition unitaire
+        depuis le formulaire n'en fait aucune non plus.
         """
         try:
             cible = self.db.db_path.with_name(
@@ -901,11 +925,32 @@ class AttributeTableDialog(QDialog):
                                         datetime.now().strftime("%Y%m%d-%H%M%S"))
             )
             shutil.copy2(str(self.db.db_path), str(cible))
+            if self.logger:
+                self.logger.info("Sauvegarde préalable : %s", cible)
+            self._purger_sauvegardes()
             return str(cible)
         except OSError as exc:
             if self.logger:
                 self.logger.warning("Sauvegarde préalable impossible : %s", exc)
             return None
+
+    def _purger_sauvegardes(self):
+        """Ne garder que les dernières copies préalables.
+
+        Rien ne les supprimait : une copie de la base entière s'accumulait à
+        chaque enregistrement, sans limite — alors que le journal de synchro et
+        les stations anciennes ont, eux, leur rétention.
+        """
+        try:
+            motif = "%s.avant-lot-*.db" % self.db.db_path.stem
+            copies = sorted(self.db.db_path.parent.glob(motif))
+            for ancienne in copies[:-self.SAUVEGARDES_CONSERVEES]:
+                ancienne.unlink()
+                if self.logger:
+                    self.logger.info("Ancienne sauvegarde supprimée : %s", ancienne)
+        except OSError as exc:
+            if self.logger:
+                self.logger.warning("Purge des sauvegardes impossible : %s", exc)
 
     # ------------------------------------------------------------- fermeture
     def closeEvent(self, event):
@@ -922,4 +967,8 @@ class AttributeTableDialog(QDialog):
             # Une fenêtre fermée ne doit plus réagir aux sélections carte, sinon
             # on manipulerait des widgets détruits.
             self.layers.remove_selection_listener(self._on_map_selection_changed)
-        event.accept()
+        # Indispensable : c'est `QDialog.closeEvent` qui appelle `reject()`, donc
+        # qui émet `finished`. Un simple `event.accept()` masquait la fenêtre sans
+        # prévenir personne : le dock gardait sa référence et le bouton
+        # « Tableau » ne rouvrait plus rien.
+        super().closeEvent(event)
