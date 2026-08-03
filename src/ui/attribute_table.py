@@ -67,6 +67,12 @@ _TEINTE_STATION = QBrush(QColor(120, 144, 156, 30))   # colonnes partagées
 _TEINTE_MODIFIE = QBrush(QColor(230, 145, 0, 70))     # même orangé que « à synchroniser »
 _SEPARATEUR_LISTE = " ; "
 
+# Édition en lot : le libellé annonce l'action *et* son ampleur, pour qu'on sache
+# combien de lignes partent avant d'ouvrir la fenêtre.
+LIBELLE_MODIFIER = "Modifier les lignes sélectionnées…"
+LIBELLE_MODIFIER_1 = "Modifier la ligne sélectionnée…"
+LIBELLE_MODIFIER_N = "Modifier les %d lignes sélectionnées…"
+
 
 class Contexte:
     """Libellés dont la grille a besoin pour afficher des identifiants.
@@ -356,7 +362,7 @@ class _ObservateursEdit(QListWidget):
 
 
 class AppliquerDialog(QDialog):
-    """Choisir les champs à pousser sur la sélection.
+    """Choisir les champs à modifier sur les lignes sélectionnées.
 
     Chaque champ a une case « modifier » décochée : sans elle, ouvrir la fenêtre
     et valider écraserait tout avec des valeurs vides.
@@ -364,14 +370,21 @@ class AppliquerDialog(QDialog):
 
     def __init__(self, contexte, nb_lignes, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Appliquer à la sélection")
+        self.setWindowTitle("Modifier les lignes sélectionnées")
         self.contexte = contexte
         self._editeurs = {}  # (niveau, cle) -> (case, widget, champ)
 
         layout = QVBoxLayout(self)
+        # La colonne de cases à cocher n'a pas d'en-tête : c'est ici qu'on dit
+        # à quoi elle sert.
+        cible = (
+            "La ligne sélectionnée recevra"
+            if nb_lignes == 1
+            else "Les %d lignes sélectionnées recevront" % nb_lignes
+        )
         entete = QLabel(
-            "%d ligne(s) sélectionnée(s). Cochez les champs à modifier ; les "
-            "autres sont laissés tels quels." % nb_lignes
+            "%s la même valeur pour chaque champ coché ci-dessous. Les champs "
+            "non cochés sont laissés tels quels." % cible
         )
         entete.setWordWrap(True)
         layout.addWidget(entete)
@@ -508,6 +521,7 @@ class AttributeTableDialog(QDialog):
     # -------------------------------------------------- sélection ↔ carte
     def _on_table_selection_changed(self):
         """Table → carte."""
+        self._maj_boutons_selection()  # avant le garde-fou : vrai même sans carte
         if self.layers is None:
             return
         ids = {ligne.station.get("id") for ligne in self._lignes_selectionnees()}
@@ -540,6 +554,8 @@ class AttributeTableDialog(QDialog):
             modele.select(selection, QItemSelectionModel.SelectionFlag.ClearAndSelect)
         finally:
             modele.blockSignals(False)
+        # Signaux bloqués : `_on_table_selection_changed` ne partira pas.
+        self._maj_boutons_selection()
 
     # ------------------------------------------------------------- UI
     def _build(self):
@@ -588,12 +604,26 @@ class AttributeTableDialog(QDialog):
         layout.addWidget(self.label_etat)
 
         pied = QHBoxLayout()
-        self.btn_appliquer = QPushButton("Appliquer à la sélection…")
+        self.btn_appliquer = QPushButton(LIBELLE_MODIFIER)
+        self.btn_appliquer.setToolTip(
+            "Remplir un ou plusieurs champs d'un coup sur toutes les lignes "
+            "sélectionnées (rien n'est écrit en base avant « Enregistrer »)."
+        )
+        self.btn_appliquer.setEnabled(False)
+        # Le libellé porte le nombre de lignes : sans largeur plancher, le bouton
+        # change de taille à chaque sélection et toute la barre saute.
+        self.btn_appliquer.setMinimumWidth(
+            self.btn_appliquer.fontMetrics().horizontalAdvance(
+                LIBELLE_MODIFIER_N % 999
+            )
+            + 24
+        )
         self.btn_appliquer.clicked.connect(self.appliquer_a_la_selection)
-        self.btn_valider = QPushButton("Valider la sélection")
+        self.btn_valider = QPushButton("Marquer comme validées")
         self.btn_valider.setToolTip(
             "Passer les stations sélectionnées de « Brouillon » à « Validé »."
         )
+        self.btn_valider.setEnabled(False)
         self.btn_valider.clicked.connect(self.valider_selection)
         pied.addWidget(self.btn_appliquer)
         pied.addWidget(self.btn_valider)
@@ -652,11 +682,29 @@ class AttributeTableDialog(QDialog):
             texte += "  ·  %d station(s) modifiée(s), non enregistrée(s)" % modifiees
         self.label_etat.setText(texte)
         self.btn_enregistrer.setEnabled(bool(modifiees))
+        # Couvre le changement de filtre et le changement de jeu de colonnes,
+        # qui recrée le modèle de sélection donc repart d'une sélection vide.
+        self._maj_boutons_selection()
+
+    def _maj_boutons_selection(self):
+        """Les actions de lot n'ont de sens qu'avec des lignes sélectionnées."""
+        nb = len(self._lignes_selectionnees())
+        if nb == 0:
+            self.btn_appliquer.setText(LIBELLE_MODIFIER)
+        elif nb == 1:
+            self.btn_appliquer.setText(LIBELLE_MODIFIER_1)
+        else:
+            self.btn_appliquer.setText(LIBELLE_MODIFIER_N % nb)
+        self.btn_appliquer.setEnabled(bool(nb))
+        self.btn_valider.setEnabled(bool(nb))
 
     # ------------------------------------------------------------- sélection
     def _lignes_selectionnees(self):
+        modele = self.table.selectionModel()
+        if modele is None:  # appelé avant le premier setModel
+            return []
         lignes, vus = [], set()
-        for index in self.table.selectionModel().selectedIndexes():
+        for index in modele.selectedIndexes():
             source = self.proxy.mapToSource(index).row()
             if source not in vus:
                 vus.add(source)
@@ -703,7 +751,7 @@ class AttributeTableDialog(QDialog):
             ]
         message += ["", "Rien n'est écrit en base avant « Enregistrer »."]
         return QMessageBox.question(
-            self, "Appliquer à la sélection", "\n".join(message)
+            self, "Modifier les lignes sélectionnées", "\n".join(message)
         ) == QMessageBox.StandardButton.Yes
 
     def valider_selection(self):

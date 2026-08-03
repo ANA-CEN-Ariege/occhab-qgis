@@ -9,8 +9,8 @@ grille éditable en aurait fait cinq. Ce module le décrit **une seule fois**, e
 fournit les deux accesseurs qui savent où la valeur est réellement rangée.
 
 En sortent, sans duplication : les colonnes et éditeurs de la table attributaire,
-la liste des champs de « appliquer à la sélection », les colonnes d'export, et à
-terme les widgets des formulaires.
+la liste des champs de « modifier les lignes sélectionnées », les colonnes
+d'export, et à terme les widgets des formulaires.
 
 Trois stockages coexistent, hérités des contraintes d'OccHab :
 
@@ -211,11 +211,14 @@ def par_cle(niveau, cle):
 
 
 def modifiables_en_masse(niveau=None):
-    """Champs que « appliquer à la sélection » a le droit de toucher.
+    """Champs que « modifier les lignes sélectionnées » a le droit de toucher.
 
-    En sont exclus ceux qui identifient un objet (cd_hab, nom cité), ceux qui
-    sont calculés (surface, altitude) et les textes libres — écraser d'un coup
-    le commentaire de 40 stations n'a pas de sens.
+    En sont exclus les champs calculés ou mesurés au cas par cas (surface,
+    altitudes, profondeurs), l'état de synchronisation, et les textes libres
+    propres à un objet (commentaire, précision technique) — écraser d'un coup le
+    commentaire de 40 stations n'a pas de sens. La détermination (nom cité +
+    cd_hab), elle, est bien modifiable en lot : les deux champs sont poussés
+    ensemble par la recherche HABREF de la fenêtre.
     """
     return [
         champ for champ in CHAMPS

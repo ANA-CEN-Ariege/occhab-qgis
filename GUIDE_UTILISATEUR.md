@@ -555,7 +555,7 @@ l'ordinateur lâche. En contrepartie, ce que voient vos collègues sur GeoNature
 peut être du travail en cours — d'où l'intérêt de valider dès que c'est abouti.
 
 Vous changez le statut dans le formulaire de la station (liste **« Statut »**),
-ou pour tout un lot depuis la table (**« Valider la sélection »**).
+ou pour tout un lot depuis la table (**« Marquer comme validées »**).
 
 ### La table des stations et habitats
 
@@ -572,12 +572,13 @@ habitats occupe trois lignes ; ses informations de station y sont répétées.
   retrouver leurs lignes ici, ou l'inverse. Une station en mosaïque voit **toutes
   ses lignes d'habitats** sélectionnées.
 - **Les observateurs** ne se saisissent **pas dans une cellule** (c'est une liste,
-  pas une valeur) mais se posent en lot : **« Appliquer à la sélection… »**,
-  champ *Observateurs*, cochez l'équipe. Cocher le champ sans retenir personne
-  **efface** les observateurs des stations visées.
+  pas une valeur) mais se posent en lot : **« Modifier les lignes
+  sélectionnées… »**, champ *Observateurs*, cochez l'équipe. Cocher le champ sans
+  retenir personne **efface** les observateurs des stations visées.
 - **Corriger une détermination sur tout un lot** : sélectionnez les lignes, puis
-  **« Appliquer à la sélection… »** et servez-vous du champ **« Nom cité »**, qui
-  propose la **recherche HABREF**. Choisir un habitat coche et remplit à la fois
+  **« Modifier les lignes sélectionnées… »** et servez-vous du champ
+  **« Nom cité »**, qui propose la **recherche HABREF**. Choisir un habitat
+  coche et remplit à la fois
   le **nom cité** et le **cd_hab** — ils ne peuvent pas être dissociés, sans quoi
   vous laisseriez des habitats dont le code ne correspond plus au nom.
 
@@ -586,10 +587,11 @@ habitats occupe trois lignes ; ses informations de station y sont répétées.
 > polygone**. L'infobulle vous le rappelle.
 
 **Modifier plusieurs lignes d'un coup** — sélectionnez les lignes (Ctrl / Maj),
-puis **« Appliquer à la sélection… »**. Cochez les champs à modifier ; les autres
-restent tels quels. Un récapitulatif vous dit combien de stations et d'habitats
-sont concernés et, surtout, **combien de valeurs déjà renseignées seront
-remplacées**.
+puis **« Modifier les N lignes sélectionnées… »** : le bouton affiche le nombre
+de lignes visées, et reste grisé tant que vous n'avez rien sélectionné. Cochez
+les champs à modifier ; les autres restent tels quels. Un récapitulatif vous dit
+combien de stations et d'habitats sont concernés et, surtout, **combien de
+valeurs déjà renseignées seront remplacées**.
 
 **Rien n'est écrit tant que vous n'avez pas cliqué « Enregistrer ».** Les
 cellules modifiées apparaissent en orangé. À l'enregistrement, le plugin :

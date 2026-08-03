@@ -31,5 +31,3 @@ htmlcov/
 # Packaging (ZIP généré par package.py)
 dist/
 
-# Outillage local Claude Code
-.claude/

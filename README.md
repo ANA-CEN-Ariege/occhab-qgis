@@ -541,8 +541,10 @@ du JDD courant, **une ligne par habitat** — la géométrie et les champs stati
 - **Édition en place**, éditeur adapté au type déclaré dans le registre de champs.
 - Un champ **station** modifié sur une ligne l'est **pour toutes ses lignes
   sœurs** : les colonnes station sont teintées et le signalent en infobulle.
-- **« Appliquer à la sélection… »** pousse les mêmes valeurs sur un lot ; chaque
-  champ a une case à cocher, sinon valider écraserait tout avec du vide.
+- **« Modifier les lignes sélectionnées… »** pousse les mêmes valeurs sur un lot ;
+  chaque champ a une case à cocher, sinon valider écraserait tout avec du vide.
+  Le bouton porte le nombre de lignes visées et reste grisé sans sélection : le
+  libellé « Appliquer à la sélection… » ne disait pas ce qu'il appliquait.
   L'**identité de l'habitat** (`cd_hab` + `nom_cite`) s'y modifie via une
   **recherche HABREF** (composant `ui/habref_widget.py`, partagé avec le
   formulaire) : choisir un habitat coche et renseigne **les deux champs**, un
@@ -550,7 +552,7 @@ du JDD courant, **une ligne par habitat** — la géométrie et les champs stati
   En revanche, l'édition **cellule par cellule** du nom cité reste du texte
   libre — c'est le champ « nom *cité* », qui peut légitimement s'écarter du
   libellé HABREF.
-- **« Valider la sélection »** passe les stations de brouillon à validé.
+- **« Marquer comme validées »** passe les stations de brouillon à validé.
 - Le registre distingue **`cellule`** (saisissable dans une cellule) de
   **`masse`** (modifiable en lot) : les observateurs, liste multi-valuée, sont
   `cellule=False` mais bien modifiables en masse. Les confondre les rendait

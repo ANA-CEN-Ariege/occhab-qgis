@@ -19,12 +19,11 @@ import zipfile
 HERE = os.path.dirname(os.path.abspath(__file__))
 TOP = "occhab"  # dossier racine dans le ZIP
 
-# Dossiers exclus (à n'importe quel niveau). `.claude` porte de la configuration
-# d'outillage locale (chemins du poste, permissions) : elle n'a rien à faire dans
-# un paquet distribué.
+# Dossiers exclus (à n'importe quel niveau). Tout dossier dont le nom commence par
+# un point est écarté d'office : ce sont des configurations d'outillage local
+# (chemins du poste, préférences d'éditeur), sans objet dans un paquet distribué.
 EXCLUDE_DIRS = {
-    "__pycache__", ".git", ".github", ".vscode", ".idea", ".pytest_cache",
-    ".claude", "htmlcov", ".venv", "venv", "env", "dist", "memory", "tests",
+    "__pycache__", "htmlcov", "venv", "env", "dist", "memory", "tests",
 }
 # Motifs de fichiers exclus.
 EXCLUDE_GLOBS = [
@@ -57,7 +56,10 @@ def main():
     count = 0
     with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as zf:
         for root, dirs, files in os.walk(HERE):
-            dirs[:] = [d for d in dirs if d not in EXCLUDE_DIRS]
+            dirs[:] = [
+                d for d in dirs
+                if d not in EXCLUDE_DIRS and not d.startswith(".")
+            ]
             for filename in files:
                 if _excluded_file(filename):
                     continue

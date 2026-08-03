@@ -3,7 +3,7 @@ name=OccHab GeoNature
 qgisMinimumVersion=3.28
 qgisMaximumVersion=3.99
 description=Offline-first data entry for GeoNature's OccHab module (habitat stations) from QGIS, with local SQLite storage and synchronisation to the GeoNature REST API.
-version=0.5.2
+version=0.5.3
 author=Cédric Roy
 email=it@ariegenature.fr
 license=GPL-3.0-or-later
@@ -32,7 +32,18 @@ icon=resources/icons/occhab.svg
 experimental=True
 deprecated=False
 
-changelog=0.5.2 - Correction : l'extension 0.5.1 était impossible à installer
+changelog=0.5.3 - Libellés de la table clarifiés. « Appliquer à la sélection… »
+    ne disait pas ce qu'il appliquait : le bouton devient « Modifier les N lignes
+    sélectionnées… », annonce le nombre de lignes visées et reste grisé tant que
+    rien n'est sélectionné — le premier clic ne sert plus à découvrir qu'il faut
+    d'abord sélectionner des lignes. Une infobulle décrit l'action et rappelle que
+    rien n'est écrit avant « Enregistrer ». « Valider la sélection », qui se lisait
+    comme un « confirmer » alors qu'il change le statut métier, devient « Marquer
+    comme validées » et se grise lui aussi sans sélection. La fenêtre d'édition en
+    lot et sa confirmation reprennent le même vocabulaire ; son en-tête dit
+    désormais à quoi servent les cases à cocher, qui n'ont pas d'en-tête de
+    colonne pour l'expliquer.
+    0.5.2 - Correction : l'extension 0.5.1 était impossible à installer
     (« There were errors reading plugin package »). QGIS lit metadata.txt avec
     configparser en mode interpolation, où « %% » est un caractère spécial : un
     « 100 %% » du changelog suffisait à faire échouer l'analyse du paquet. Le
