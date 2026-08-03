@@ -2,16 +2,19 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 
 """Dialogues de saisie : une station et ses habitats (création et édition)."""
+from qgis.PyQt.QtCore import Qt
 from qgis.PyQt.QtWidgets import (
     QAbstractItemView,
     QDialog,
     QDialogButtonBox,
     QFrame,
     QHBoxLayout,
+    QHeaderView,
     QLabel,
-    QListWidget,
     QMessageBox,
     QPushButton,
+    QTreeWidget,
+    QTreeWidgetItem,
     QVBoxLayout,
     QWidget,
 )
@@ -28,6 +31,11 @@ _HAB_KEEP_KEYS = ("id_habitat", "unique_id_sinp_hab")
 class _FormDialog(QDialog):
     """Enveloppe un formulaire (`.validate()` / `.get_data()`) dans un OK / Annuler."""
 
+    #: Taille d'ouverture SOUHAITÉE, bornée ensuite à l'écran. Sans elle, la
+    #: fenêtre s'ouvre à son `sizeHint()` — lequel a fondu quand on a borné la
+    #: largeur des listes déroulantes, au point d'imposer un double défilement.
+    TAILLE_VOULUE = (720, 780)
+
     def __init__(self, form, title, parent=None):
         super().__init__(parent)
         self.setWindowTitle(title)
@@ -43,7 +51,7 @@ class _FormDialog(QDialog):
 
     def showEvent(self, event):
         super().showEvent(event)
-        ajuster_a_l_ecran(self)
+        ajuster_a_l_ecran(self, *self.TAILLE_VOULUE)
 
     def _on_ok(self):
         ok, msg = self.form.validate()
@@ -66,8 +74,12 @@ class StationDialog(QDialog):
                  user_names=None, default_determiner=None, datasets=None,
                  geo_metrics=None, station_defaults=None, habitat_defaults=None,
                  abundance_cover_map=None, batch_count=0, template=None,
-                 last_observers=None, last_dates=None, parent=None):
+                 last_observers=None, last_dates=None, habref_cd_typo=None,
+                 parent=None):
         super().__init__(parent)
+        # Typologie HABREF de la dernière saisie, reprise puis renvoyée à
+        # l'appelant qui la persiste (même principe que les observateurs).
+        self.habref_cd_typo = habref_cd_typo
         self.config = config
         self.station = station  # dict existant → mode édition
         # dict SANS identifiants (cf. processing.duplicate) → mode duplication :
@@ -165,25 +177,45 @@ class StationDialog(QDialog):
         separator.setFrameShape(QFrame.Shape.HLine)
         corps.addWidget(separator)
 
-        corps.addWidget(QLabel(
+        # Libellé long : sans retour à la ligne il imposait sa largeur entière
+        # à la fenêtre, qui devait alors défiler horizontalement.
+        legende = QLabel(
             "Habitats de la station (double-clic pour éditer ; "
             "Ctrl/Maj pour en sélectionner plusieurs) :"
-        ))
-        self.list_habitats = QListWidget()
+        )
+        legende.setWordWrap(True)
+        corps.addWidget(legende)
+        # Deux colonnes : le nom cité à gauche, le recouvrement aligné à droite.
+        # Le cd_hab n'y figure plus — il est déjà dans le formulaire de l'habitat
+        # et n'aide pas à relire une station d'un coup d'œil.
+        self.list_habitats = QTreeWidget()
+        self.list_habitats.setColumnCount(2)
+        self.list_habitats.setHeaderLabels(["Habitat (nom cité)", "Recouvrement"])
+        self.list_habitats.setRootIsDecorated(False)
+        self.list_habitats.setUniformRowHeights(True)
+        entete = self.list_habitats.header()
+        # Sans cela, la DERNIÈRE colonne s'étire par défaut et avale la place :
+        # « Recouvrement » occupait 374 px pendant que le nom cité était rogné.
+        entete.setStretchLastSection(False)
+        entete.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        entete.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
         # Multi-sélection (Ctrl/Maj) pour retirer plusieurs habitats d'un coup.
         self.list_habitats.setSelectionMode(
             QAbstractItemView.SelectionMode.ExtendedSelection
         )
-        # Bornée : une liste extensible dans une zone défilante donnerait deux
-        # ascenseurs imbriqués.
-        self.list_habitats.setMinimumHeight(90)
-        self.list_habitats.setMaximumHeight(220)
         self.list_habitats.itemDoubleClicked.connect(
-            lambda item: self._edit_habitat(self.list_habitats.row(item))
+            lambda item, _c: self._edit_habitat(
+                self.list_habitats.indexOfTopLevelItem(item)
+            )
         )
         corps.addWidget(self.list_habitats)
-        for habitat in self.habitats:
-            self.list_habitats.addItem(self._habitat_label(habitat))
+
+        # Somme des recouvrements : l'exigence N2000 est 100 % par polygone, et
+        # jusqu'ici il fallait additionner de tête habitat par habitat.
+        self.label_recouvrement = QLabel()
+        self.label_recouvrement.setWordWrap(True)
+        corps.addWidget(self.label_recouvrement)
+        self._rafraichir_habitats()
 
         row = QHBoxLayout()
         btn_add = QPushButton("Ajouter un habitat")
@@ -201,21 +233,82 @@ class StationDialog(QDialog):
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
 
+    #: Cf. `_FormDialog.TAILLE_VOULUE` : la station porte en plus la liste des
+    #: habitats, d'où une fenêtre un peu plus haute.
+    TAILLE_VOULUE = (780, 860)
+
     def showEvent(self, event):
         super().showEvent(event)
-        ajuster_a_l_ecran(self)
+        ajuster_a_l_ecran(self, *self.TAILLE_VOULUE)
 
     # ------------------------------------------------------------ habitats
+    #: Au-delà, la liste défile : une station en mosaïque dépasse rarement 10
+    #: habitats, et une fenêtre sans fin serait pire que le défilement.
+    LIGNES_VISIBLES_MAX = 10
+    RECOUVREMENT_TOTAL = 100
+
     @staticmethod
     def _habitat_label(habitat):
-        label = "cd_hab %s — %s" % (habitat.get("cd_hab"), habitat.get("nom_cite") or "")
-        recovery = habitat.get("recovery_percentage")
-        if isinstance(recovery, (int, float)) and recovery:  # 0 / None = non renseigné
-            label += " — %g %% de recouvrement" % recovery
-        return label
+        """Nom cité seul — utilisé aussi par les messages de confirmation."""
+        return habitat.get("nom_cite") or "habitat sans nom"
+
+    @staticmethod
+    def _recouvrement_texte(habitat):
+        recouvrement = habitat.get("recovery_percentage")
+        if isinstance(recouvrement, (int, float)) and recouvrement:  # 0/None = vide
+            return "%g %%" % recouvrement
+        return "—"
+
+    def _rafraichir_habitats(self):
+        """Reconstruire la liste, ajuster sa hauteur et le total des recouvrements."""
+        self.list_habitats.clear()
+        for habitat in self.habitats:
+            item = QTreeWidgetItem([
+                self._habitat_label(habitat), self._recouvrement_texte(habitat)
+            ])
+            item.setTextAlignment(1, Qt.AlignmentFlag.AlignRight
+                                  | Qt.AlignmentFlag.AlignVCenter)
+            self.list_habitats.addTopLevelItem(item)
+        self._ajuster_hauteur_habitats()
+        self._maj_total_recouvrement()
+
+    def _ajuster_hauteur_habitats(self):
+        """Montrer tous les habitats sans défilement, dans la limite fixée."""
+        lignes = max(1, min(len(self.habitats) or 1, self.LIGNES_VISIBLES_MAX))
+        hauteur_ligne = self.list_habitats.sizeHintForRow(0) if self.habitats else 22
+        if hauteur_ligne <= 0:
+            hauteur_ligne = 22
+        entete = self.list_habitats.header().height()
+        hauteur = lignes * hauteur_ligne + entete + 2 * self.list_habitats.frameWidth()
+        self.list_habitats.setMinimumHeight(hauteur)
+        self.list_habitats.setMaximumHeight(hauteur)
+
+    def _maj_total_recouvrement(self):
+        """Afficher la somme des recouvrements, colorée selon l'exigence N2000."""
+        valeurs = [
+            h.get("recovery_percentage") for h in self.habitats
+            if isinstance(h.get("recovery_percentage"), (int, float))
+            and h.get("recovery_percentage")
+        ]
+        if not valeurs:
+            # Ne rien renseigner n'est pas une erreur : une saisie peut être en
+            # cours. On le dit sans alarmer.
+            self.label_recouvrement.setText("Recouvrement non renseigné.")
+            self.label_recouvrement.setStyleSheet("color: palette(mid);")
+            return
+        total = sum(valeurs)
+        if abs(total - self.RECOUVREMENT_TOTAL) < 0.01:
+            self.label_recouvrement.setText("Total : 100 %  ✓")
+            self.label_recouvrement.setStyleSheet("color: #1b5e20; font-weight: 600;")
+            return
+        ecart = self.RECOUVREMENT_TOTAL - total
+        manque = ("il manque %g %%" % ecart if ecart > 0
+                  else "dépassement de %g %%" % -ecart)
+        self.label_recouvrement.setText("Total : %g %%  —  %s" % (total, manque))
+        self.label_recouvrement.setStyleSheet("color: #b26a00; font-weight: 600;")
 
     def _new_habitat_form(self):
-        return HabitatForm(
+        form = HabitatForm(
             self.habitat_nomenclatures,
             self.habref_search,
             typologies=self.habref_typologies,
@@ -223,14 +316,21 @@ class StationDialog(QDialog):
             default_determiner=self.default_determiner,
             defaults=self.habitat_defaults,
             abundance_cover_map=self.abundance_cover_map,
+            cd_typo=self.habref_cd_typo,
         )
+        # Le prochain habitat de CETTE station reprend la typologie qu'on vient
+        # de choisir, sans attendre l'enregistrement.
+        form.habref.combo_typo.currentIndexChanged.connect(
+            lambda _i, f=form: setattr(self, "habref_cd_typo", f.habref.typologie())
+        )
+        return form
 
     def add_habitat(self):
         dialog = _FormDialog(self._new_habitat_form(), "Nouvel habitat", self)
         if dialog.exec():
             data = dialog.get_data()
             self.habitats.append(data)
-            self.list_habitats.addItem(self._habitat_label(data))
+            self._rafraichir_habitats()
 
     def _edit_habitat(self, row):
         if row < 0 or row >= len(self.habitats):
@@ -245,11 +345,12 @@ class StationDialog(QDialog):
                 if self.habitats[row].get(key):
                     edited[key] = self.habitats[row][key]
             self.habitats[row] = edited
-            self.list_habitats.item(row).setText(self._habitat_label(edited))
+            self._rafraichir_habitats()
 
     def remove_habitat(self):
         rows = sorted(
-            {self.list_habitats.row(item) for item in self.list_habitats.selectedItems()},
+            {self.list_habitats.indexOfTopLevelItem(item)
+             for item in self.list_habitats.selectedItems()},
             reverse=True,  # décroissant → les indices restent valides pendant la suppression
         )
         if not rows:
@@ -265,8 +366,8 @@ class StationDialog(QDialog):
         if QMessageBox.question(self, "Retirer l'habitat", question) != QMessageBox.StandardButton.Yes:
             return
         for row in rows:
-            self.list_habitats.takeItem(row)
             del self.habitats[row]
+        self._rafraichir_habitats()
 
     # --------------------------------------------------------------- OK
     def _on_ok(self):

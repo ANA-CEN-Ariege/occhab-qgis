@@ -28,10 +28,12 @@ DEFAULT_CONFIG = {
     },
     "local_db": {"path": None},  # renseigné à l'initialisation
     "id_dataset": None,  # JDD par défaut pour la saisie
-    # Reprise de la saisie précédente : observateurs seulement. Les dates ne sont
-    # PAS persistées ici — elles ne valent que pour la session QGIS en cours (au
-    # redémarrage on repart d'aujourd'hui plutôt que d'une date périmée).
-    "last_entry": {"observers": []},
+    # Reprise de la saisie précédente : observateurs et typologie HABREF. Les
+    # dates ne sont PAS persistées ici — elles ne valent que pour la session QGIS
+    # en cours (au redémarrage on repart d'aujourd'hui plutôt que d'une date
+    # périmée). La typologie, elle, ne se périme pas : une campagne se mène dans
+    # une même typologie (CORINE, EUNIS…).
+    "last_entry": {"observers": [], "cd_typo": None},
     "projection": "EPSG:2154",
     "auto_sync_interval": 300,
 }

@@ -36,6 +36,8 @@ from ..processing.referentiels import (
     STATUTS_VALIDATION,
     UNITES_VEGETALES,
 )
+from .dialog_size import borner_largeur_combos
+from .no_wheel import proteger_du_defilement
 
 
 class StationForm(QWidget):
@@ -105,6 +107,11 @@ class StationForm(QWidget):
         self.date_max = QDateEdit(QDate.currentDate())
         self.date_max.setCalendarPopup(True)
         form.addRow("Date fin", self.date_max)
+        # Le cas courant est une observation d'un seul jour : poser la date de
+        # début aligne la date de fin. Elle reste modifiable ensuite pour couvrir
+        # une période. Signal branché APRÈS la construction des deux champs, et
+        # neutralisé pendant les chargements programmés (`_charger_dates`).
+        self.date_min.dateChanged.connect(self._on_date_min_changed)
 
         # Mention visible de ce qui a été repris : une date héritée en silence
         # serait une erreur de donnée difficile à repérer après coup.
@@ -235,6 +242,11 @@ class StationForm(QWidget):
 
         form.addRow(self.details)
         self._set_details_visible(False)  # replié par défaut
+        # La molette ne doit jamais modifier une valeur : c'est ainsi qu'une
+        # altitude maximale avait été décrémentée sans que personne le voie.
+        self._filtre_molette = proteger_du_defilement(self)
+        # Les listes déroulantes ne doivent pas imposer leur largeur au dialogue.
+        borner_largeur_combos(self)
 
     def _set_details_visible(self, visible):
         self.details.setVisible(visible)
@@ -245,16 +257,38 @@ class StationForm(QWidget):
     def _toggle_details(self):
         self._set_details_visible(not self.details.isVisible())
 
+    # ---------------------------------------------------------------- dates
+    #: Vrai pendant qu'on pose les dates par programme (édition, reprise) : la
+    #: date de fin ne doit alors PAS être réalignée sur la date de début, sans
+    #: quoi on écraserait la période d'une station observée sur plusieurs jours.
+    _chargement_dates = False
+
+    def _on_date_min_changed(self, date):
+        """Aligner la date de fin sur la date de début (observation d'un jour)."""
+        if self._chargement_dates:
+            return
+        self.date_max.setDate(date)
+
+    def _charger_dates(self, paires):
+        """Poser (widget, texte ISO) sans déclencher l'alignement automatique."""
+        applique = False
+        self._chargement_dates = True
+        try:
+            for widget, valeur in paires:
+                date = QDate.fromString((valeur or "")[:10], "yyyy-MM-dd")
+                if date.isValid():
+                    widget.setDate(date)
+                    applique = True
+        finally:
+            self._chargement_dates = False
+        return applique
+
     # ------------------------------------------- reprise de la saisie précédente
     def _apply_last_dates(self):
         """Reprendre les dates de la saisie précédente. True si appliquées."""
-        applied = False
-        for widget, value in zip((self.date_min, self.date_max), self._last_dates):
-            date = QDate.fromString((value or "")[:10], "yyyy-MM-dd")
-            if date.isValid():
-                widget.setDate(date)
-                applied = True
-        return applied
+        return self._charger_dates(
+            zip((self.date_min, self.date_max), self._last_dates)
+        )
 
     def _show_repris_hint(self, observers, dates):
         """Signaler ce qui vient de la saisie précédente (rien affiché sinon)."""
@@ -400,6 +434,21 @@ class StationForm(QWidget):
             return False, "Le jeu de données (JDD) est obligatoire."
         if self.date_min.date() > self.date_max.date():
             return False, "La date de début doit précéder la date de fin."
+        # Même exigence que pour les dates, et surtout que côté GeoNature : les
+        # contraintes `t_stations_altitude_max` / `_depth_max` rejettent un
+        # maximum inférieur au minimum, avec une erreur serveur illisible.
+        # 0 = « non renseigné » (cf. setSpecialValueText), donc on ne compare
+        # que des couples réellement saisis.
+        for sujet, complement, mini, maxi in (
+            ("L'altitude minimale", "l'altitude maximale",
+             self.spin_alt_min.value(), self.spin_alt_max.value()),
+            ("La profondeur minimale", "la profondeur maximale",
+             self.spin_depth_min.value(), self.spin_depth_max.value()),
+        ):
+            if mini and maxi and mini > maxi:
+                return False, (
+                    "%s (%d) dépasse %s (%d)." % (sujet, mini, complement, maxi)
+                )
         return True, ""
 
     def get_data(self):
@@ -453,10 +502,11 @@ class StationForm(QWidget):
         self._apply_observers(station.get("observers", []))
         # Dates de la station : sans cela le formulaire garderait la date du jour
         # et l'enregistrement écraserait la date d'observation d'origine.
-        for widget, key in ((self.date_min, "date_min"), (self.date_max, "date_max")):
-            date = QDate.fromString((station.get(key) or "")[:10], "yyyy-MM-dd")
-            if date.isValid():
-                widget.setDate(date)
+        self._charger_dates(
+            (widget, station.get(cle))
+            for widget, cle in ((self.date_min, "date_min"),
+                                (self.date_max, "date_max"))
+        )
         if station.get("altitude_min"):
             self.spin_alt_min.setValue(int(station["altitude_min"]))
         if station.get("altitude_max"):

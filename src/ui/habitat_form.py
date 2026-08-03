@@ -33,6 +33,8 @@ from ..processing.eval_fields import (
 )
 from ..processing.referentiels import DYNAMIQUES, RESTAURATIONS, TYPICITES
 from .habref_widget import HabrefSearchEdit
+from .dialog_size import borner_largeur_combos
+from .no_wheel import proteger_du_defilement
 
 _SEPARATEUR_PEE = " ; "
 
@@ -45,8 +47,11 @@ class HabitatForm(QWidget):
 
     def __init__(self, nomenclatures=None, habref_search=None, typologies=None,
                  user_names=None, default_determiner=None, defaults=None,
-                 abundance_cover_map=None, parent=None):
+                 abundance_cover_map=None, cd_typo=None, parent=None):
         super().__init__(parent)
+        # Typologie de la dernière saisie : sur une campagne, on reste dans la
+        # même (CORINE, EUNIS…). La retrouver à chaque habitat était fastidieux.
+        self._cd_typo = cd_typo
         self.nomenclatures = nomenclatures or {}
         # Technique obligatoire seulement si les nomenclatures ont pu être chargées
         # (connecté). Hors-ligne on autorise None → comblé par le défaut à la synchro.
@@ -66,7 +71,8 @@ class HabitatForm(QWidget):
         # Composant partagé avec l'édition en masse : le choix d'un habitat doit
         # se faire de la même façon aux deux endroits (cf. `habref_widget`).
         self.habref = HabrefSearchEdit(
-            habref_search=self._habref_search, typologies=self._typologies
+            habref_search=self._habref_search, typologies=self._typologies,
+            cd_typo=self._cd_typo,
         )
         self.habref.habitat_choisi.connect(self._on_habitat_chosen)
         self.edit_nom_cite = self.habref.edit  # compatibilité des appelants
@@ -188,6 +194,10 @@ class HabitatForm(QWidget):
 
         form.addRow(self.n2000)
         self._set_n2000_visible(False)
+        # Cf. station_form : la molette ne doit pas modifier une valeur saisie.
+        self._filtre_molette = proteger_du_defilement(self)
+        # Les listes déroulantes ne doivent pas imposer leur largeur au dialogue.
+        borner_largeur_combos(self)
 
     def _set_n2000_visible(self, visible):
         self.n2000.setVisible(visible)

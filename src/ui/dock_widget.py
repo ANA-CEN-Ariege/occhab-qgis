@@ -31,6 +31,7 @@ from qgis.PyQt.QtWidgets import (
 
 from ..database.sqlite_local import BROUILLON, VALIDE, OccHabDatabase
 from ..processing.duplicate import station_template
+from ..processing.geometry import CrsIndetermine, wkt_en_degres_plausibles
 from .connection_dialog import ConnectionDialog
 from .flow_layout import widget_reflowable
 from .station_dialog import StationDialog
@@ -1160,7 +1161,7 @@ class OccHabDockWidget(QDockWidget):
             created, failed,
         )
         if created:
-            self._remember_last_entry(shared, observers)
+            self._remember_last_entry(shared, observers, dialog.habref_cd_typo)
         parts = ["%d station(s) créée(s)" % created]
         if habitats:
             parts.append("%d habitat(s) chacune" % len(habitats))
@@ -1194,7 +1195,16 @@ class OccHabDockWidget(QDockWidget):
         )
 
         src_crs = layer.crs()
-        if src_crs.isValid() and src_crs.authid() != "EPSG:4326":
+        if not src_crs.isValid():
+            # Supposer EPSG:4326 recopiait des mètres en les présentant comme des
+            # degrés : géométrie fausse en base et envoyée telle quelle à
+            # GeoNature. Mieux vaut refuser et le dire.
+            raise CrsIndetermine(
+                "La couche « %s » n'a pas de SCR défini : impossible de savoir "
+                "où se trouve sa géométrie. Définissez son SCR, puis "
+                "recommencez." % layer.name()
+            )
+        if src_crs.authid() != "EPSG:4326":
             return QgsCoordinateTransform(
                 src_crs,
                 QgsCoordinateReferenceSystem("EPSG:4326"),
@@ -1250,9 +1260,11 @@ class OccHabDockWidget(QDockWidget):
             return None, None, (
                 "Aucune entité sélectionnée dans la couche « %s »." % layer.name()
             )
-        result = self._feature_geometry_wkt(
-            features[0], self._layer_transform_to_4326(layer)
-        )
+        try:
+            transform = self._layer_transform_to_4326(layer)
+        except CrsIndetermine as exc:
+            return None, None, str(exc)
+        result = self._feature_geometry_wkt(features[0], transform)
         if result is None:
             return None, None, (
                 "Géométrie inexploitable : entité sans géométrie, de type non géré "
@@ -1278,7 +1290,10 @@ class OccHabDockWidget(QDockWidget):
             return [], (
                 "Aucune entité sélectionnée dans la couche « %s »." % layer.name()
             )
-        transform = self._layer_transform_to_4326(layer)
+        try:
+            transform = self._layer_transform_to_4326(layer)
+        except CrsIndetermine as exc:
+            return [], str(exc)
         geoms = []
         for feature in features:
             result = self._feature_geometry_wkt(feature, transform)
@@ -1412,6 +1427,19 @@ class OccHabDockWidget(QDockWidget):
         metrics = {"area": None, "altitude_min": None, "altitude_max": None}
         if not wkt:
             return metrics
+        if not wkt_en_degres_plausibles(wkt):
+            # Des mètres pris pour des degrés : la surface serait aberrante et le
+            # serveur refuse le calcul d'altitude (« Invalid coordinate »).
+            self.logger.error(
+                "Géométrie hors du domaine WGS84, mesures abandonnées : %s",
+                wkt[:80],
+            )
+            self.iface.messageBar().pushWarning(
+                "OccHab",
+                "Géométrie hors du domaine WGS84 : surface et altitude non "
+                "calculées. Vérifiez le SCR de la couche d'origine.",
+            )
+            return metrics
         if geom_type == "polygon":
             try:
                 from qgis.core import (
@@ -1474,13 +1502,20 @@ class OccHabDockWidget(QDockWidget):
         saved = self.config.get("last_entry.observers") or []
         return [obs for obs in saved if isinstance(obs, dict) and obs.get("id_role")]
 
-    def _remember_last_entry(self, station, observers):
-        """Retenir observateurs et dates pour pré-remplir la saisie suivante.
+    def _last_cd_typo(self):
+        """Typologie HABREF de la dernière saisie, pour pré-régler le filtre."""
+        return self.config.get("last_entry.cd_typo")
 
-        Observateurs : persistés en configuration — une équipe change peu au cours
-        d'une campagne. Dates : gardées pour la session QGIS seulement, pour ne pas
-        traîner une date d'observation périmée d'un jour de terrain sur l'autre.
+    def _remember_last_entry(self, station, observers, cd_typo=None):
+        """Retenir observateurs, typologie et dates pour la saisie suivante.
+
+        Observateurs et typologie HABREF : persistés en configuration — une
+        équipe et une typologie changent peu au cours d'une campagne. Dates :
+        gardées pour la session QGIS seulement, pour ne pas traîner une date
+        d'observation périmée d'un jour de terrain sur l'autre.
         """
+        if cd_typo is not None:
+            self.config.set("last_entry.cd_typo", cd_typo)
         self.config.set(
             "last_entry.observers",
             [
@@ -1507,6 +1542,7 @@ class OccHabDockWidget(QDockWidget):
             batch_count=batch_count,
             template=template,
             last_observers=self._last_observers(),
+            habref_cd_typo=self._last_cd_typo(),
             last_dates=self._session_dates,
             datasets=self._dataset_items(),
             station_nomenclatures=self._station_nomenclatures(),
@@ -1550,7 +1586,7 @@ class OccHabDockWidget(QDockWidget):
             self.logger.error("Échec création station : %s", exc)
             QMessageBox.critical(self, "Erreur", "Création impossible : %s" % exc)
             return
-        self._remember_last_entry(station, observers)
+        self._remember_last_entry(station, observers, dialog.habref_cd_typo)
         self.refresh()
 
     def open_attribute_table(self):
@@ -1588,6 +1624,7 @@ class OccHabDockWidget(QDockWidget):
                 habref_search=self._habref_search_fn(),
                 typologies=self._habref_typologies(),
                 observers=self._observers_items(),
+                cd_typo=self._last_cd_typo(),
             ),
             layers=self.layers,
             logger=self.logger,

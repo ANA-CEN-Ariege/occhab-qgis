@@ -43,13 +43,26 @@ class HabrefSearchEdit(QWidget):
     habitat_choisi = pyqtSignal(int, str)
 
     def __init__(self, habref_search=None, typologies=None, libelle="Nom cité *",
-                 parent=None):
+                 cd_typo=None, parent=None):
         super().__init__(parent)
         self._habref_search = habref_search
         self._typologies = typologies or []  # [(cd_typo, nom)]
         self._typo_names = dict(self._typologies)
         self._pending = ""
         self._build(libelle)
+        self.definir_typologie(cd_typo)
+
+    def definir_typologie(self, cd_typo):
+        """Présélectionner une typologie (sans effet si elle n'est pas proposée)."""
+        if cd_typo is None:
+            return
+        index = self.combo_typo.findData(cd_typo)
+        if index >= 0:
+            self.combo_typo.setCurrentIndex(index)
+
+    def typologie(self):
+        """cd_typo courant, ou None pour « Toutes les typologies »."""
+        return self.combo_typo.currentData()
 
     def _build(self, libelle):
         form = QFormLayout(self)

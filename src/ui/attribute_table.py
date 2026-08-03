@@ -50,12 +50,14 @@ from qgis.PyQt.QtWidgets import (
     QWidget,
 )
 
+from ..api.payload import mesures_incoherentes
 from ..database.sqlite_local import BROUILLON, VALIDE
 from ..processing import champs as ch
 from ..processing.grille import Grille
 from ..processing.referentiels import label_for
 from .dialog_size import ajuster_a_l_ecran
 from .habref_widget import HabrefSearchEdit
+from .no_wheel import FiltreMolette, proteger_du_defilement
 
 # Jeux de colonnes : 25 colonnes ne tiennent pas à l'écran, et un botaniste qui
 # saisit du N2000 n'a pas besoin de l'exposition ni de la profondeur.
@@ -82,12 +84,13 @@ class Contexte:
     """
 
     def __init__(self, nomenclatures=None, datasets=None, habref_search=None,
-                 typologies=None, observers=None):
+                 typologies=None, observers=None, cd_typo=None):
         # {clé de champ: [(id_nomenclature, libellé)]}
         self.nomenclatures = nomenclatures or {}
         self.datasets = datasets or []  # [(id_dataset, nom)]
         self.habref_search = habref_search  # callable(texte, cd_typo) ou None
         self.typologies = typologies or []  # [(cd_typo, nom)]
+        self.cd_typo = cd_typo  # typologie de la dernière saisie, présélectionnée
         self.observers = observers or []  # [(id_role, nom)]
         self._jdd = dict(self.datasets)
         self._nomenclature = {
@@ -262,8 +265,11 @@ class ChampDelegate(QStyledItemDelegate):
         super().__init__(parent)
         self.colonnes = colonnes
         self.contexte = contexte
+        # Un éditeur de cellule est créé à la volée : il doit être protégé dès
+        # sa naissance, sinon la molette modifie la valeur qu'on vient d'ouvrir.
+        self._filtre_molette = FiltreMolette(self)
 
-    def createEditor(self, parent, option, index):
+    def _creer_editeur(self, parent, option, index):
         champ = self.colonnes[index.column()]
         if champ.type in (ch.CODE, ch.NOMENCLATURE, ch.JDD):
             editor = QComboBox(parent)
@@ -294,6 +300,11 @@ class ChampDelegate(QStyledItemDelegate):
             editor.setSpecialValueText("—")
             return editor
         return QLineEdit(parent)
+
+    def createEditor(self, parent, option, index):  # noqa: F811 - enveloppe
+        editor = self._creer_editeur(parent, option, index)
+        editor.installEventFilter(self._filtre_molette)
+        return editor
 
     def setEditorData(self, editor, index):
         champ = self.colonnes[index.column()]
@@ -408,6 +419,9 @@ class AppliquerDialog(QDialog):
             form.addRow("%s (%s)" % (champ.libelle, portee), rang)
             self._editeurs[(champ.niveau, champ.cle)] = (case, widget, champ)
         self._lier_habref()
+        # Une trentaine de champs dans un ascenseur : c'est le cas type où la
+        # molette modifie des valeurs pendant qu'on cherche un champ plus bas.
+        self._filtre_molette = proteger_du_defilement(interieur)
         ascenseur = QScrollArea()
         ascenseur.setWidgetResizable(True)
         ascenseur.setWidget(interieur)
@@ -433,6 +447,7 @@ class AppliquerDialog(QDialog):
                 habref_search=self.contexte.habref_search,
                 typologies=self.contexte.typologies,
                 libelle="Nom cité",
+                cd_typo=self.contexte.cd_typo,
             )
         if champ.type in (ch.CODE, ch.NOMENCLATURE, ch.JDD):
             widget = QComboBox()
@@ -804,6 +819,8 @@ class AttributeTableDialog(QDialog):
         if not modifiees:
             QMessageBox.information(self, "OccHab", "Aucune modification à enregistrer.")
             return
+        if not self._verifier_mesures():
+            return
         if not self._verifier_recouvrements():
             return
 
@@ -881,6 +898,33 @@ class AttributeTableDialog(QDialog):
             # prochaine synchro impose cette version (cf. édition unitaire).
             self.db.set_server_snapshot(station["id"], None)
         return True
+
+    def _verifier_mesures(self):
+        """Bloquer un couple altitude/profondeur inversé avant l'enregistrement.
+
+        Ces champs se saisissent cellule par cellule, donc hors du formulaire et
+        de sa validation. Côté GeoNature les contraintes `t_stations_altitude_max`
+        et `_depth_max` rejettent la station avec une erreur 500 illisible : la
+        synchro échouerait sans que rien n'explique pourquoi.
+        """
+        fautives = []
+        for station in self.grille.modifications():
+            for probleme in mesures_incoherentes(station):
+                fautives.append((station, probleme))
+        if not fautives:
+            return True
+        apercu = "\n".join(
+            "• %s : %s" % (s.get("station_name") or "station %s" % s.get("id"), p)
+            for s, p in fautives[:10]
+        )
+        reste = "\n… et %d autre(s)." % (len(fautives) - 10) if len(fautives) > 10 else ""
+        QMessageBox.warning(
+            self, "Mesures incohérentes",
+            "%d mesure(s) ont un minimum supérieur au maximum :\n\n%s%s\n\n"
+            "GeoNature les refuserait à la synchronisation. Corrigez-les avant "
+            "d'enregistrer." % (len(fautives), apercu, reste),
+        )
+        return False
 
     def _verifier_recouvrements(self):
         """Avertir si un polygone ne totalise pas 100 % (exigence N2000).

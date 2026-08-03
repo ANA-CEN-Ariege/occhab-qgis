@@ -23,6 +23,53 @@ except ImportError:  # pragma: no cover - repli hors paquet
     from referentiels import BROUILLON
 
 
+def coordonnees_wgs84(geojson):
+    """Toutes les coordonnées d'un GeoJSON tiennent-elles dans le domaine WGS84 ?
+
+    Longitude dans [-180, 180], latitude dans [-90, 90]. Module pur : la
+    vérification côté QGIS vit dans `processing.geometry`, mais l'envoi doit
+    pouvoir se protéger sans PyQGIS.
+    """
+    if not isinstance(geojson, dict):
+        return True  # rien d'exploitable à vérifier
+
+    def parcourir(valeur):
+        if not isinstance(valeur, (list, tuple)) or not valeur:
+            return True
+        if isinstance(valeur[0], (list, tuple)):
+            return all(parcourir(element) for element in valeur)
+        if len(valeur) < 2 or not all(
+            isinstance(nombre, (int, float)) for nombre in valeur[:2]
+        ):
+            return True  # pas une position : ne pas juger
+        lon, lat = valeur[0], valeur[1]
+        return -180 <= lon <= 180 and -90 <= lat <= 90
+
+    return parcourir(geojson.get("coordinates"))
+
+
+#: Couples min/max contraints côté GeoNature (`t_stations_altitude_max`,
+#: `t_stations_depth_max`) : un maximum inférieur au minimum y est rejeté.
+COUPLES_MIN_MAX = (
+    ("altitude_min", "altitude_max", "altitude"),
+    ("depth_min", "depth_max", "profondeur"),
+)
+
+
+def mesures_incoherentes(station):
+    """Libellés des couples min/max inversés d'une station (vide si tout va bien).
+
+    Module pur. La contrainte existe côté serveur mais s'y manifeste par une
+    erreur 500 illisible : autant la faire respecter avant l'envoi.
+    """
+    fautifs = []
+    for cle_min, cle_max, libelle in COUPLES_MIN_MAX:
+        mini, maxi = station.get(cle_min), station.get(cle_max)
+        if mini is not None and maxi is not None and mini > maxi:
+            fautifs.append("%s (min %s > max %s)" % (libelle, mini, maxi))
+    return fautifs
+
+
 def build_station_payload(station, habitats, observers, geom_geojson):
     """Construire le GeoJSON Feature attendu par POST /occhab/stations/.
 
@@ -39,7 +86,25 @@ def build_station_payload(station, habitats, observers, geom_geojson):
 
     Returns:
         dict Feature prêt à être sérialisé en JSON.
+
+    Raises:
+        ValueError: géométrie hors du domaine WGS84. Dernier filet avant l'envoi :
+            une station reprise d'une couche au SCR inconnu portait des mètres
+            présentés comme des degrés. Le serveur la refusait au calcul
+            d'altitude, mais rien n'empêchait de la SYNCHRONISER telle quelle.
+            La synchro traite les stations une par une : celle-ci échoue avec un
+            message clair, les autres passent.
     """
+    if geom_geojson is not None and not coordonnees_wgs84(geom_geojson):
+        raise ValueError(
+            "Géométrie hors du domaine WGS84 (longitude ±180, latitude ±90) : "
+            "vérifiez le SCR de la couche d'origine."
+        )
+    fautifs = mesures_incoherentes(station)
+    if fautifs:
+        raise ValueError(
+            "Mesures incohérentes, refusées par GeoNature : %s." % ", ".join(fautifs)
+        )
     properties = {
         "id_station": station.get("id_station"),  # présent en mise à jour
         "id_dataset": station.get("id_dataset"),

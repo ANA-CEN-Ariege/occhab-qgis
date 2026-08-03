@@ -23,7 +23,7 @@ pas l'écran principal : sur deux moniteurs de tailles différentes, borner sur 
 mauvais donnerait soit une fenêtre tronquée, soit une fenêtre inutilement petite.
 """
 from qgis.PyQt.QtGui import QGuiApplication
-from qgis.PyQt.QtWidgets import QFrame, QScrollArea
+from qgis.PyQt.QtWidgets import QComboBox, QFrame, QScrollArea
 
 # Marge laissée autour du dialogue : barre des tâches, décorations de fenêtre,
 # et de quoi attraper les bords à la souris.
@@ -79,3 +79,43 @@ def rendre_defilant(contenu):
     zone.setFrameShape(QFrame.Shape.NoFrame)
     zone.setWidget(contenu)
     return zone
+
+
+#: Largeur des listes déroulantes, en caractères. Au-delà, le texte est élidé
+#: dans le champ mais reste entier dans le menu et l'infobulle.
+LARGEUR_COMBO = 24
+#: Le menu déroulant ne dépasse pas cette largeur, même pour un libellé énorme.
+LARGEUR_MENU_MAX = 620
+
+
+def borner_largeur_combos(racine, caracteres=LARGEUR_COMBO):
+    """Empêcher les listes déroulantes d'imposer leur largeur au dialogue.
+
+    Qt dimensionne un `QComboBox` sur son entrée la PLUS LONGUE, même quand elle
+    n'est pas sélectionnée : une nomenclature comme « La surface est calculée
+    directement par usage d'un logiciel SIG » réclamait 559 px à elle seule, et
+    le formulaire entier devenait plus large que l'écran — avec un ascenseur
+    horizontal pour atteindre des champs pourtant courts.
+
+    Le champ est donc borné, tandis que le MENU garde une largeur lisible : on
+    ne rogne que l'affichage replié, jamais le choix.
+    """
+    for combo in racine.findChildren(QComboBox):
+        combo.setSizeAdjustPolicy(
+            QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLength
+        )
+        combo.setMinimumContentsLength(caracteres)
+        metriques = combo.fontMetrics()
+        largeur = 0
+        for index in range(combo.count()):
+            texte = combo.itemText(index)
+            try:
+                largeur = max(largeur, metriques.horizontalAdvance(texte))
+            except AttributeError:  # Qt < 5.11
+                largeur = max(largeur, metriques.width(texte))
+        if largeur:
+            combo.view().setMinimumWidth(min(largeur + 40, LARGEUR_MENU_MAX))
+        # Le libellé complet reste accessible sans dérouler.
+        if not combo.toolTip():
+            combo.setToolTip(combo.currentText())
+            combo.currentTextChanged.connect(combo.setToolTip)

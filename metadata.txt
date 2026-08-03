@@ -3,7 +3,7 @@ name=OccHab GeoNature
 qgisMinimumVersion=3.28
 qgisMaximumVersion=3.99
 description=Offline-first data entry for GeoNature's OccHab module (habitat stations) from QGIS, with local SQLite storage and synchronisation to the GeoNature REST API.
-version=0.5.5
+version=0.5.6
 author=Cédric Roy
 email=it@ariegenature.fr
 license=GPL-3.0-or-later
@@ -32,7 +32,38 @@ icon=resources/icons/occhab.svg
 experimental=True
 deprecated=False
 
-changelog=0.5.5 - Correction : le bouton « Tableau » ne rouvrait plus la table
+changelog=0.5.6 - Correction majeure : la molette de la souris ne modifie plus
+    les valeurs saisies. En faisant défiler un formulaire, le champ sous le
+    curseur changeait silencieusement — c'est ainsi qu'une altitude maximale
+    passait de 344 à 343 (un cran de molette) et que la station se voyait
+    refuser par GeoNature, qui exige un maximum superieur ou egal au minimum.
+    Listes deroulantes, compteurs et champs de date sont desormais insensibles a
+    la molette, laquelle continue de faire defiler le panneau normalement.
+    Trois garde-fous contre ces mesures incoherentes : le formulaire refuse un
+    minimum superieur au maximum (altitude comme profondeur), le tableau bloque
+    l'enregistrement en listant les stations fautives, et l'envoi les refuse avec
+    un message clair plutot qu'une erreur serveur illisible.
+    La date de fin suit la date de debut. Le cas courant est une observation d'un
+    seul jour ; la periode reste modifiable ensuite, et les stations existantes
+    observees sur plusieurs jours ne sont pas alterees.
+    Liste des habitats repensee dans la fenetre station : le code cd_hab
+    disparait de l'affichage, le nom cite occupe toute la largeur, le
+    recouvrement est aligne a droite dans une colonne etroite, et une ligne de
+    total indique en vert si la somme atteint 100 pour cent, en orange sinon avec
+    l'ecart restant. Le cadre s'adapte au nombre d'habitats au lieu d'une hauteur
+    fixe qui obligeait a defiler.
+    Les fenetres station et habitat ne debordent plus. Qt dimensionne une liste
+    deroulante sur son entree la plus longue, meme non selectionnee : une seule
+    nomenclature reclamait 559 pixels et rendait la fenetre plus large que
+    l'ecran. Le champ replie est borne, le menu deroulant reste large, et le
+    libelle complet s'affiche en infobulle.
+    La typologie HABREF de la derniere saisie est memorisee, comme le sont deja
+    les observateurs : elle est reprise d'un habitat au suivant et d'une session
+    a l'autre.
+    Enfin, reprendre la geometrie d'une couche sans systeme de coordonnees defini
+    est desormais refuse avec un message explicite, au lieu de supposer du WGS84
+    et d'enregistrer des metres presentes comme des degres.
+    0.5.5 - Correction : le bouton « Tableau » ne rouvrait plus la table
     après l'avoir fermée une fois. La fenêtre se masquait sans émettre le signal
     de fermeture, le panneau gardait sa référence et le bouton devenait
     inopérant jusqu'au rechargement du plugin. Défaut présent depuis la 0.5.1.

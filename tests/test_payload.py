@@ -171,3 +171,77 @@ def test_aller_retour_complet_du_statut():
 
     assert revenue["validation_status"] == "valide"
     assert revenue["comment"] == "Note."
+
+
+# ------------------------------------------- garde-fou géométrie WGS84
+def test_coordonnees_wgs84_accepte_les_degres():
+    assert p.coordonnees_wgs84({"type": "Point", "coordinates": [1.15, 43.10]})
+    assert p.coordonnees_wgs84(
+        {"type": "Polygon", "coordinates": [[[1.1, 43.1], [1.2, 43.1], [1.2, 43.2],
+                                             [1.1, 43.1]]]}
+    )
+    assert p.coordonnees_wgs84({"type": "Point", "coordinates": [-180, -90]})
+
+
+def test_coordonnees_wgs84_refuse_des_metres():
+    """Le cas réel : une couche en UTM 31N reprise sans reprojection."""
+    assert not p.coordonnees_wgs84(
+        {"type": "Point", "coordinates": [349907.277, 4774384.332]}
+    )
+    assert not p.coordonnees_wgs84(
+        {"type": "Polygon", "coordinates": [[[349907.0, 4774384.0], [1.1, 43.1]]]}
+    )
+
+
+def test_payload_refuse_une_geometrie_hors_wgs84():
+    """Sans ce filet, la station partait telle quelle sur GeoNature."""
+    station = {"id_dataset": 3, "station_name": "S"}
+    geom = {"type": "Point", "coordinates": [349907.277, 4774384.332]}
+    try:
+        p.build_station_payload(station, [], [], geom)
+    except ValueError as exc:
+        assert "WGS84" in str(exc)
+    else:
+        raise AssertionError("une géométrie en mètres aurait dû être refusée")
+
+
+def test_payload_accepte_une_geometrie_valide():
+    station = {"id_dataset": 3, "station_name": "S"}
+    geom = {"type": "Point", "coordinates": [1.15, 43.10]}
+    feature = p.build_station_payload(station, [], [], geom)
+    assert feature["geometry"] == geom
+
+
+# ------------------------------------------- garde-fou mesures min/max
+def test_mesures_incoherentes_detecte_le_cas_reel():
+    """Le cas rencontré : altitude_min 344 > altitude_max 343."""
+    fautifs = p.mesures_incoherentes(
+        {"altitude_min": 344, "altitude_max": 343, "depth_min": 1, "depth_max": 76}
+    )
+    assert len(fautifs) == 1
+    assert "altitude" in fautifs[0]
+
+
+def test_mesures_incoherentes_accepte_le_normal():
+    assert p.mesures_incoherentes({"altitude_min": 343, "altitude_max": 344}) == []
+    assert p.mesures_incoherentes({"altitude_min": 500, "altitude_max": 500}) == []
+    # Non renseigné : rien à comparer.
+    assert p.mesures_incoherentes({"altitude_min": 344, "altitude_max": None}) == []
+    assert p.mesures_incoherentes({}) == []
+
+
+def test_mesures_incoherentes_couvre_la_profondeur():
+    fautifs = p.mesures_incoherentes({"depth_min": 76, "depth_max": 1})
+    assert len(fautifs) == 1 and "profondeur" in fautifs[0]
+
+
+def test_payload_refuse_des_mesures_inversees():
+    """Sans ce filet : erreur 500 PostgreSQL illisible à la synchro."""
+    station = {"id_dataset": 3, "altitude_min": 344, "altitude_max": 343}
+    geom = {"type": "Point", "coordinates": [1.15, 43.10]}
+    try:
+        p.build_station_payload(station, [], [], geom)
+    except ValueError as exc:
+        assert "altitude" in str(exc)
+    else:
+        raise AssertionError("des mesures inversées auraient dû être refusées")
