@@ -23,7 +23,13 @@ pas l'écran principal : sur deux moniteurs de tailles différentes, borner sur 
 mauvais donnerait soit une fenêtre tronquée, soit une fenêtre inutilement petite.
 """
 from qgis.PyQt.QtGui import QGuiApplication
-from qgis.PyQt.QtWidgets import QComboBox, QFrame, QScrollArea
+from qgis.PyQt.QtWidgets import (
+    QComboBox,
+    QFrame,
+    QScrollArea,
+    QVBoxLayout,
+    QWidget,
+)
 
 # Marge laissée autour du dialogue : barre des tâches, décorations de fenêtre,
 # et de quoi attraper les bords à la souris.
@@ -73,11 +79,24 @@ def ajuster_a_l_ecran(dialog, largeur=0, hauteur=0, marge=MARGE):
 
 
 def rendre_defilant(contenu):
-    """Envelopper un widget dans une zone défilante sans cadre."""
+    """Envelopper un widget dans une zone défilante sans cadre.
+
+    Le contenu est posé au-dessus d'un ressort : `setWidgetResizable(True)`
+    étire le widget pour remplir la zone, et une `QFormLayout` distribue alors
+    le surplus au premier champ capable de grandir. Un formulaire plus court que
+    sa fenêtre se retrouvait ainsi avec un trou de 120 px au milieu, entre deux
+    champs. Le ressort récupère cet excédent EN BAS, où il ne gêne personne.
+    """
+    hote = QWidget()
+    boite = QVBoxLayout(hote)
+    boite.setContentsMargins(0, 0, 0, 0)
+    boite.addWidget(contenu)
+    boite.addStretch(1)
+
     zone = QScrollArea()
     zone.setWidgetResizable(True)
     zone.setFrameShape(QFrame.Shape.NoFrame)
-    zone.setWidget(contenu)
+    zone.setWidget(hote)
     return zone
 
 

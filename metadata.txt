@@ -3,7 +3,7 @@ name=OccHab GeoNature
 qgisMinimumVersion=3.28
 qgisMaximumVersion=3.99
 description=Offline-first data entry for GeoNature's OccHab module (habitat stations) from QGIS, with local SQLite storage and synchronisation to the GeoNature REST API.
-version=0.5.6
+version=0.5.7
 author=Cédric Roy
 email=it@ariegenature.fr
 license=GPL-3.0-or-later
@@ -32,7 +32,16 @@ icon=resources/icons/occhab.svg
 experimental=True
 deprecated=False
 
-changelog=0.5.6 - Correction majeure : la molette de la souris ne modifie plus
+changelog=0.5.7 - Correction d'une regression de la 0.5.6 : un grand vide
+    apparaissait au milieu du formulaire habitat, entre « Nom cite » et « Code
+    habitat », lorsque le bloc Natura 2000 etait replie. La zone defilante etire
+    son contenu pour remplir la fenetre, et le surplus etait attribue au premier
+    champ capable de grandir — la recherche HABREF passait de 131 a 251 pixels.
+    Deplier Natura 2000 allongeait le contenu au-dela de la fenetre et faisait
+    disparaitre le symptome, ce qui rendait le defaut deroutant. L'excedent est
+    desormais recupere en bas du formulaire, ou il ne gene pas. Le meme defaut
+    guettait la fenetre station des que son contenu tenait dans sa hauteur.
+    0.5.6 - Correction majeure : la molette de la souris ne modifie plus
     les valeurs saisies. En faisant défiler un formulaire, le champ sous le
     curseur changeait silencieusement — c'est ainsi qu'une altitude maximale
     passait de 344 à 343 (un cran de molette) et que la station se voyait
