@@ -160,3 +160,22 @@ def _valeur_temoin(champ):
     if champ.type == ch.ENTIER:
         return 5000
     return "texte"
+
+
+# ------------------------------------------- correspondance champ -> colonnes
+def test_colonnes_touchees_suit_le_stockage():
+    """Contrepartie de `ecrire()` : où la valeur atterrit réellement."""
+    assert ch.colonnes_touchees(ch.par_cle(ch.STATION, "station_name")) == {"station_name"}
+    # EVAL : dans le bloc ANA-EVAL porté par le commentaire de la station.
+    assert ch.colonnes_touchees(ch.par_cle(ch.STATION, "enjeu")) == {"comment"}
+    # TEXTE_LIBRE : le commentaire lui-même, bloc préservé.
+    assert ch.colonnes_touchees(ch.par_cle(ch.STATION, "comment")) == {"comment"}
+    # DOUBLE : le bloc de l'habitat ET la colonne native.
+    assert ch.colonnes_touchees(ch.par_cle(ch.HABITAT, "recouvrement")) == {
+        "technical_precision", "recovery_percentage"}
+
+
+def test_colonnes_touchees_couvre_tout_le_registre():
+    """Aucun champ ne doit rendre un ensemble vide : il serait jamais enregistré."""
+    for champ in ch.CHAMPS:
+        assert ch.colonnes_touchees(champ), champ.cle

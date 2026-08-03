@@ -301,3 +301,60 @@ def test_observateurs_modifiables_en_masse():
     assert ecrites == 2  # une écriture par station, pas par ligne
     assert grille.valeur(grille.lignes[0], _champ(ch.STATION, "observers")) == equipe
     assert [s["id"] for s in grille.modifications()] == [1, 2]
+
+
+# ------------------------------------------------- enregistrement ciblé
+def test_seules_les_colonnes_modifiees_sont_reecrites():
+    """Le bug de fond : la table réécrivait la ligne entière depuis sa copie.
+
+    Elle écrasait alors tout ce qu'une autre fenêtre avait enregistré depuis son
+    ouverture — dont `id_station`, posé par une synchro, dont la perte faisait
+    recréer un doublon sur GeoNature au prochain envoi.
+    """
+    stations = _stations()
+    stations[0]["id_station"] = None  # pas encore synchronisée à l'ouverture
+    grille = gr.Grille(stations)
+    grille.definir(grille.lignes[0], _champ(ch.STATION, "station_name"), "Soula 01 bis")
+
+    colonnes = grille.colonnes_modifiees(grille.stations[0])
+
+    assert colonnes == {"station_name"}
+    assert "id_station" not in colonnes
+    assert "server_snapshot" not in colonnes
+
+
+def test_un_champ_eval_designe_la_colonne_qui_le_porte():
+    """`enjeu` ne vit pas dans une colonne « enjeu » mais dans le bloc du commentaire."""
+    grille = gr.Grille(_stations())
+    grille.definir(grille.lignes[0], _champ(ch.STATION, "enjeu"), "fort")
+
+    assert grille.colonnes_modifiees(grille.stations[0]) == {"comment"}
+
+
+def test_habitats_reecrits_seulement_s_ils_ont_change():
+    grille = gr.Grille(_stations())
+    grille.definir(grille.lignes[0], _champ(ch.STATION, "station_name"), "Autre")
+    assert grille.habitats_modifies(grille.stations[0]) is False
+
+    grille.definir(grille.lignes[0], _champ(ch.HABITAT, "nom_cite"), "Ourlets")
+    assert grille.habitats_modifies(grille.stations[0]) is True
+
+
+def test_la_retrogradation_est_marquee_donc_enregistree():
+    """Sans le marquage, l'enregistrement ciblé passerait à côté du retour en brouillon."""
+    grille = gr.Grille(_stations_validees())
+    grille.definir(grille.lignes[0], _champ(ch.HABITAT, "typicite"), "bonne")
+
+    retrogradees = grille.retrograder_statuts()
+
+    assert [s["id"] for s in retrogradees] == [1]
+    assert grille.stations[0]["validation_status"] == "brouillon"
+    assert "validation_status" in grille.colonnes_modifiees(grille.stations[0])
+
+
+def test_valider_puis_retrograder_laisse_le_statut_valide():
+    grille = gr.Grille(_stations())
+    grille.definir(grille.lignes[0], _champ(ch.STATION, "validation_status"), "valide")
+
+    assert grille.retrograder_statuts() == []
+    assert grille.stations[0]["validation_status"] == "valide"

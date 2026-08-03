@@ -3,7 +3,7 @@ name=OccHab GeoNature
 qgisMinimumVersion=3.28
 qgisMaximumVersion=3.99
 description=Offline-first data entry for GeoNature's OccHab module (habitat stations) from QGIS, with local SQLite storage and synchronisation to the GeoNature REST API.
-version=0.5.3
+version=0.5.4
 author=Cédric Roy
 email=it@ariegenature.fr
 license=GPL-3.0-or-later
@@ -32,7 +32,30 @@ icon=resources/icons/occhab.svg
 experimental=True
 deprecated=False
 
-changelog=0.5.3 - Libellés de la table clarifiés. « Appliquer à la sélection… »
+changelog=0.5.4 - Correction : les stations validées dans la table restaient
+    affichées « Brouillon » dans la liste du dock. La table étant non modale
+    depuis 0.5.1, elle peut rester ouverte des heures ; le dock ne se
+    rafraîchissait qu'à sa fermeture et montrait donc l'état d'avant
+    l'enregistrement — statut comme état de synchronisation. Les deux fenêtres
+    se préviennent désormais mutuellement, la table n'étant rechargée que si
+    elle n'a aucune modification en attente.
+    Plus grave, la même cause pouvait faire perdre des données. La table
+    réécrivait la ligne entière depuis la copie mémoire prise à son ouverture :
+    elle écrasait alors tout ce qui avait été enregistré ailleurs entre-temps.
+    Une synchronisation lancée pendant qu'elle était ouverte voyait son
+    id_station remis à zéro, et la station repartait en création — donc en
+    doublon sur GeoNature. Une correction faite dans le formulaire subissait le
+    même sort. L'enregistrement n'écrit désormais que les colonnes réellement
+    modifiées ; habitats et observateurs ne sont remplacés que s'ils ont changé.
+    Une station supprimée entre-temps est signalée clairement au lieu d'un échec
+    opaque. Les observateurs modifiés en lot mettent enfin à jour la colonne
+    texte utilisée par la liste, l'export et l'envoi à GeoNature.
+    Enfin, la lecture de la sélection ne parcourt plus une entrée par cellule
+    mais une par ligne.
+    Campagne de tests réels contre demo.geonature.fr : aller-retour complet des
+    champs métier ANA et Natura 2000, cycle de synchronisation, détection de
+    conflit, et table attributaire pilotée en Qt.
+    0.5.3 - Libellés de la table clarifiés. « Appliquer à la sélection… »
     ne disait pas ce qu'il appliquait : le bouton devient « Modifier les N lignes
     sélectionnées… », annonce le nombre de lignes visées et reste grisé tant que
     rien n'est sélectionné — le premier clic ne sert plus à découvrir qu'il faut

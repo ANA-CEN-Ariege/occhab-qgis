@@ -22,6 +22,7 @@ from qgis.PyQt.QtCore import (
     QModelIndex,
     QSortFilterProxyModel,
     Qt,
+    pyqtSignal,
 )
 from qgis.PyQt.QtGui import QBrush, QColor
 from qgis.PyQt.QtWidgets import (
@@ -504,6 +505,10 @@ class AppliquerDialog(QDialog):
 class AttributeTableDialog(QDialog):
     """Fenêtre principale : filtres, table, application en masse, enregistrement."""
 
+    #: Émis après un enregistrement : la fenêtre étant non modale, le reste de
+    #: l'interface afficherait sinon l'état d'avant le lot.
+    donnees_enregistrees = pyqtSignal()
+
     def __init__(self, db, stations, contexte, layers=None, logger=None, parent=None):
         super().__init__(parent)
         self.setWindowTitle("OccHab — Stations et habitats")
@@ -703,13 +708,33 @@ class AttributeTableDialog(QDialog):
         modele = self.table.selectionModel()
         if modele is None:  # appelé avant le premier setModel
             return []
+        # `selectedRows()` rend UN index par ligne, `selectedIndexes()` un par
+        # cellule : avec le jeu « Tout » c'était 35 fois plus de mappings proxy,
+        # à chaque changement de sélection et à chaque cellule éditée.
         lignes, vus = [], set()
-        for index in modele.selectedIndexes():
+        for index in modele.selectedRows():
             source = self.proxy.mapToSource(index).row()
             if source not in vus:
                 vus.add(source)
                 lignes.append(self.grille.lignes[source])
         return lignes
+
+    # ------------------------------------------------------------- rechargement
+    def a_des_modifications(self):
+        return self.grille.a_des_modifications()
+
+    def recharger(self, stations):
+        """Reprendre l'état de la base après une écriture faite ailleurs.
+
+        Refusé s'il reste des modifications non enregistrées : elles seraient
+        perdues sans que l'utilisateur l'ait demandé. L'appelant l'a déjà
+        vérifié ; ce garde-fou évite qu'un futur appel s'en dispense.
+        """
+        if self.grille.a_des_modifications():
+            return False
+        self.grille = Grille(stations)
+        self._appliquer_jeu_colonnes()  # reconstruit modèle, proxy et connexions
+        return True
 
     def appliquer_a_la_selection(self):
         lignes = self._lignes_selectionnees()
@@ -774,26 +799,33 @@ class AttributeTableDialog(QDialog):
             return
 
         # Une station validée sur laquelle on est revenu redevient un brouillon.
-        for station in self.grille.statuts_retrogrades():
-            station["validation_status"] = BROUILLON
+        self.grille.retrograder_statuts()
 
         sauvegarde = self._sauvegarder_base()
-        ecrites = echecs = 0
+        ecrites = echecs = disparues = 0
         for station in modifiees:
             try:
-                self._ecrire_station(station)
-                ecrites += 1
+                if self._ecrire_station(station):
+                    ecrites += 1
+                else:
+                    disparues += 1
             except Exception as exc:  # noqa: BLE001 - une station en échec ne doit pas tout arrêter
                 echecs += 1
                 if self.logger:
                     self.logger.error("Station %s non enregistrée : %s",
                                       station.get("id"), exc)
-        if not echecs:
+        if not echecs and not disparues:
             self.grille.oublier_modifications()
         self.model.rafraichir_tout()
         self._maj_etat()
+        # La liste du dock et la carte affichent encore l'état d'avant : la table
+        # est non modale, elle peut rester ouverte des heures après un lot.
+        self.donnees_enregistrees.emit()
 
         message = "%d station(s) enregistrée(s)." % ecrites
+        if disparues:
+            message += ("\n%d station(s) ont été supprimées depuis l'ouverture de "
+                        "la table : leurs modifications sont abandonnées." % disparues)
         if echecs:
             message += " %d échec(s) — voir le journal." % echecs
         if sauvegarde:
@@ -801,18 +833,41 @@ class AttributeTableDialog(QDialog):
         QMessageBox.information(self, "OccHab", message)
 
     def _ecrire_station(self, station):
+        """Écrire les SEULS champs modifiés. False si la station n'existe plus.
+
+        Réécrire la ligne entière depuis la copie mémoire de la table écrasait
+        tout ce qu'une autre fenêtre avait enregistré entre-temps : une édition
+        faite dans le formulaire, et surtout l'`id_station` posé par une synchro,
+        dont la perte faisait recréer un doublon sur GeoNature au prochain envoi.
+        """
+        if not self.db.station_exists(station["id"]):
+            if self.logger:
+                self.logger.warning("Station %s supprimée entre-temps : ignorée",
+                                    station.get("id"))
+            return False
         etait_en_conflit = station.get("sync_status") == "conflict"
-        champs = {k: v for k, v in station.items() if k not in ("habitats", "observers")}
+        champs = {
+            cle: station.get(cle) for cle in self.grille.colonnes_modifiees(station)
+        }
+        if "observers" in champs:
+            # Ni une colonne ni un champ envoyé tel quel : la liste vit dans une
+            # table à part, et sa version texte alimente la liste du dock,
+            # l'export et le payload GeoNature.
+            champs.pop("observers")
+            observateurs = station.get("observers") or []
+            champs["observers_txt"] = ", ".join(
+                o.get("observer_name") or "" for o in observateurs
+            ) or None
+            self.db.replace_observers(station["id"], observateurs)
         champs["sync_status"] = "pending"  # toute édition remet en attente d'envoi
         self.db.update_station(station["id"], **champs)
-        self.db.replace_habitats(station["id"], station.get("habitats") or [])
-        # Réécrits systématiquement : sans cela une équipe posée en masse était
-        # simplement perdue. Réécrire à l'identique est sans effet de bord.
-        self.db.replace_observers(station["id"], station.get("observers") or [])
+        if self.grille.habitats_modifies(station):
+            self.db.replace_habitats(station["id"], station.get("habitats") or [])
         if etait_en_conflit:
             # Conflit résolu côté local : oublier l'empreinte pour que la
             # prochaine synchro impose cette version (cf. édition unitaire).
             self.db.set_server_snapshot(station["id"], None)
+        return True
 
     def _verifier_recouvrements(self):
         """Avertir si un polygone ne totalise pas 100 % (exigence N2000).

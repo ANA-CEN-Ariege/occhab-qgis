@@ -253,6 +253,23 @@ def lire(objet, champ):
     return valeur
 
 
+def colonnes_touchees(champ):
+    """Clés du dict que `ecrire()` modifie pour ce champ.
+
+    Contrepartie indispensable de `ecrire()` : un champ EVAL n'écrit pas dans une
+    colonne à son nom mais dans le porteur du bloc ANA-EVAL (`comment` pour une
+    station, `technical_precision` pour un habitat), et un champ DOUBLE écrit aux
+    deux endroits. Sans cette correspondance, un enregistrement qui ne veut
+    réécrire que les champs modifiés en oublierait la moitié.
+    """
+    if champ.stockage == COLONNE:
+        return {champ.cle}
+    porteur = PORTEUR[champ.niveau]
+    if champ.stockage == DOUBLE:
+        return {porteur, _COLONNE_DOUBLE.get(champ.cle, champ.cle)}
+    return {porteur}
+
+
 def ecrire(objet, champ, valeur):
     """Poser la valeur d'un champ (mute `objet`), bloc ANA-EVAL préservé."""
     if champ.stockage == COLONNE:

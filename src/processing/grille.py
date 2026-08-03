@@ -22,9 +22,11 @@ from collections import namedtuple
 
 try:  # importable dans le paquet (plugin) comme en isolation (tests)
     from . import champs as ch
+    from .referentiels import BROUILLON as _BROUILLON
     from .referentiels import VALIDE as _VALIDE
 except ImportError:  # pragma: no cover - repli hors paquet
     import champs as ch
+    from referentiels import BROUILLON as _BROUILLON
     from referentiels import VALIDE as _VALIDE
 
 Ligne = namedtuple("Ligne", "station habitat")
@@ -169,15 +171,37 @@ class Grille:
                 touchees.append(station)
         return touchees
 
-    def _station_modifiee(self, station):
-        for niveau, identifiant, _cle in self._modifies:
-            if niveau == ch.STATION and identifiant == station.get("id"):
-                return True
+    def colonnes_modifiees(self, station):
+        """Clés du dict station réellement touchées depuis le chargement.
+
+        Permet de ne réécrire QUE ce qui a changé. Réécrire la ligne entière
+        depuis cette copie mémoire écrasait tout ce qu'une autre fenêtre avait
+        enregistré entre-temps — jusqu'à `id_station`, ce qui détachait la
+        station du serveur et la faisait recréer en double à la synchro suivante.
+        """
+        identifiant = station.get("id")
+        colonnes = set()
+        for niveau, objet_id, cle in self._modifies:
+            if niveau != ch.STATION or objet_id != identifiant:
+                continue
+            champ = ch.par_cle(niveau, cle)
+            if champ is not None:
+                colonnes |= ch.colonnes_touchees(champ)
+        return colonnes
+
+    def habitats_modifies(self, station):
+        """Un habitat de cette station a-t-il changé ? (les habitats sont remplacés en bloc)"""
         habitat_ids = {h.get("id") for h in station.get("habitats") or []}
         return any(
             niveau == ch.HABITAT and identifiant in habitat_ids
             for niveau, identifiant, _cle in self._modifies
         )
+
+    def _station_modifiee(self, station):
+        for niveau, identifiant, _cle in self._modifies:
+            if niveau == ch.STATION and identifiant == station.get("id"):
+                return True
+        return self.habitats_modifies(station)
 
     STATUT = "validation_status"
 
@@ -197,6 +221,20 @@ class Grille:
                 continue
             if self._station_modifiee(station):
                 retrogradees.append(station)
+        return retrogradees
+
+    def retrograder_statuts(self):
+        """Repasser en brouillon les stations validées dont le contenu a changé.
+
+        Marque la modification, sans quoi l'enregistrement ciblé — qui n'écrit que
+        les colonnes signalées comme modifiées — passerait à côté.
+        Renvoie les stations concernées.
+        """
+        champ = ch.par_cle(ch.STATION, self.STATUT)
+        retrogradees = self.statuts_retrogrades()
+        for station in retrogradees:
+            ch.ecrire(station, champ, _BROUILLON)
+            self._modifies.add(self._cle(champ, station))
         return retrogradees
 
     def _modifie_explicitement(self, station, cle):

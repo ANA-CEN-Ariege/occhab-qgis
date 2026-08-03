@@ -288,6 +288,22 @@ class OccHabDatabase:
         self.disconnect()
         return rows
 
+    def station_exists(self, station_id):
+        """La station existe-t-elle encore ? (une requête, sans ses dépendances)
+
+        L'écriture en lot de la table attributaire porte sur une copie mémoire :
+        une station peut avoir été supprimée entre-temps depuis la liste du dock.
+        `get_station()` répondrait aussi, mais en trois requêtes et en
+        reconstruisant habitats et observateurs pour rien.
+        """
+        self.connect()
+        try:
+            cursor = self.connection.cursor()
+            cursor.execute("SELECT 1 FROM t_stations WHERE id = ?", (station_id,))
+            return cursor.fetchone() is not None
+        finally:
+            self.disconnect()
+
     def get_stations_full(self, id_dataset=None):
         """Toutes les stations AVEC leurs habitats et observateurs, en 3 requêtes.
 

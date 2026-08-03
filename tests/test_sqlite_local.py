@@ -351,3 +351,35 @@ def test_constantes_de_statut_alignees_avec_le_referentiel():
     )
     assert db_mod.BROUILLON == referentiels.BROUILLON
     assert db_mod.VALIDE == referentiels.VALIDE
+
+
+def test_station_exists(tmp_path):
+    db = _make_db(tmp_path)
+    station_id = db.create_station(id_dataset=3, station_name="S")
+
+    assert db.station_exists(station_id) is True
+    assert db.station_exists(999999) is False
+
+    db.delete_station(station_id)
+    assert db.station_exists(station_id) is False
+
+
+def test_ecriture_ciblee_preserve_le_lien_serveur(tmp_path):
+    """Régression : la table réécrivait la ligne entière depuis une copie périmée.
+
+    Elle remettait alors `id_station` à NULL après une synchro faite pendant
+    qu'elle était ouverte, et la station repartait en création — donc en doublon
+    sur GeoNature.
+    """
+    db = _make_db(tmp_path)
+    station_id = db.create_station(id_dataset=3, station_name="S")
+    db.mark_station_synced(station_id, 61, server_snapshot="empreinte")
+
+    # Ce que fait désormais l'enregistrement en lot : les seules colonnes modifiées.
+    db.update_station(station_id, station_name="S modifiée", sync_status="pending")
+
+    full = db.get_station(station_id)
+    assert full["id_station"] == 61
+    assert full["server_snapshot"] == "empreinte"
+    assert full["station_name"] == "S modifiée"
+    assert full["sync_status"] == "pending"

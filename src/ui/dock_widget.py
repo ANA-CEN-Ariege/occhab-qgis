@@ -1571,6 +1571,9 @@ class OccHabDockWidget(QDockWidget):
         # doit pouvoir se faire sur la carte pendant que la table est ouverte.
         dialog.setModal(False)
         dialog.finished.connect(self._on_attribute_table_closed)
+        # Un lot enregistré doit se voir immédiatement dans la liste et sur la
+        # carte : la table peut rester ouverte longtemps après.
+        dialog.donnees_enregistrees.connect(self.refresh)
         self._table_dialog = dialog
         dialog.show()
 
@@ -1661,8 +1664,25 @@ class OccHabDockWidget(QDockWidget):
         self.label_count.setText(" · ".join(parts))
         self.btn_sync.setText("Synchroniser (%d)" % n_sync if n_sync else "Synchroniser")
         self._on_selection_changed()
+        self._refresh_attribute_table(stations)
         self.logger.info("Liste rafraîchie : %d station(s)", len(stations))
         self._notify_occhab_layers_once()
+
+    def _refresh_attribute_table(self, stations):
+        """Répercuter dans la table ouverte ce qui vient d'être écrit ailleurs.
+
+        La table est non modale : sans cela elle travaille indéfiniment sur la
+        copie prise à son ouverture, et affiche un état périmé. On ne recharge
+        que si elle n'a rien en attente — des modifications non enregistrées ne
+        se jettent pas sans que l'utilisateur l'ait demandé.
+        """
+        dialog = self._table_dialog
+        if dialog is None or dialog.a_des_modifications():
+            return
+        try:
+            dialog.recharger(stations)
+        except Exception as exc:  # noqa: BLE001 - la table ne doit pas casser la liste
+            self.logger.warning("Table attributaire non rechargée : %s", exc)
 
     def _notify_occhab_layers_once(self):
         """Avertir une seule fois par session que les couches/groupes OccHab
