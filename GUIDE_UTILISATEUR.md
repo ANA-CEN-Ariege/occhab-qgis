@@ -77,24 +77,42 @@ plugin gère un petit fichier local automatiquement.
 
 ## 3. Installation
 
-### Méthode A — depuis le dépôt d'extensions QGIS (recommandée)
+### Méthode A — depuis le dépôt de l'ANA-CEN Ariège (recommandée)
 
-L'installation la plus simple, avec **mises à jour automatiques** proposées par
-QGIS :
+L'extension est publiée sur le **dépôt d'extensions de l'ANA**, aux côtés des
+autres outils maison (*Boîte à outils ANA-CEN Ariège*, *FluxCEN*…). C'est
+l'installation la plus simple, avec **mises à jour automatiques** proposées par
+QGIS.
+
+**Une seule fois — ajouter le dépôt :**
 
 1. Dans QGIS : menu **Extensions ▸ Installer/Gérer les extensions**.
-2. Comme l'extension est marquée « expérimentale », ouvrez d'abord l'onglet
-   **Paramètres** et cochez **« Afficher aussi les extensions expérimentales »**.
-3. Onglet **Toutes**, tapez **`OccHab GeoNature`** dans la recherche.
-4. Sélectionnez-la et cliquez **Installer l'extension**.
-5. Onglet **Installées** : vérifiez qu'elle est **cochée**.
+2. Onglet **Paramètres**.
+3. Cochez **« Afficher aussi les extensions expérimentales »**. L'extension est
+   marquée expérimentale : sans cette case, elle **n'apparaîtra pas**, même une
+   fois le dépôt ajouté.
+4. Dans la section *Dépôts d'extensions*, cliquez **Ajouter…** et saisissez :
+   - **Nom** : `ANA-CEN Ariège`
+   - **URL** : `https://qgisplugins.ariegenature.fr/`
+   - **Authentification** : laissez vide.
+5. **OK** : le dépôt apparaît dans la liste, à l'état *connecté*.
 
-> Quand une nouvelle version est publiée, QGIS vous propose la **mise à jour**
-> automatiquement (onglet *Mises à jour*).
+**Ensuite — installer :**
+
+6. Onglet **Toutes**, tapez **`OccHab GeoNature`** dans la recherche.
+7. Sélectionnez-la et cliquez **Installer l'extension**.
+8. Onglet **Installées** : vérifiez qu'elle est **cochée**.
+
+> **L'URL pointe sur la racine du domaine**, barre oblique finale comprise :
+> c'est là qu'est servi le fichier XML du dépôt. N'ajoutez **pas** `plugins.xml`
+> à la fin, l'adresse ne répondrait pas.
+
+> Quand une nouvelle version est déposée, QGIS vous la propose automatiquement
+> (onglet *Mises à jour*).
 
 ### Méthode B — depuis un fichier ZIP
 
-Utile hors ligne, en avant-première, ou si le dépôt QGIS n'est pas accessible :
+Utile hors ligne, en avant-première, ou si le dépôt n'est pas accessible :
 
 1. Téléchargez le ZIP de la **dernière version** :
    **https://github.com/ANA-CEN-Ariege/occhab-qgis/releases/latest**
@@ -117,6 +135,17 @@ Utile hors ligne, en avant-première, ou si le dépôt QGIS n'est pas accessible
 2. Redémarrez QGIS.
 3. **Extensions ▸ Installer/Gérer les extensions ▸ Installées** → cochez
    **OccHab GeoNature**.
+
+### ~~Méthode D — depuis le dépôt officiel plugins.qgis.org~~
+
+> ⏸ **Voie mise en attente le temps de l'expérimentation.**
+> ~~L'extension est aussi publiée sur le dépôt officiel des extensions QGIS,
+> présent d'origine dans le gestionnaire.~~
+> La version qui s'y trouve (**0.5.2**) est **plus ancienne** que celle du dépôt
+> de l'ANA (**0.6.0**) : ne l'installez pas depuis là, vous n'auriez ni le
+> copier-coller de polygone, ni les corrections de saisie. Utilisez la
+> **méthode A**. Cette voie sera rouverte quand l'extension sortira de sa phase
+> d'expérimentation.
 
 ### Ouvrir le plugin
 
@@ -669,8 +698,16 @@ automatiquement : y revenir, c'est que le travail n'était pas fini.
 ## 14. Dépannage (FAQ)
 
 ### « Je ne vois pas l'extension dans le gestionnaire »
-Cochez **« Afficher aussi les extensions expérimentales »** dans les paramètres du
-gestionnaire d'extensions.
+Deux causes, dans cet ordre (onglet **Paramètres** du gestionnaire) :
+
+1. **« Afficher aussi les extensions expérimentales »** n'est pas coché — sans
+   cette case, l'extension reste invisible, dépôt ajouté ou non.
+2. Le **dépôt de l'ANA** n'est pas dans la liste, ou n'est pas *connecté* :
+   ajoutez `https://qgisplugins.ariegenature.fr/` (§3, méthode A). Un dépôt en
+   erreur se rafraîchit avec **Recharger le dépôt**.
+
+Ne cherchez pas l'extension dans le dépôt officiel QGIS : la version qui s'y
+trouve est plus ancienne et cette voie est en attente (§3).
 
 ### La connexion échoue (400 / 401)
 - Vérifiez l'**URL de l'API** (elle doit finir par `…/geonature/api`).
