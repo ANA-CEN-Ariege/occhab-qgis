@@ -39,6 +39,18 @@ def _error_detail(response):
     return str(payload)[:300]
 
 
+def _export_features(items):
+    """Normaliser le contenu d'une page d'export en liste.
+
+    La route rend une **FeatureCollection** quand l'export porte une géométrie,
+    et une simple liste sinon (`as_geofeature()` vs `return_query()` côté
+    GeoNature). Les appelants n'ont pas à connaître cette bascule.
+    """
+    if isinstance(items, dict):
+        return items.get("features") or []
+    return items if isinstance(items, list) else []
+
+
 class GeoNatureAPIClient:
     """Client minimal pour l'API OccHab de GeoNature."""
 
@@ -178,6 +190,65 @@ class GeoNatureAPIClient:
         Retourne {'altitude_min': …, 'altitude_max': …}.
         """
         return self._make_request("POST", "geo/altitude", data={"geometry": geom_geojson})
+
+    # ------------------------------------------------- module Exports (EXPORTS)
+    def list_exports(self):
+        """Exports publiés par le module EXPORTS, visibles par l'utilisateur.
+
+        Liste vide si le module n'est pas installé ou si le droit R manque : ce
+        n'est pas une erreur, juste une instance qui ne propose pas d'export.
+        """
+        result = self._make_request("GET", "exports/")
+        if isinstance(result, dict):  # certaines versions enveloppent la liste
+            result = result.get("items") or result.get("exports") or []
+        return result if isinstance(result, list) else []
+
+    def get_export_page(self, id_export, limit=1000, offset=0, filters=None):
+        """UNE page d'un export (`GET /exports/api/<id>`).
+
+        ⚠ `offset` est un **numéro de page**, pas un décalage de lignes — c'est
+        la convention de cette route, et s'y tromper renverrait dix fois la même
+        page sans que rien ne le signale.
+
+        Renvoie le dict complet : `total`, `total_filtered`, `page`, `limit`,
+        `items` (FeatureCollection si l'export porte une géométrie, liste de
+        dicts sinon).
+        """
+        params = dict(filters or {})
+        params.update(limit=limit, offset=offset)
+        return self._make_request("GET", "exports/api/%s" % int(id_export), params=params)
+
+    def iter_export_features(self, id_export, filters=None, limit=1000,
+                             pages_max=500, on_progress=None):
+        """Parcourir un export page par page.
+
+        Returns:
+            (features, total_filtered, total) — `features` en objets GeoJSON (ou
+            dicts si l'export n'a pas de géométrie). Les **deux** totaux sont
+            rendus : l'API ignore en silence un filtre portant sur une colonne
+            absente de la vue, et seul l'écart entre les deux permet de s'en
+            apercevoir.
+
+        `pages_max` est un garde-fou : une API qui renverrait toujours la même
+        page ferait tourner la boucle sans fin.
+        """
+        features, total_filtered, total, page = [], None, None, 0
+        while page < pages_max:
+            data = self.get_export_page(id_export, limit=limit, offset=page,
+                                        filters=filters) or {}
+            if total_filtered is None:
+                total_filtered = data.get("total_filtered", data.get("total"))
+                total = data.get("total")
+            lot = _export_features(data.get("items"))
+            features.extend(lot)
+            if on_progress is not None:
+                on_progress(len(features), total_filtered)
+            # Page incomplète = dernière page. On s'arrête aussi dès que le
+            # compte annoncé est atteint, sans réclamer une page vide de plus.
+            if len(lot) < limit or (total_filtered and len(features) >= total_filtered):
+                break
+            page += 1
+        return features, total_filtered, total
 
     def test_connection(self):
         """Ping léger pour vérifier connexion/authentification."""

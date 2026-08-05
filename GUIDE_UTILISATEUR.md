@@ -471,6 +471,117 @@ Elles sont copiées dans votre base locale et deviennent **éditables**.
 
 Ensuite : éditez comme d'habitude (§7), puis **synchronisez** (§9).
 
+### Charger un export du serveur (couche de consultation)
+
+Troisième entrée du même menu : **« Charger un export du serveur (couche)… »**.
+À ne pas confondre avec les deux précédentes — celles-ci rapatrient des stations
+**éditables** dans votre base ; un export est une **vue préparée côté GeoNature**
+(données consolidées, identifiants déjà traduits en libellés, champs ANA-EVAL
+décodés), chargée en **couche QGIS en lecture seule**.
+
+1. L'**export** est celui bâti sur la vue OccHab complète : le plugin ne propose
+   pas les autres exports de l'instance (synthèse, taxons, métadonnées…), dont il
+   ne saurait ni filtrer ni présenter le contenu.
+2. Choisissez le **jeu de données** — celui du panneau est présélectionné.
+3. Choisissez la **période**. Par défaut **l'année en cours** (1ᵉʳ janvier →
+   31 décembre) ; modifiable, ou décochez **« Restreindre à une période »** pour
+   tout rapatrier. Sont retenues les stations dont les dates de début **et** de
+   fin tombent dans l'intervalle.
+
+#### Les couleurs de la couche
+
+Elle arrive avec **une couleur par habitat**, chaque teinte restant dans le **ton
+de son grand milieu** : les bois en verts, les prairies en verts plus tendres,
+les landes en bruns, les tourbières en violets, les eaux en bleus. Une carte se
+lit donc à deux niveaux — le milieu d'un coup d'œil, l'habitat précis à la
+nuance.
+
+La couleur ne vient d'**aucune liste d'habitats à tenir à jour** : le ton se
+déduit du **grand milieu** de l'habitat, et la nuance de sa place parmi ceux
+présents. Un habitat jamais rencontré se colore donc tout seul.
+
+Le milieu est cherché **en cascade**, dans l'ordre : code **EUNIS**, puis
+**CORINE biotopes**, puis code **Natura 2000** (annexe I ou Cahiers d'habitats).
+Peu importe donc la typologie dans laquelle vous saisissez.
+
+> **Cartographie en PVF1 (Prodrome des végétations)** : dans HABREF, le Prodrome
+> n'a **qu'une seule** table de correspondance, `PVF1_HIC`, qui mène aux habitats
+> d'intérêt communautaire — jamais à EUNIS. Sans la cascade, toute une carto PVF1
+> serait restée grise. Elle est désormais colorée d'après les codes Natura 2000,
+> et l'infobulle indique la typologie qui a servi (colonne `source_classe`).
+
+Reste en gris — « Habitat non rattaché » — ce qui n'a **aucune** correspondance
+dans HABREF, à aucun niveau. Là, ce n'est pas un défaut d'affichage : c'est que
+le référentiel ne relie pas ce syntaxon. Les requêtes de diagnostic du README
+(§6) permettent de les compter et de les lister.
+
+La légende est **à deux niveaux** : chaque grand milieu forme un groupe repliable
+dans le panneau des couches, avec ses habitats dessous.
+
+> Un même habitat garde **la même couleur sur toutes les stations** — la couleur
+> suit le `cd_hab`, pas le nom cité, qui peut varier d'une station à l'autre.
+> Au-delà de six ou sept habitats dans un même milieu, les nuances se
+> rapprochent : c'est la limite d'un ton unique, et c'est précisément pourquoi
+> la légende les groupe par milieu.
+
+| Lettre | Milieu | | Lettre | Milieu |
+|---|---|---|---|---|
+| **G** | Forêts et bois | | **D** | Tourbières et bas-marais |
+| **E** | Prairies et pelouses | | **C** | Eaux douces |
+| **F** | Landes et fruticées | | **H** | Rochers, éboulis |
+| **B** | Côtes, dunes | | **I** | Cultures et jardins |
+| **A** | Milieux marins | | **J** | Bâti, artificialisé |
+
+La **légende ne contient que les milieux réellement présents** dans ce que vous
+avez chargé : elle se reconstruit à chaque chargement.
+
+#### Les stations en mosaïque
+
+Un polygone portant plusieurs habitats est **partagé en bandes**, chacune de la
+couleur d'un habitat et **proportionnelle à son recouvrement** : une station à
+60 % de hêtraie, 25 % de lande et 15 % de prairie se lit en trois bandes de ces
+tailles-là, du bas vers le haut, de la plus couvrante à la moins couvrante. Un
+contour unique cerne la station.
+
+Chaque habitat garde donc un **aplat de couleur franc** — la même lisibilité
+qu'une carte à un seul habitat, quelle que soit la densité de polygones. La
+composition chiffrée reste en infobulle (**Afficher les infobulles** dans la
+barre d'outils) : « Hêtraie 60 % ; Lande à genêts 25 % ; Prairie de fauche 15 % ».
+
+La séparation entre deux bandes est volontairement **estompée**, alors que le
+contour de la station reste **net**. C'est la différence entre les deux qu'il
+faut lire : le trait franc est une limite relevée sur le terrain, le passage
+flou n'existe pas — il ne fait que partager la surface.
+
+> **Les bandes ne disent pas OÙ se trouve chaque habitat** dans le polygone :
+> elles en donnent la proportion, pas la localisation, que la donnée ne contient
+> pas. C'est une convention de lecture, comme un diagramme.
+>
+> Une première version superposait des hachures colorées. Elle saturait la carte
+> dès qu'elle se densifiait, et obligeait à deviner qu'une hachure reprenait la
+> couleur d'un autre poste de légende.
+>
+> Les colonnes `classe_milieu`, `source_classe`, `rang_habitat`, `couleur`,
+> `est_dominant`, `est_mosaique` et `composition` sont dans la table
+> attributaire, à votre disposition pour vos propres styles.
+
+La couche arrive dans un groupe **« OccHab (exports) »**, nommée avec sa période
+— deux années peuvent donc coexister pour être comparées. Ce groupe n'est **pas**
+reconstruit à chaque rafraîchissement, contrairement à « OccHab (serveur) » :
+vos exports restent en place.
+
+> **Rien ne s'affiche, ou trop de choses ?**
+> - *« Aucun export disponible »* : le module **Exports** n'est pas installé sur
+>   l'instance, ou votre compte n'a pas le droit de lecture dessus.
+> - *« Aucun export ne s'appuie sur la vue v_occhab_complet »* : l'export existe
+>   peut-être sous un autre nom, mais sur une autre vue. Il se déclare dans
+>   l'admin GeoNature — schéma `gn_exports`, vue `v_occhab_complet`, clé primaire
+>   `id_ligne`, géométrie `geom`.
+> - Un avertissement dit que **vos filtres n'ont peut-être pas été appliqués** :
+>   l'API d'export ignore silencieusement un filtre portant sur une colonne
+>   absente de la vue. La vue doit exposer `id_dataset`, `date_min` et
+>   `date_max` (voir le README, §6).
+
 ---
 
 ## 9. Synchroniser avec GeoNature

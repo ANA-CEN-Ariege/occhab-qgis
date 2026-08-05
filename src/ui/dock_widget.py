@@ -36,6 +36,7 @@ from .connection_dialog import ConnectionDialog
 from .flow_layout import widget_reflowable
 from .station_dialog import StationDialog
 from .station_form import current_user
+from .export_layers import ExportLayerManager
 from .station_layers import StationLayerManager
 from .server_layers import ServerStationLayerManager
 
@@ -91,6 +92,9 @@ class OccHabDockWidget(QDockWidget):
         self.server_layers = ServerStationLayerManager(
             str(config.user_config_dir / "server_stations.geojson"), self.logger
         )
+        # Couches d'export : un fichier par export chargé, dans le dossier de
+        # configuration — plusieurs périodes doivent pouvoir coexister.
+        self.export_layers = ExportLayerManager(config.user_config_dir, self.logger)
         self._capture = None
         self._capture_target = None  # None/"new" = nouvelle station ; int = id station à re-géométrer
         self._duplicate_source = None  # station à copier pour la création en cours
@@ -336,8 +340,21 @@ class OccHabDockWidget(QDockWidget):
             "Amener une station GeoNature dans votre base locale pour l'éditer."
         )
         import_menu = QMenu(self.btn_import)
+        import_menu.setToolTipsVisible(True)
         import_menu.addAction("Depuis la carte (sélection)…", self.import_server_stations)
         import_menu.addAction("Chercher une station…", self.open_server_picker)
+        import_menu.addSeparator()
+        # Distinct des deux précédentes : celles-ci rapatrient des stations
+        # ÉDITABLES dans la base locale ; un export est une vue préparée côté
+        # serveur, chargée en couche de consultation.
+        act_export = import_menu.addAction(
+            "Charger un export du serveur (couche)…", self.load_server_export
+        )
+        act_export.setToolTip(
+            "Charge un export du module Exports de GeoNature (données "
+            "consolidées, libellés résolus) en couche QGIS lecture seule, "
+            "filtrable par jeu de données et par période."
+        )
         self.btn_import.setMenu(import_menu)
         layout.addWidget(self.btn_import)
 
@@ -1166,6 +1183,136 @@ class OccHabDockWidget(QDockWidget):
         else:  # l'original n'avait pas de géométrie : rien à redessiner
             self._open_station_dialog(None, None)
 
+    # ------------------------------------------------ exports du serveur
+    def load_server_export(self):
+        """Charger un export GeoNature en couche QGIS (lecture seule).
+
+        Volontairement séparé de « Récupérer une station » : un export est une
+        vue préparée côté serveur, à plat et non éditable — la rapatrier dans la
+        base locale n'aurait aucun sens, sa structure n'est pas celle d'OccHab.
+        """
+        from .export_dialog import VUE_EXPORT, ExportPicker, exports_occhab
+
+        if self.client is None or not self.client.is_authenticated:
+            QMessageBox.information(
+                self, "OccHab", "Connectez-vous à GeoNature pour charger un export."
+            )
+            return
+        try:
+            exports = self.client.list_exports()
+        except Exception as exc:  # noqa: BLE001
+            self.logger.error("Liste des exports indisponible : %s", exc)
+            QMessageBox.warning(
+                self, "OccHab", "Liste des exports indisponible : %s" % exc
+            )
+            return
+        if not exports:
+            QMessageBox.information(
+                self, "OccHab",
+                "Aucun export disponible.\n\nLe module « Exports » doit être "
+                "installé sur l'instance GeoNature, et votre compte doit y avoir "
+                "le droit de lecture. Les exports se déclarent dans l'admin "
+                "GeoNature (schéma, vue, colonne clé primaire).",
+            )
+            return
+        # Les autres exports de l'instance (synthèse, taxons, métadonnées…) ne
+        # sont pas proposés : ni les filtres JDD/période ni la lecture de la
+        # couche n'auraient de sens sur une vue de structure inconnue.
+        occhab = exports_occhab(exports)
+        if not occhab:
+            QMessageBox.information(
+                self, "OccHab",
+                "Aucun export ne s'appuie sur la vue « %s ».\n\n%d export(s) "
+                "publié(s) sur cette instance, mais aucun sur cette vue. "
+                "Créez-le dans l'admin GeoNature : schéma « gn_exports », vue "
+                "« %s », colonne clé primaire « id_ligne », champ géométrie "
+                "« geom » (voir le README §6)."
+                % (VUE_EXPORT, len(exports), VUE_EXPORT),
+            )
+            return
+
+        dialog = ExportPicker(
+            occhab, datasets=self._dataset_items(),
+            id_dataset=self.combo_jdd.currentData() if self.combo_jdd.isEnabled() else None,
+            parent=self,
+        )
+        if not dialog.exec():
+            return
+        self._charger_export(dialog.id_export(), dialog.libelle_export(),
+                             dialog.filtres())
+
+    def _charger_export(self, id_export, libelle, filtres):
+        """Rapatrier toutes les pages d'un export et le poser en couche."""
+        from qgis.PyQt.QtCore import Qt as _Qt
+        from qgis.PyQt.QtWidgets import QApplication
+
+        nom_couche = self._nom_couche_export(libelle, filtres)
+        QApplication.setOverrideCursor(_Qt.CursorShape.WaitCursor)
+        try:
+            features, total_filtre, total = self.client.iter_export_features(
+                id_export, filters=filtres,
+                on_progress=lambda recus, attendus: self.logger.debug(
+                    "Export %s : %s/%s entités", id_export, recus, attendus
+                ),
+            )
+        except Exception as exc:  # noqa: BLE001
+            self.logger.error("Chargement de l'export %s échoué : %s", id_export, exc)
+            QMessageBox.critical(self, "Erreur", "Export non chargé : %s" % exc)
+            return
+        finally:
+            QApplication.restoreOverrideCursor()
+
+        if not features:
+            self.iface.messageBar().pushInfo(
+                "OccHab",
+                "L'export « %s » ne renvoie aucune donnée pour ce jeu de données "
+                "et cette période." % libelle,
+            )
+            return
+        layer, count = self.export_layers.show(nom_couche, features)
+        if layer is None:
+            QMessageBox.warning(
+                self, "OccHab",
+                "Export récupéré (%d entités) mais la couche n'a pas pu être "
+                "créée — voir le journal." % len(features),
+            )
+            return
+        self.logger.info(
+            "Export %s chargé : %d entité(s) (annoncées : %s filtrées sur %s au total)",
+            id_export, count, total_filtre, total,
+        )
+        self.iface.messageBar().pushInfo(
+            "OccHab", "Export « %s » : %d entité(s) chargée(s)." % (nom_couche, count)
+        )
+        self._avertir_filtres_ignores(total_filtre, total, filtres)
+
+    def _avertir_filtres_ignores(self, total_filtre, total, filtres):
+        """Prévenir quand le filtrage n'a visiblement rien restreint.
+
+        L'API d'export ignore **en silence** un filtre portant sur une colonne
+        absente de la vue. Sans ce contrôle, on croirait tenir l'année en cours
+        d'un JDD alors qu'on a rapatrié tout l'export. Le doute est signalé, pas
+        affirmé : un filtre peut légitimement retenir la totalité des lignes.
+        """
+        if not filtres or not total or total_filtre != total:
+            return
+        self.iface.messageBar().pushWarning(
+            "OccHab",
+            "Le nombre d'entités renvoyées est celui de l'export entier : vos "
+            "filtres n'ont peut-être pas été appliqués. Vérifiez que la vue "
+            "exportée porte bien les colonnes « id_dataset », « date_min » et "
+            "« date_max » (cf. README §6).",
+        )
+
+    @staticmethod
+    def _nom_couche_export(libelle, filtres):
+        """Nom de couche portant la période : deux années doivent coexister."""
+        debut = (filtres or {}).get("filter_d_up_date_min")
+        fin = (filtres or {}).get("filter_d_lo_date_max")
+        if debut and fin:
+            return "%s (%s → %s)" % (libelle, debut, fin)
+        return libelle
+
     # ------------------------------------- presse-papiers de renseignements
     def copy_station_fields(self):
         """Mettre de côté les renseignements d'une station, pour les coller ailleurs."""
@@ -1695,6 +1842,7 @@ class OccHabDockWidget(QDockWidget):
             self._geom_editor.cancel()
         self.layers.cleanup()
         self.server_layers.cleanup()
+        self.export_layers.cleanup()
 
     def _last_observers(self):
         """Observateurs de la dernière saisie, pour pré-remplir la suivante."""
