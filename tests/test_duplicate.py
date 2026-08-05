@@ -58,7 +58,10 @@ def test_identifiants_serveur_et_locaux_retires():
     template = duplicate.station_template(_station())
 
     for key in ("id", "id_station", "unique_id_sinp_station", "server_snapshot",
-                "sync_status", "sync_date", "date_creation", "date_update"):
+                "sync_status", "sync_date", "date_creation", "date_update",
+                # « créée par moi sur GeoNature » : vrai pour la copie, quoi
+                # qu'il en soit de l'original récupéré du serveur.
+                "mine"):
         assert key not in template, key
     habitat = template["habitats"][0]
     for key in ("id", "id_habitat", "id_station_local", "unique_id_sinp_hab",
@@ -107,6 +110,89 @@ def test_station_vide_ou_none():
         template = duplicate.station_template(source)
         assert template["habitats"] == []
         assert template["observers"] == []
+
+
+def test_collage_ne_touche_pas_au_nom_ni_aux_listes():
+    """Coller renseigne une station DÉJÀ tracée : son nom lui reste propre."""
+    fields = duplicate.paste_fields(duplicate.station_template(_station()))
+
+    assert "station_name" not in fields
+    assert "habitats" not in fields  # écrits table par table par l'appelant
+    assert "observers" not in fields
+    # La géométrie de la cible n'est pas concernée, ni son identité.
+    for key in ("geom", "geom_type", "area", "altitude_min", "id", "id_station",
+                "validation_status"):
+        assert key not in fields, key
+    assert fields["id_dataset"] == 3
+    assert fields["date_min"] == "2026-06-12"
+
+
+def test_collage_source_vide():
+    assert duplicate.paste_fields(None) == {}
+
+
+def _habitat():
+    return {
+        "id": 40,
+        "id_habitat": 8901,
+        "id_station_local": 12,
+        "unique_id_sinp_hab": "77aa…",
+        "sync_status": "synced",
+        "cd_hab": 5130,
+        "nom_cite": "Fruticées",
+        "recovery_percentage": 60,
+        "determiner": "Roy Cédric",
+        "id_nomenclature_determination_type": 383,
+        "id_nomenclature_collection_technique": 411,
+        "id_nomenclature_abundance": 202,
+        "id_nomenclature_sensitivity": 160,
+        "technical_precision": (
+            "au jugé\n\n[ANA-EVAL] {\"etat_conservation\": \"bon\", "
+            "\"recouvrement\": 60, \"typicite\": \"bonne\"} [/ANA-EVAL]"
+        ),
+    }
+
+
+def test_reprise_habitat_garde_le_contexte_de_saisie():
+    """Ce qui se répète d'un habitat au suivant : détermination, technique, N2000."""
+    reprise = duplicate.habitat_reprise(_habitat())
+
+    assert reprise["determiner"] == "Roy Cédric"
+    assert reprise["id_nomenclature_determination_type"] == 383
+    assert reprise["id_nomenclature_collection_technique"] == 411
+    assert reprise["id_nomenclature_sensitivity"] == 160
+    assert "etat_conservation" in reprise["technical_precision"]
+    assert "typicite" in reprise["technical_precision"]
+    assert "au jugé" in reprise["technical_precision"]  # texte humain préservé
+
+
+def test_reprise_habitat_sans_identite_ni_mesure():
+    """Nom cité, code, recouvrement et abondance sont propres à CHAQUE habitat.
+
+    Le recouvrement est aussi encodé dans le bloc ANA-EVAL : l'y laisser le
+    ferait réapparaître dans le formulaire suivant malgré la colonne retirée.
+    """
+    reprise = duplicate.habitat_reprise(_habitat())
+
+    for key in ("nom_cite", "cd_hab", "recovery_percentage",
+                "id_nomenclature_abundance", "id", "id_habitat",
+                "id_station_local", "unique_id_sinp_hab", "sync_status"):
+        assert key not in reprise, key
+    assert "recouvrement" not in reprise["technical_precision"]
+
+
+def test_reprise_habitat_sans_bloc_ni_source():
+    """Un habitat sans précision technique ne fabrique pas de bloc vide."""
+    assert duplicate.habitat_reprise({}) == {}
+    assert duplicate.habitat_reprise(None) == {}
+    reprise = duplicate.habitat_reprise({"technical_precision": "", "determiner": "X"})
+    assert reprise["technical_precision"] == ""
+
+    # Un bloc ne contenant QUE le recouvrement disparaît entièrement.
+    reprise = duplicate.habitat_reprise(
+        {"technical_precision": "[ANA-EVAL] {\"recouvrement\": 40} [/ANA-EVAL]"}
+    )
+    assert reprise["technical_precision"] is None
 
 
 def test_duplicata_repart_en_brouillon():

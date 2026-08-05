@@ -168,26 +168,55 @@ stations du JDD que vos permissions GeoNature vous autorisent à voir.
    **sélection multiple → une station par entité**, métadonnées communes saisies
    une seule fois, nom laissé vide), *Dupliquer la station sélectionnée* (reprend
    attributs, dates, observateurs **et habitats** d'une station existante ;
-   géométrie redessinée, jamais copiée — cf. `src/processing/duplicate.py`), ou
-   *Sans géométrie* (à tracer plus tard).
+   géométrie redessinée, jamais copiée — cf. `src/processing/duplicate.py`),
+   *Dessiner un polygone avec les renseignements copiés* (voir « Recopier une
+   station » ci-dessous), ou *Sans géométrie* (à tracer plus tard).
    Surface et altitude se calculent automatiquement pour un polygone.
 2. Remplir le **formulaire station**, à **deux niveaux** : l'**Essentiel** (JDD,
-   nom, **observateurs**, dates, enjeu, état, commentaire) est visible ; le reste
-   (altitude, profondeur, surface, exposition, type de sol, type de mosaïque,
-   nature d'objet) est sous **« Détails »** (replié, déplié auto en édition s'il
+   nom, **observateurs**, dates, unité végétale, nature de l'observation, enjeu,
+   état, commentaire) est visible ; le reste (altitude, profondeur, surface,
+   exposition, type de sol, type de mosaïque, nature d'objet, échelle de
+   numérisation) est sous **« Détails »** (replié, déplié auto en édition s'il
    est rempli). Le champ **Observateur(s)** est à **autocomplétion** (déroulez ou
    tapez ; les retenus s'affichent dessous, retirables). **Ajouter un ou plusieurs
    habitats** (**facultatif** — on peut créer la station géométrie d'abord et la
    qualifier plus tard ; recherche HABREF sur le nom cité → remplit `cd_hab` ; la
-   liste affiche le **% de recouvrement** de chacun). La technique de collecte est
-   **« In situ »** par défaut, la sensibilité **« Non sensible »**.
+   liste affiche le **% de recouvrement** de chacun). Le formulaire d'habitat
+   présente d'abord ce qui se saisit à chaque fois (détermination, technique,
+   recouvrement, enjeu, état de conservation, **critère d'évaluation** et
+   **PEE**) ; **abondance** et **sensibilité** sont repliées en bas, la section
+   s'ouvrant d'elle-même quand une valeur s'écarte du défaut d'instance. La
+   technique de collecte est **« In situ »** par défaut, la sensibilité
+   **« Non sensible »**.
    **Reprise de la saisie précédente** : les **observateurs** de la dernière station
    créée sont pré-remplis (persistés dans `last_entry.observers` de la
    configuration) et les **dates** reprises *dans la session QGIS courante* — au
    redémarrage on repart d'aujourd'hui, pour ne pas traîner une date périmée. Ce qui
-   est repris est signalé sous les dates par une mention « ↺ … ».
+   est repris est signalé sous les dates par une mention « ↺ … ». De même pour
+   l'**habitat** (`last_entry.habitat`) : chaque nouvel habitat reprend les champs
+   du dernier saisi — **sauf** nom cité, `cd_hab`, recouvrement et abondance, qui
+   lui sont propres (`habitat_reprise`, cf. `src/processing/duplicate.py`).
 3. La station apparaît dans **« Mes stations »**, identifiée par son habitat
    (« 41.2 - Chênaies-charmaies (+N) »), état *À synchroniser*.
+
+### Recopier une station
+Un même modèle (`station_template` / `paste_fields`) sert trois gestes :
+
+- **clic droit → « Copier les renseignements »** met de côté JDD, dates,
+  observateurs, attributs, commentaire et habitats d'une station (mémoire de la
+  session QGIS) ;
+- **clic droit → « Coller les renseignements »** les applique à la ou aux
+  stations sélectionnées, **déjà tracées** : leur **géométrie**, leur **nom** et
+  leur **statut** de validation sont conservés, leurs habitats **remplacés**
+  (confirmation chiffrée avant écriture) ; elles repassent *À synchroniser* et
+  l'auteur du collage devient `updated_by` ;
+- **« Reprendre une station renseignée… »**, en haut du formulaire ouvert,
+  recopie une station choisie dans une liste filtrable — sans rien enregistrer
+  avant validation du formulaire.
+
+L'identité (`id`, `id_station`, uuid SINP, empreinte serveur) et le drapeau
+`mine` ne sont **jamais** copiés : une copie est une station neuve, dont on est
+l'auteur.
 
 ### Éditer
 Ouvrir une station : **« Éditer »** (barre au-dessus du tableau), **double-clic**
@@ -539,19 +568,23 @@ du JDD courant, **une ligne par habitat** — la géométrie et les champs stati
   la sélection carte impossible. Les boucles sont coupées par un verrou unique
   dans `StationLayerManager` — une sélection posée par le code ne notifie pas.
 - **Édition en place**, éditeur adapté au type déclaré dans le registre de champs.
+  La cellule **« Nom cité »** fait exception : elle ouvre la **recherche HABREF**
+  (`HabrefLineEdit`), et l'habitat retenu écrit **nom cité + `cd_hab`** sur la
+  ligne — via `GrilleModel.definir_par_cle`, donc même si la colonne `cd_hab`
+  n'est pas affichée, et via `mapToSource` pour viser la bonne ligne sous un
+  filtre. Hors connexion, repli sur du texte libre (annoncé en infobulle).
 - Un champ **station** modifié sur une ligne l'est **pour toutes ses lignes
   sœurs** : les colonnes station sont teintées et le signalent en infobulle.
 - **« Modifier les lignes sélectionnées… »** pousse les mêmes valeurs sur un lot ;
   chaque champ a une case à cocher, sinon valider écraserait tout avec du vide.
+  Les champs restent **saisissables** et la saisie coche la case : les griser
+  d'avance rendait le bloc HABREF « Nom cité » inerte sans que rien ne l'explique.
   Le bouton porte le nombre de lignes visées et reste grisé sans sélection : le
   libellé « Appliquer à la sélection… » ne disait pas ce qu'il appliquait.
-  L'**identité de l'habitat** (`cd_hab` + `nom_cite`) s'y modifie via une
-  **recherche HABREF** (composant `ui/habref_widget.py`, partagé avec le
-  formulaire) : choisir un habitat coche et renseigne **les deux champs**, un
-  code qui ne correspondrait plus à son nom étant une donnée incohérente.
-  En revanche, l'édition **cellule par cellule** du nom cité reste du texte
-  libre — c'est le champ « nom *cité* », qui peut légitimement s'écarter du
-  libellé HABREF.
+  L'**identité de l'habitat** (`cd_hab` + `nom_cite`) s'y modifie via la même
+  **recherche HABREF** (`ui/habref_widget.py`, partagé par le formulaire, le lot
+  et les cellules) : choisir un habitat coche et renseigne **les deux champs**,
+  un code qui ne correspondrait plus à son nom étant une donnée incohérente.
 - **« Marquer comme validées »** passe les stations de brouillon à validé.
 - Le registre distingue **`cellule`** (saisissable dans une cellule) de
   **`masse`** (modifiable en lot) : les observateurs, liste multi-valuée, sont
@@ -616,6 +649,8 @@ avancés (non exposés dans l'UI) :
 | `geonature.occhab_module_code` | `OCCHAB` | Code du module OccHab |
 | `id_dataset` | — | JDD courant |
 | `last_entry.observers` | `[]` | Observateurs de la dernière saisie (pré-remplissage) |
+| `last_entry.cd_typo` | — | Typologie HABREF de la dernière saisie (filtre pré-réglé) |
+| `last_entry.habitat` | — | Dernier habitat saisi, sans son identité ni ses mesures (pré-remplissage) |
 | `local_db.path` | auto | Chemin de la base SQLite |
 
 ---
@@ -638,12 +673,13 @@ occhab/
     │                 eval_fields.py             # bloc ANA-EVAL : encodage JSON (pur, testé)
     │                 grille.py                  # tampon d'édition en masse (pur, testé)
     │                 export.py                  # aplatissement cartographie (pur, testé)
-    │                 duplicate.py               # modèle de duplication (pur, testé)
+    │                 duplicate.py               # duplication / collage / reprise (pur, testé)
     │                 geometry.py                # WKT/GeoJSON, reprojection 4326
     └── ui/           dock_widget.py             # dock principal
                       attribute_table.py         # table stations × habitats (adaptateur Qt)
                       dialog_size.py             # dialogues défilants, bornés à l'écran
                       station_form.py · habitat_form.py · station_dialog.py
+                      station_picker_dialog.py   # choix d'une station à recopier
                       connection_dialog.py
                       map_tools.py               # capture + édition de géométrie
                       station_layers.py · server_layers.py   # couches carte

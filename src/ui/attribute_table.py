@@ -22,6 +22,7 @@ from qgis.PyQt.QtCore import (
     QModelIndex,
     QSortFilterProxyModel,
     Qt,
+    QTimer,
     pyqtSignal,
 )
 from qgis.PyQt.QtGui import QBrush, QColor
@@ -34,6 +35,7 @@ from qgis.PyQt.QtWidgets import (
     QDialogButtonBox,
     QDoubleSpinBox,
     QFormLayout,
+    QFrame,
     QHBoxLayout,
     QHeaderView,
     QLabel,
@@ -55,8 +57,8 @@ from ..database.sqlite_local import BROUILLON, VALIDE
 from ..processing import champs as ch
 from ..processing.grille import Grille
 from ..processing.referentiels import label_for
-from .dialog_size import ajuster_a_l_ecran
-from .habref_widget import HabrefSearchEdit
+from .dialog_size import ajuster_a_l_ecran, borner_largeur_combos
+from .habref_widget import HabrefLineEdit, HabrefSearchEdit
 from .no_wheel import FiltreMolette, proteger_du_defilement
 
 # Jeux de colonnes : 25 colonnes ne tiennent pas à l'écran, et un botaniste qui
@@ -75,6 +77,19 @@ _SEPARATEUR_LISTE = " ; "
 LIBELLE_MODIFIER = "Modifier les lignes sélectionnées…"
 LIBELLE_MODIFIER_1 = "Modifier la ligne sélectionnée…"
 LIBELLE_MODIFIER_N = "Modifier les %d lignes sélectionnées…"
+
+#: Suffixes de niveau portés par certains libellés du registre pour les
+#: distinguer entre eux (« Enjeu (station) » / « Enjeu (habitat) »). Sous un
+#: titre de section qui dit déjà le niveau, ils font double emploi.
+_SUFFIXES_NIVEAU = (" (station)", " (habitat)")
+
+
+def _libelle_court(champ):
+    """Libellé du champ sans son suffixe de niveau."""
+    for suffixe in _SUFFIXES_NIVEAU:
+        if champ.libelle.endswith(suffixe):
+            return champ.libelle[: -len(suffixe)]
+    return champ.libelle
 
 
 class Contexte:
@@ -154,6 +169,17 @@ class GrilleModel(QAbstractTableModel):
         if role == Qt.ItemDataRole.ToolTipRole:
             portee = "Champ de la station — partagé par ses habitats" \
                 if champ.niveau == ch.STATION else "Champ de l'habitat"
+            if (champ.niveau, champ.cle) == (ch.HABITAT, "nom_cite"):
+                # Hors connexion la cellule redevient du texte libre : le dire,
+                # sinon on croit avoir changé d'habitat alors que le cd_hab de la
+                # ligne pointe toujours sur l'ancienne détermination.
+                portee += (
+                    "\nDouble-clic : liste HABREF ; l'habitat choisi renseigne "
+                    "aussi le cd_hab."
+                    if self.contexte.habref_search is not None else
+                    "\nHors connexion : saisie libre — pensez à corriger le "
+                    "cd_hab vous-même."
+                )
             return "%s\n%s" % (champ.libelle, portee)
         return None
 
@@ -215,6 +241,25 @@ class GrilleModel(QAbstractTableModel):
             self.dataChanged.emit(index, index)
         return True
 
+    def definir_par_cle(self, row, niveau, cle, valeur):
+        """Poser un champ d'une ligne par sa clé, colonne affichée ou non.
+
+        Choisir un habitat dans la cellule « Nom cité » doit aussi écrire son
+        `cd_hab` — or cette colonne peut très bien ne pas être affichée dans le
+        jeu courant. Passer par la clé, et non par un numéro de colonne, est le
+        seul moyen d'écrire les deux ensemble sans dépendre de l'affichage.
+        """
+        champ = ch.par_cle(niveau, cle)
+        if champ is None or not (0 <= row < len(self.grille)):
+            return False
+        if not self.grille.definir(self.grille.lignes[row], champ, valeur):
+            return False
+        # La colonne peut être absente de l'affichage : rafraîchir la ligne
+        # entière est plus simple et sans risque que de la chercher.
+        self.dataChanged.emit(self.index(row, 0),
+                              self.index(row, len(self.colonnes) - 1))
+        return True
+
     def rafraichir_tout(self):
         """Signaler que l'ensemble des cellules a pu changer (après une application en masse)."""
         if len(self.grille) and self.colonnes:
@@ -271,6 +316,23 @@ class ChampDelegate(QStyledItemDelegate):
 
     def _creer_editeur(self, parent, option, index):
         champ = self.colonnes[index.column()]
+        # Nom cité : choisir un habitat dans la liste HABREF, comme au
+        # formulaire. Retaper le nom à la main laissait le cd_hab de la ligne
+        # sur l'ancienne détermination — une donnée incohérente, et invisible.
+        if ((champ.niveau, champ.cle) == (ch.HABITAT, "nom_cite")
+                and self.contexte.habref_search is not None):
+            editor = HabrefLineEdit(
+                habref_search=self.contexte.habref_search,
+                typo_names=dict(self.contexte.typologies),
+                cd_typo=self.contexte.cd_typo,
+                parent=parent,
+            )
+            # Valider dès qu'une proposition est retenue : sans cela il faudrait
+            # encore appuyer sur Entrée dans une cellule qui semble déjà remplie.
+            editor.habitat_choisi.connect(
+                lambda _cd, _nom, e=editor: self._valider_habref(e)
+            )
+            return editor
         if champ.type in (ch.CODE, ch.NOMENCLATURE, ch.JDD):
             editor = QComboBox(parent)
             editor.addItem("— non renseigné —", None)
@@ -322,8 +384,33 @@ class ChampDelegate(QStyledItemDelegate):
         else:
             editor.setText(self.contexte.libelle(champ, valeur))
 
+    def _valider_habref(self, editor):
+        """Écrire la cellule et refermer l'éditeur dès l'habitat choisi.
+
+        Différé d'un tour de boucle : on est ici DANS le signal du complèteur,
+        dont le menu déroulant est encore ouvert sur ce même champ. Le refermer
+        sur-le-champ reviendrait à détruire un widget en cours d'utilisation.
+        """
+        def _valider():
+            try:
+                self.commitData.emit(editor)
+                self.closeEditor.emit(editor)
+            except RuntimeError:  # pragma: no cover - éditeur déjà refermé
+                pass
+
+        QTimer.singleShot(0, _valider)
+
     def setModelData(self, editor, model, index):
         champ = self.colonnes[index.column()]
+        if isinstance(editor, HabrefLineEdit):
+            # `nom_choisi` plutôt que le texte du champ : le complèteur peut
+            # encore être en train d'y réécrire le libellé préfixé de la
+            # typologie, qui n'est pas le nom cité.
+            nom = editor.nom_choisi or editor.text().strip() or None
+            model.setData(index, nom, Qt.ItemDataRole.EditRole)
+            if editor.cd_choisi is not None and editor.nom_choisi:
+                self._ecrire_cd_hab(model, index, editor.cd_choisi)
+            return
         if isinstance(editor, QComboBox):
             valeur = editor.currentData()
         elif isinstance(editor, QDateEdit):
@@ -337,6 +424,23 @@ class ChampDelegate(QStyledItemDelegate):
             else:
                 valeur = texte or None
         model.setData(index, valeur, Qt.ItemDataRole.EditRole)
+
+    @staticmethod
+    def _ecrire_cd_hab(model, index, cd_hab):
+        """Poser le cd_hab de la MÊME ligne, à travers le filtre s'il y en a un.
+
+        Le modèle vu par la vue est le proxy de filtrage : ses numéros de ligne
+        ne sont pas ceux de la grille. Écrire sans repasser par `mapToSource`
+        aurait posé le code sur l'habitat d'une autre ligne dès qu'un filtre est
+        actif — soit exactement quand on corrige une détermination en série.
+        """
+        source = model
+        row = index.row()
+        if hasattr(model, "mapToSource"):
+            row = model.mapToSource(index).row()
+            source = model.sourceModel()
+        if hasattr(source, "definir_par_cle"):
+            source.definir_par_cle(row, ch.HABITAT, "cd_hab", cd_hab)
 
 
 class _ObservateursEdit(QListWidget):
@@ -378,6 +482,13 @@ class AppliquerDialog(QDialog):
 
     Chaque champ a une case « modifier » décochée : sans elle, ouvrir la fenêtre
     et valider écraserait tout avec des valeurs vides.
+
+    Les champs restent **saisissables** et c'est la saisie qui coche la case.
+    Les griser tant que la case n'était pas cochée se retournait contre le champ
+    le plus utile de la fenêtre : « Nom cité » n'est pas une simple ligne de
+    texte mais un bloc HABREF (typologie + recherche), qu'on ne lit pas comme un
+    champ désactivé. On cliquait dedans, on tapait, rien ne se passait — et la
+    saisie groupée du syntaxon paraissait ne pas fonctionner.
     """
 
     def __init__(self, contexte, nb_lignes, parent=None):
@@ -405,25 +516,48 @@ class AppliquerDialog(QDialog):
         # les boutons deviennent inatteignables.
         interieur = QWidget()
         form = QFormLayout(interieur)
-        for champ in ch.modifiables_en_masse():
-            case = QCheckBox()
-            widget = self._widget(champ)
-            widget.setEnabled(False)
-            case.toggled.connect(widget.setEnabled)
-            rang = QWidget()
-            box = QHBoxLayout(rang)
-            box.setContentsMargins(0, 0, 0, 0)
-            box.addWidget(case)
-            box.addWidget(widget, 1)
-            portee = "station" if champ.niveau == ch.STATION else "habitat"
-            form.addRow("%s (%s)" % (champ.libelle, portee), rang)
-            self._editeurs[(champ.niveau, champ.cle)] = (case, widget, champ)
+        # Deux sections plutôt qu'un suffixe « (station) » / « (habitat) » sur
+        # chaque ligne : le suffixe était répété une trentaine de fois, élargissait
+        # d'autant la colonne des libellés, et se doublait pour les champs qui
+        # portent déjà leur niveau dans leur nom (« Enjeu (habitat) (habitat) »).
+        for niveau, titre in (
+            (ch.STATION, "Champs de la station — appliqués à tous ses habitats"),
+            (ch.HABITAT, "Champs de l'habitat — appliqués aux lignes visées"),
+        ):
+            form.addRow(self._entete_section(titre))
+            for champ in ch.modifiables_en_masse(niveau):
+                case = QCheckBox()
+                case.setToolTip(
+                    "Cochez pour appliquer ce champ ; saisir une valeur le coche "
+                    "tout seul."
+                )
+                widget = self._widget(champ)
+                self._cocher_a_la_saisie(case, widget)
+                if isinstance(widget, HabrefLineEdit):
+                    # Filtre de recherche, pas une valeur à appliquer : sa ligne
+                    # n'a donc pas de case à cocher.
+                    form.addRow("Typologie", self._combo_typologie(widget))
+                rang = QWidget()
+                box = QHBoxLayout(rang)
+                box.setContentsMargins(0, 0, 0, 0)
+                box.addWidget(case)
+                box.addWidget(widget, 1)
+                form.addRow(_libelle_court(champ), rang)
+                self._editeurs[(champ.niveau, champ.cle)] = (case, widget, champ)
         self._lier_habref()
+        # Qt dimensionne une liste déroulante sur son entrée la PLUS LONGUE :
+        # une seule nomenclature réclamait 611 px, le contenu 918 px, et la
+        # fenêtre s'ouvrait avec un ascenseur HORIZONTAL sur des champs pourtant
+        # courts. Le champ replié est borné, le menu déroulant reste lisible.
+        # Plus court qu'au formulaire : chaque ligne porte ici, en plus, sa case
+        # à cocher et un libellé qui nomme le champ pour les deux niveaux.
+        borner_largeur_combos(interieur, caracteres=self.LARGEUR_COMBO)
         # Une trentaine de champs dans un ascenseur : c'est le cas type où la
         # molette modifie des valeurs pendant qu'on cherche un champ plus bas.
         self._filtre_molette = proteger_du_defilement(interieur)
         ascenseur = QScrollArea()
         ascenseur.setWidgetResizable(True)
+        ascenseur.setFrameShape(QFrame.Shape.NoFrame)  # cf. `rendre_defilant`
         ascenseur.setWidget(interieur)
         layout.addWidget(ascenseur, 1)
 
@@ -434,19 +568,36 @@ class AppliquerDialog(QDialog):
         boutons.rejected.connect(self.reject)
         layout.addWidget(boutons)
 
+    #: Largeur des listes déroulantes, en caractères (cf. `dialog_size`). Choisie
+    #: pour que le contenu tienne dans `TAILLE_VOULUE` sans ascenseur horizontal,
+    #: ascenseur vertical déduit — c'est lui qui rogne les derniers pixels.
+    LARGEUR_COMBO = 16
+    #: Taille d'ouverture souhaitée, bornée ensuite à l'écran.
+    TAILLE_VOULUE = (520, 620)
+
     def showEvent(self, event):
         super().showEvent(event)
-        ajuster_a_l_ecran(self, 520, 620)
+        ajuster_a_l_ecran(self, *self.TAILLE_VOULUE)
+
+    @staticmethod
+    def _entete_section(titre):
+        """Titre de section, en pleine largeur du formulaire."""
+        label = QLabel(titre)
+        label.setWordWrap(True)
+        label.setStyleSheet("font-weight: 600; margin-top: 6px;")
+        return label
 
     def _widget(self, champ):
         if champ.type == ch.OBSERVATEURS:
             return _ObservateursEdit(self.contexte.observers)
         if (champ.niveau, champ.cle) == (ch.HABITAT, "nom_cite"):
             # Choisir un habitat, pas taper un nom : le code suit automatiquement.
-            return HabrefSearchEdit(
+            # La ligne de saisie SEULE (pas le bloc complet du formulaire) : son
+            # bloc porte sa propre colonne de libellés imbriquée, qui imposait à
+            # elle seule la largeur minimale de toute la fenêtre.
+            return HabrefLineEdit(
                 habref_search=self.contexte.habref_search,
-                typologies=self.contexte.typologies,
-                libelle="Nom cité",
+                typo_names=dict(self.contexte.typologies),
                 cd_typo=self.contexte.cd_typo,
             )
         if champ.type in (ch.CODE, ch.NOMENCLATURE, ch.JDD):
@@ -477,6 +628,50 @@ class AppliquerDialog(QDialog):
             return widget
         return QLineEdit()
 
+    def _combo_typologie(self, edit):
+        """Menu de typologie qui cible la recherche HABREF de `edit`."""
+        combo = QComboBox()
+        combo.addItem("Toutes les typologies", None)
+        for cd_typo, nom in self.contexte.typologies:
+            combo.addItem(nom, cd_typo)
+        position = combo.findData(self.contexte.cd_typo)
+        if position >= 0:  # typologie de la dernière saisie
+            combo.setCurrentIndex(position)
+        combo.currentIndexChanged.connect(
+            lambda _i: edit.definir_typologie(combo.currentData())
+        )
+        combo.setEnabled(self.contexte.habref_search is not None)
+        return combo
+
+    @staticmethod
+    def _cocher_a_la_saisie(case, widget):
+        """Cocher « modifier » dès que l'utilisateur touche au champ.
+
+        On ne relie que des signaux d'origine UTILISATEUR (`textEdited`,
+        `activated`) là où c'est possible : `textChanged` ou `currentIndexChanged`
+        se déclenchent aussi au remplissage du formulaire, ce qui cocherait tout
+        à l'ouverture — et vider les 40 lignes sélectionnées à la validation.
+        """
+        cocher = lambda *_args: case.setChecked(True)  # noqa: E731
+        if isinstance(widget, HabrefLineEdit):
+            widget.textEdited.connect(cocher)
+            widget.habitat_choisi.connect(cocher)
+            return
+        if isinstance(widget, _ObservateursEdit):
+            widget.itemChanged.connect(cocher)
+            return
+        if isinstance(widget, QComboBox):
+            widget.activated.connect(cocher)
+            return
+        if isinstance(widget, QDateEdit):
+            widget.dateChanged.connect(cocher)
+            return
+        if isinstance(widget, (QDoubleSpinBox, QSpinBox)):
+            widget.valueChanged.connect(cocher)
+            return
+        if isinstance(widget, QLineEdit):
+            widget.textEdited.connect(cocher)
+
     def _lier_habref(self):
         """Un habitat choisi renseigne le nom ET le code, et coche les deux cases.
 
@@ -485,7 +680,7 @@ class AppliquerDialog(QDialog):
         """
         nom = self._editeurs.get((ch.HABITAT, "nom_cite"))
         code = self._editeurs.get((ch.HABITAT, "cd_hab"))
-        if not nom or not code or not isinstance(nom[1], HabrefSearchEdit):
+        if not nom or not code or not isinstance(nom[1], HabrefLineEdit):
             return
 
         def _sur_choix(cd_hab, libelle):

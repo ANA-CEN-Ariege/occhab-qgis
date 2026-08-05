@@ -14,6 +14,7 @@ from qgis.PyQt.QtWidgets import (
     QComboBox,
     QDoubleSpinBox,
     QFormLayout,
+    QLabel,
     QLineEdit,
     QSpinBox,
     QTextEdit,
@@ -47,8 +48,13 @@ class HabitatForm(QWidget):
 
     def __init__(self, nomenclatures=None, habref_search=None, typologies=None,
                  user_names=None, default_determiner=None, defaults=None,
-                 abundance_cover_map=None, cd_typo=None, parent=None):
+                 abundance_cover_map=None, cd_typo=None, last_habitat=None,
+                 parent=None):
         super().__init__(parent)
+        # Habitat de la saisie précédente, sans son identité ni son recouvrement
+        # (cf. `processing.duplicate.habitat_reprise`) : pré-remplit un NOUVEL
+        # habitat. En édition, les valeurs de l'habitat l'emportent (`set_data`).
+        self._last_habitat = last_habitat or None
         # Typologie de la dernière saisie : sur une campagne, on reste dans la
         # même (CORINE, EUNIS…). La retrouver à chaque habitat était fastidieux.
         self._cd_typo = cd_typo
@@ -66,6 +72,18 @@ class HabitatForm(QWidget):
 
     def _build(self):
         form = QFormLayout(self)
+
+        # Ce qui est repris de la saisie précédente doit se voir : un type de
+        # détermination ou un état de conservation hérité en silence serait une
+        # erreur de donnée invisible (cf. la même mention côté station).
+        self.label_repris = QLabel(
+            "↺ Champs repris de la saisie précédente (hors nom cité, code, "
+            "recouvrement et abondance) — vérifiez-les."
+        )
+        self.label_repris.setWordWrap(True)
+        self.label_repris.setStyleSheet("color: palette(mid); font-style: italic;")
+        self.label_repris.setVisible(False)
+        form.addRow(self.label_repris)
 
         # --- Nom cité (obligatoire) + autocomplétion HABREF ---
         # Composant partagé avec l'édition en masse : le choix d'un habitat doit
@@ -123,20 +141,11 @@ class HabitatForm(QWidget):
         self.spin_recouvrement.setSuffix(" %")
         self.spin_recouvrement.setSpecialValueText("—")  # 0 = non renseigné
         self.spin_recouvrement.valueChanged.connect(self._on_recouvrement_changed)
+        self.spin_recouvrement.setToolTip(
+            "Renseigner le recouvrement pré-sélectionne la classe d'abondance "
+            "correspondante (repliée en bas du formulaire)."
+        )
         form.addRow("Recouvrement", self.spin_recouvrement)
-
-        self.combo_abundance = QComboBox()
-        fill_eval_combo(self.combo_abundance, self.nomenclatures.get("abundance", []))
-        select_combo_data(self.combo_abundance, self._defaults.get("abundance"))
-        form.addRow("Abondance", self.combo_abundance)
-
-        # Sensibilité : absente de certaines instances → menu créé seulement si dispo.
-        self.combo_sensitivity = None
-        if self.nomenclatures.get("sensitivity"):
-            self.combo_sensitivity = QComboBox()
-            fill_eval_combo(self.combo_sensitivity, self.nomenclatures["sensitivity"])
-            select_combo_data(self.combo_sensitivity, self._defaults.get("sensitivity"))
-            form.addRow("Sensibilité", self.combo_sensitivity)
 
         # Extension ANA : encodés dans technical_precision (voir README §6).
         self.combo_enjeu = QComboBox()
@@ -147,8 +156,25 @@ class HabitatForm(QWidget):
         fill_eval_combo(self.combo_etat, ETATS_CONSERVATION)
         form.addRow("État de conservation", self.combo_etat)
 
+        # Critère d'évaluation et PEE : ils justifient l'état de conservation
+        # qu'on vient de choisir. Ils sont donc posés à sa suite, et non dans le
+        # bloc Natura 2000 replié où on ne pensait pas à les remplir.
+        self.text_critere = QTextEdit()
+        self.text_critere.setPlaceholderText(
+            "Critère ayant servi à évaluer l'état de conservation…"
+        )
+        self.text_critere.setMaximumHeight(55)
+        form.addRow("Critère d'évaluation", self.text_critere)
+
+        self.edit_pee = QLineEdit()
+        self.edit_pee.setPlaceholderText("Taxon 1 ; Taxon 2 ; Taxon 3")
+        self.edit_pee.setToolTip(
+            "Plantes exotiques envahissantes : 3 taxons au plus, séparés par « ; »."
+        )
+        form.addRow("PEE", self.edit_pee)
+
         # ============ Natura 2000 (replié par défaut) ============
-        # Six champs de plus sur chaque habitat : hors cartographie N2000 ils
+        # Quatre champs de plus sur chaque habitat : hors cartographie N2000 ils
         # alourdiraient la saisie courante pour rien, d'où le repli.
         self.btn_n2000 = QToolButton()
         self.btn_n2000.setAutoRaise(True)
@@ -173,20 +199,6 @@ class HabitatForm(QWidget):
         fill_eval_combo(self.combo_restauration, RESTAURATIONS)
         n2000_form.addRow("Restauration", self.combo_restauration)
 
-        self.text_critere = QTextEdit()
-        self.text_critere.setPlaceholderText(
-            "Critère ayant servi à évaluer l'état de conservation…"
-        )
-        self.text_critere.setMaximumHeight(55)
-        n2000_form.addRow("Critère d'évaluation", self.text_critere)
-
-        self.edit_pee = QLineEdit()
-        self.edit_pee.setPlaceholderText("Taxon 1 ; Taxon 2 ; Taxon 3")
-        self.edit_pee.setToolTip(
-            "Plantes exotiques envahissantes : 3 taxons au plus, séparés par « ; »."
-        )
-        n2000_form.addRow("PEE", self.edit_pee)
-
         self.text_remarque = QTextEdit()
         self.text_remarque.setPlaceholderText("Remarque sur l'habitat…")
         self.text_remarque.setMaximumHeight(55)
@@ -194,6 +206,44 @@ class HabitatForm(QWidget):
 
         form.addRow(self.n2000)
         self._set_n2000_visible(False)
+
+        # ====== Abondance et sensibilité (repliées, en bas) ======
+        # Deux menus qui n'appellent presque jamais d'intervention : l'abondance
+        # se déduit du recouvrement saisi plus haut, la sensibilité a un défaut
+        # d'instance (« Non sensible »). Les garder sous les yeux allongeait le
+        # formulaire sans profit — mais ils restent à un clic, et la section
+        # s'ouvre d'elle-même dès qu'une valeur s'écarte du défaut.
+        self.btn_complements = QToolButton()
+        self.btn_complements.setAutoRaise(True)
+        self.btn_complements.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_complements.setStyleSheet(
+            "QToolButton { border: none; font-weight: 600; }"
+        )
+        self.btn_complements.clicked.connect(self._toggle_complements)
+        form.addRow(self.btn_complements)
+
+        self.complements = QWidget()
+        complements_form = QFormLayout(self.complements)
+        complements_form.setContentsMargins(12, 0, 0, 0)
+
+        self.combo_abundance = QComboBox()
+        fill_eval_combo(self.combo_abundance, self.nomenclatures.get("abundance", []))
+        select_combo_data(self.combo_abundance, self._defaults.get("abundance"))
+        complements_form.addRow("Abondance", self.combo_abundance)
+
+        # Sensibilité : absente de certaines instances → menu créé seulement si dispo.
+        self.combo_sensitivity = None
+        if self.nomenclatures.get("sensitivity"):
+            self.combo_sensitivity = QComboBox()
+            fill_eval_combo(self.combo_sensitivity, self.nomenclatures["sensitivity"])
+            select_combo_data(self.combo_sensitivity, self._defaults.get("sensitivity"))
+            complements_form.addRow("Sensibilité", self.combo_sensitivity)
+
+        form.addRow(self.complements)
+        self._set_complements_visible(False)
+
+        if self._last_habitat:
+            self._appliquer_reprise(self._last_habitat)
         # Cf. station_form : la molette ne doit pas modifier une valeur saisie.
         self._filtre_molette = proteger_du_defilement(self)
         # Les listes déroulantes ne doivent pas imposer leur largeur au dialogue.
@@ -203,11 +253,42 @@ class HabitatForm(QWidget):
         self.n2000.setVisible(visible)
         self.btn_n2000.setText(
             ("▾ " if visible else "▸ ")
-            + "Natura 2000 (typicité, dynamique, restauration, PEE…)"
+            + "Natura 2000 (typicité, dynamique, restauration, remarque)"
         )
 
     def _toggle_n2000(self):
         self._set_n2000_visible(not self.n2000.isVisible())
+
+    def _set_complements_visible(self, visible):
+        self.complements.setVisible(visible)
+        self.btn_complements.setText(
+            ("▾ " if visible else "▸ ") + "Abondance et sensibilité"
+        )
+
+    def _toggle_complements(self):
+        self._set_complements_visible(not self.complements.isVisible())
+
+    def _complements_hors_defaut(self, habitat):
+        """Abondance ou sensibilité s'écartant du défaut d'instance ?
+
+        Sert à décider du dépli : sans ce filtre, la section s'ouvrirait à chaque
+        habitat relu — l'abondance et la sensibilité sont presque toujours
+        renseignées, ne serait-ce que par leur défaut.
+        """
+        return any(
+            habitat.get(colonne) is not None
+            and habitat.get(colonne) != self._defaults.get(cle)
+            for colonne, cle in (
+                ("id_nomenclature_abundance", "abundance"),
+                ("id_nomenclature_sensitivity", "sensitivity"),
+            )
+        )
+
+    # ------------------------------------------- reprise de la saisie précédente
+    def _appliquer_reprise(self, habitat):
+        """Pré-remplir un NOUVEL habitat avec la saisie précédente, en le disant."""
+        self.set_data(habitat)
+        self.label_repris.setVisible(True)
 
     # ------------------------------------------------ autocomplétion HABREF
     def _on_habitat_chosen(self, cd_hab, nom):
@@ -285,6 +366,9 @@ class HabitatForm(QWidget):
         select_combo_data(
             self.combo_community, habitat.get("id_nomenclature_community_interest")
         )
+        # Ne jamais cacher une valeur qui s'écarte du défaut (cf. N2000 plus bas).
+        if self._complements_hors_defaut(habitat):
+            self._set_complements_visible(True)
         precision = habitat.get("technical_precision") or ""
         self.text_precision.setPlainText(strip_eval(precision))
         codes = decode_eval(precision)
@@ -300,7 +384,7 @@ class HabitatForm(QWidget):
         # Déplier la section si l'habitat porte déjà des champs N2000 : ne jamais
         # cacher une valeur saisie.
         if any(codes.get(cle) for cle in ("typicite", "dynamique", "restauration",
-                                          "critere", "pee", "remarque")):
+                                          "remarque")):
             self._set_n2000_visible(True)
         # Recouvrement : bloc encodé prioritaire, sinon champ natif recovery_percentage.
         rec = codes.get("recouvrement") or habitat.get("recovery_percentage")

@@ -19,6 +19,7 @@ from qgis.PyQt.QtWidgets import (
     QWidget,
 )
 
+from ..processing.duplicate import habitat_reprise, paste_fields, station_template
 from .dialog_size import ajuster_a_l_ecran, rendre_defilant
 from .habitat_form import HabitatForm
 from .station_form import StationForm
@@ -75,8 +76,14 @@ class StationDialog(QDialog):
                  geo_metrics=None, station_defaults=None, habitat_defaults=None,
                  abundance_cover_map=None, batch_count=0, template=None,
                  last_observers=None, last_dates=None, habref_cd_typo=None,
-                 parent=None):
+                 last_habitat=None, station_picker=None, parent=None):
         super().__init__(parent)
+        # Habitat de la saisie précédente : pré-remplit chaque NOUVEL habitat
+        # (cf. `HabitatForm`), jamais l'édition d'un habitat existant.
+        self.last_habitat = last_habitat or None
+        # Callable() -> station complète choisie par l'utilisateur, ou None.
+        # Fourni par le dock (il seul a la base) ; absent → bouton masqué.
+        self._station_picker = station_picker
         # Typologie HABREF de la dernière saisie, reprise puis renvoyée à
         # l'appelant qui la persiste (même principe que les observateurs).
         self.habref_cd_typo = habref_cd_typo
@@ -152,6 +159,23 @@ class StationDialog(QDialog):
                 "border: 1px solid #ffe082; border-radius: 3px; }"
             )
             corps.addWidget(banner)
+
+        # Recopier une station déjà renseignée SANS quitter le formulaire :
+        # le cas courant est « ce polygone-ci est comme celui d'à côté », et il
+        # se présente aussi bien en création qu'en édition d'une station déjà
+        # tracée, que la duplication (qui exige de redessiner) ne couvre pas.
+        if self._station_picker is not None:
+            ligne_copie = QHBoxLayout()
+            self.btn_reprendre = QPushButton("Reprendre une station renseignée…")
+            self.btn_reprendre.setToolTip(
+                "Recopier ici les renseignements et les habitats d'une autre "
+                "station. La géométrie, le nom et le statut de CETTE station ne "
+                "changent pas. Rien n'est enregistré avant « OK »."
+            )
+            self.btn_reprendre.clicked.connect(self._reprendre_station)
+            ligne_copie.addWidget(self.btn_reprendre)
+            ligne_copie.addStretch(1)
+            corps.addLayout(ligne_copie)
 
         self.station_form = StationForm(
             self.config,
@@ -241,6 +265,49 @@ class StationDialog(QDialog):
         super().showEvent(event)
         ajuster_a_l_ecran(self, *self.TAILLE_VOULUE)
 
+    # --------------------------------------------- reprendre une autre station
+    def _reprendre_station(self):
+        """Recopier dans ce formulaire les renseignements d'une autre station.
+
+        Ce qui appartient à CETTE station n'est pas touché : sa géométrie (le
+        formulaire ne la relit pas), son nom et son statut de validation, qu'on
+        repose explicitement après coup — sans quoi une station validée
+        retomberait en brouillon pour avoir copié son voisin.
+        """
+        source = self._station_picker()
+        if not source:
+            return
+        template = station_template(source)
+        habitats = [dict(h) for h in template.get("habitats") or []]
+        if self.habitats and not self._confirmer_remplacement_habitats(habitats):
+            return
+        donnees = paste_fields(template)
+        donnees["observers"] = template.get("observers") or []
+        donnees["station_name"] = self.station_form.edit_name.text()
+        donnees["validation_status"] = self.station_form.combo_statut.currentData()
+        self.station_form.set_data(
+            donnees,
+            repris=True,
+            message=(
+                "↺ Renseignements repris de « %s » — vérifiez les dates. Le nom, "
+                "la géométrie et le statut de cette station sont inchangés."
+                % (source.get("station_name") or "station sans nom")
+            ),
+        )
+        self.habitats = habitats
+        self._rafraichir_habitats()
+
+    def _confirmer_remplacement_habitats(self, nouveaux):
+        """Prévenir avant d'écraser les habitats déjà saisis. True si on continue."""
+        reponse = QMessageBox.question(
+            self,
+            "Reprendre une station",
+            "Cette station porte déjà %d habitat(s).\n\n"
+            "Les reprendre depuis l'autre station les REMPLACERA par ses %d "
+            "habitat(s). Continuer ?" % (len(self.habitats), len(nouveaux)),
+        )
+        return reponse == QMessageBox.StandardButton.Yes
+
     # ------------------------------------------------------------ habitats
     #: Au-delà, la liste défile : une station en mosaïque dépasse rarement 10
     #: habitats, et une fenêtre sans fin serait pire que le défilement.
@@ -307,7 +374,12 @@ class StationDialog(QDialog):
         self.label_recouvrement.setText("Total : %g %%  —  %s" % (total, manque))
         self.label_recouvrement.setStyleSheet("color: #b26a00; font-weight: 600;")
 
-    def _new_habitat_form(self):
+    def _new_habitat_form(self, reprise=False):
+        """Formulaire d'habitat. `reprise` : pré-remplir avec la saisie précédente.
+
+        Réservé à l'AJOUT d'un habitat : à l'édition, les valeurs de l'habitat
+        font autorité et une reprise viendrait les écraser.
+        """
         form = HabitatForm(
             self.habitat_nomenclatures,
             self.habref_search,
@@ -317,6 +389,7 @@ class StationDialog(QDialog):
             defaults=self.habitat_defaults,
             abundance_cover_map=self.abundance_cover_map,
             cd_typo=self.habref_cd_typo,
+            last_habitat=self.last_habitat if reprise else None,
         )
         # Le prochain habitat de CETTE station reprend la typologie qu'on vient
         # de choisir, sans attendre l'enregistrement.
@@ -326,7 +399,14 @@ class StationDialog(QDialog):
         return form
 
     def add_habitat(self):
-        dialog = _FormDialog(self._new_habitat_form(), "Nouvel habitat", self)
+        # Le dernier habitat SAISI ici fait autorité sur celui de la station
+        # précédente : dans une mosaïque, les habitats d'un même polygone se
+        # ressemblent davantage encore.
+        if self.habitats:
+            self.last_habitat = habitat_reprise(self.habitats[-1])
+        dialog = _FormDialog(
+            self._new_habitat_form(reprise=True), "Nouvel habitat", self
+        )
         if dialog.exec():
             data = dialog.get_data()
             self.habitats.append(data)

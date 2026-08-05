@@ -178,7 +178,11 @@ class GeometryCaptureController(QObject):
     def _make_layer(geom_type, crs):
         wkb = _WKB_TYPE.get(geom_type, "Polygon")
         authid = crs.authid() if crs is not None and crs.authid() else "EPSG:4326"
-        return QgsVectorLayer("%s?crs=%s" % (wkb, authid), "occhab_capture", "memory")
+        layer = QgsVectorLayer("%s?crs=%s" % (wkb, authid), "occhab_capture", "memory")
+        # Couche de travail éphémère : exclue de l'avertissement « couches
+        # temporaires » de QGIS à la fermeture (cf. station_layers).
+        layer.setCustomProperty("skipMemoryLayersCheck", 1)
+        return layer
 
 
 class GeometryEditController(QObject):
@@ -338,4 +342,8 @@ class GeometryEditController(QObject):
     def _make_edit_layer(geom_type, crs):
         wkb = _WKB_TYPE.get(geom_type, "Polygon")
         authid = crs.authid() if crs is not None and crs.authid() else "EPSG:4326"
-        return QgsVectorLayer("%s?crs=%s" % (wkb, authid), "occhab_edit", "memory")
+        layer = QgsVectorLayer("%s?crs=%s" % (wkb, authid), "occhab_edit", "memory")
+        # Couche de travail éphémère : exclue de l'avertissement « couches
+        # temporaires » de QGIS à la fermeture (cf. station_layers).
+        layer.setCustomProperty("skipMemoryLayersCheck", 1)
+        return layer

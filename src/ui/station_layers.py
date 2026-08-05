@@ -246,6 +246,11 @@ class StationLayerManager:
         uri = "%s?crs=EPSG:4326%s" % (wkb, _FIELDS_URI)
         layer = QgsVectorLayer(uri, name, "memory")
         layer.setReadOnly(True)
+        # Sans cela, QGIS avertit à la fermeture que « le contenu sera
+        # définitivement perdu ». C'est faux ici : ces couches ne sont qu'un
+        # affichage, reconstruit depuis la base SQLite à chaque rafraîchissement.
+        # L'avertissement pousserait à croire à une perte de données inexistante.
+        layer.setCustomProperty("skipMemoryLayersCheck", 1)
         layer.setRenderer(self._renderer(layer))
         QgsProject.instance().addMapLayer(layer, False)
         (group or self._group()).addLayer(layer)

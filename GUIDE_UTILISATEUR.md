@@ -47,6 +47,8 @@ Concrètement, vous pouvez :
 - renseigner des champs métier ANA — **niveau d'enjeu**, **état de conservation**,
   **recouvrement** — et les champs **Natura 2000** (typicité, dynamique,
   restauration, unité végétale…) ;
+- **recopier** les renseignements d'un polygone déjà saisi sur d'autres, et
+  reprendre automatiquement la saisie précédente d'un habitat au suivant ;
 - travailler **en brouillon** et **valider** vos stations quand elles sont
   abouties ;
 - voir et modifier **toutes vos stations et habitats dans un tableau**, y compris
@@ -271,8 +273,34 @@ Cliquez **« ＋ Nouvelle station ▾ »** et choisissez d'où vient la géomét
   même habitat se répète d'un polygone à l'autre. La géométrie n'est jamais copiée,
   et la nouvelle station est bien une **création** (elle n'écrase pas l'originale).
   Disponible aussi par **clic droit** sur une ligne du tableau → **« Dupliquer »**.
+- **Dessiner un polygone avec les renseignements copiés** — reprend les
+  renseignements mis de côté par **« Copier les renseignements »** (voir ci-après) :
+  ils restent disponibles pour **autant de stations que vous voulez**.
 - **Sans géométrie (à tracer plus tard)** — ouvre directement le formulaire ; vous
   ajouterez la géométrie ensuite via **« Géométrie ▾ »**.
+
+> **Recopier un polygone déjà renseigné.** Trois chemins, selon le moment :
+>
+> | Vous voulez… | Faites… |
+> |---|---|
+> | Renseigner un polygone **déjà tracé** comme un autre | **Clic droit** sur la station modèle → **« Copier les renseignements »**, puis sélectionnez la ou les stations à renseigner (Ctrl/Maj) → **clic droit → « Coller les renseignements »** |
+> | Enchaîner **plusieurs nouvelles** stations identiques | **« Copier les renseignements »**, puis **« ＋ Nouvelle station ▾ → Dessiner un polygone avec les renseignements copiés »**, autant de fois que nécessaire |
+> | Recopier une station **sans quitter le formulaire ouvert** | Bouton **« Reprendre une station renseignée… »**, en haut du formulaire |
+>
+> Dans les trois cas : **JDD, dates, observateurs, attributs, commentaire et
+> habitats** sont repris ; la **géométrie**, le **nom** et le **statut**
+> (brouillon / validée) de la station qui reçoit **ne changent pas**. Les habitats
+> déjà présents sur la station qui reçoit sont **remplacés** — le plugin le dit et
+> demande confirmation avant. Rien n'est enregistré tant que vous n'avez pas
+> validé (formulaire) ou confirmé (collage). Les renseignements copiés restent
+> disponibles jusqu'à la fermeture de QGIS.
+>
+> **Mosaïques photo-interprétées.** C'est le cas où ce geste fait gagner le plus
+> de temps : renseignez **un** polygone type avec tous ses habitats, copiez-le,
+> collez-le sur les polygones voisins (sélection multiple), puis **ajustez les
+> coefficients** — soit dans la table attributaire (colonne *Recouvrement %*,
+> une ligne par habitat, §12), soit en rouvrant chaque station. Vous n'avez plus
+> à ressaisir la liste des habitats ni à vérifier que vous n'en oubliez aucun.
 
 Le formulaire de la station s'ouvre. Pour un **polygone**, la **surface** (m²) et
 l'**altitude min/max** sont déjà remplies automatiquement.
@@ -287,6 +315,7 @@ Le formulaire est à **deux niveaux**. L'**Essentiel** est toujours visible :
 - **Observateur(s)** — champ à **autocomplétion** : déroulez pour parcourir la
   liste, ou **tapez** un nom pour filtrer ; l'observateur choisi s'ajoute dessous
   (retirable par double-clic ou « Retirer »).
+- **Unité végétale** et **nature de l'observation** (Natura 2000).
 - **Niveau d'enjeu** / **état de conservation** (voir §13), **Commentaire**.
 
 > **Reprise de la saisie précédente.** Dès la deuxième station, les
@@ -300,9 +329,10 @@ Le formulaire est à **deux niveaux**. L'**Essentiel** est toujours visible :
 > observateur.
 
 Les autres champs (**altitude**, **profondeur**, **surface**, **exposition**,
-**type de sol**, **type de mosaïque**, **nature d'objet géographique**) sont sous
-**« ▸ Détails »** — cliquez pour déplier. En **édition**, cette section se déplie
-d'elle-même si ces champs sont déjà renseignés.
+**type de sol**, **type de mosaïque**, **nature d'objet géographique**, **échelle
+de numérisation**) sont sous **« ▸ Détails »** — cliquez pour déplier. En
+**édition**, cette section se déplie d'elle-même si ces champs sont déjà
+renseignés.
 
 > Certains champs (type de sol, mosaïque…) ne s'affichent que si votre instance
 > GeoNature les propose. **Surface** et **altitude** sont calculées automatiquement.
@@ -322,11 +352,29 @@ ajouter, dans le formulaire :
   et le code à la main), erreur du serveur, ou aucun habitat trouvé.
 - **Filtre typologie** — pour cibler la recherche (Corine, EUNIS…).
 - **Déterminateur** — utilisateur connecté par défaut, saisie libre possible.
+- **Type de détermination**, **intérêt communautaire**.
 - **Technique de collecte** — **« In situ » par défaut**.
 - **Recouvrement (%)** — pré-sélectionne automatiquement la classe d'**abondance**.
-- **Sensibilité** — **« Non sensible » par défaut**.
-- **Type de détermination**, **abondance**, **intérêt communautaire**.
-- **Niveau d'enjeu** / **état de conservation** de l'habitat (voir §13).
+- **Niveau d'enjeu** / **état de conservation** de l'habitat (voir §13), puis le
+  **critère d'évaluation** qui le justifie et les **PEE** (plantes exotiques
+  envahissantes, 3 taxons au plus séparés par « ; »).
+
+**Abondance** et **sensibilité** sont repliées **en bas** du formulaire, sous
+**« ▸ Abondance et sensibilité »** : l'abondance se déduit du recouvrement saisi
+plus haut et la sensibilité vaut **« Non sensible »** par défaut. La section
+s'ouvre d'elle-même quand une valeur s'écarte de ce défaut — rien n'est caché
+sans le dire.
+
+> **Reprise de la saisie précédente.** Chaque **nouvel** habitat reprend les
+> champs du **dernier habitat saisi** : type de détermination, déterminateur,
+> technique, intérêt communautaire, sensibilité, enjeu, état de conservation,
+> critère, PEE, typicité… Une mention « ↺ … » l'indique en haut du formulaire —
+> **vérifiez ces valeurs**. Ne sont **jamais** repris : le **nom cité**, le
+> **code cd_hab**, le **recouvrement** et l'**abondance**, propres à chaque
+> habitat. C'est mémorisé d'une session QGIS à l'autre ; dans une station en
+> mosaïque, c'est l'habitat précédent de la **même** station qui sert de modèle.
+> Pour recopier un habitat **à l'identique**, utilisez plutôt le copier-coller
+> de renseignements (§6, étape 1).
 
 Répétez pour chaque habitat. La **liste des habitats** de la station affiche, pour
 chacun, son **% de recouvrement**. Un garde-fou demande confirmation avant de
@@ -566,7 +614,13 @@ habitats occupe trois lignes ; ses informations de station y sont répétées.
 - **Colonnes** : choisissez *Essentiel*, *Natura 2000* ou *Tout*.
 - **Filtres** : statut, synchro, et une zone de recherche (nom de station,
   habitat, cd_hab). Cliquez un en-tête pour trier.
-- **Modifiez directement dans les cellules.**
+- **Modifiez directement dans les cellules.** La colonne **« Nom cité »** ouvre
+  la **liste HABREF** : double-cliquez, tapez au moins 3 caractères, choisissez
+  un habitat — le **cd_hab** de la ligne est renseigné en même temps, même si sa
+  colonne n'est pas affichée. La recherche est filtrée par la **dernière
+  typologie** que vous avez utilisée. Hors connexion, la cellule redevient un
+  champ de texte libre (l'infobulle de l'en-tête vous le rappelle) : pensez alors
+  à corriger le cd_hab vous-même.
 - **La sélection est partagée avec la carte** : la table s'ouvre sans bloquer
   QGIS, vous pouvez donc sélectionner des polygones à la souris sur la carte pour
   retrouver leurs lignes ici, ou l'inverse. Une station en mosaïque voit **toutes
@@ -577,10 +631,14 @@ habitats occupe trois lignes ; ses informations de station y sont répétées.
   retenir personne **efface** les observateurs des stations visées.
 - **Corriger une détermination sur tout un lot** : sélectionnez les lignes, puis
   **« Modifier les lignes sélectionnées… »** et servez-vous du champ
-  **« Nom cité »**, qui propose la **recherche HABREF**. Choisir un habitat
-  coche et remplit à la fois
-  le **nom cité** et le **cd_hab** — ils ne peuvent pas être dissociés, sans quoi
-  vous laisseriez des habitats dont le code ne correspond plus au nom.
+  **« Nom cité »**, qui propose la **recherche HABREF** (tapez au moins 3
+  caractères ; la ligne **Typologie** juste au-dessus cible la recherche).
+  Choisir un habitat coche et remplit à la fois le **nom cité** et le **cd_hab**
+  — ils ne peuvent pas être dissociés, sans quoi vous laisseriez des habitats
+  dont le code ne correspond plus au nom.
+  Vous pouvez **taper directement** dans n'importe quel champ de cette fenêtre :
+  la case « modifier » se coche toute seule. Décochez-la pour renoncer à ce
+  champ.
 
 > ⚠️ Les colonnes **teintées en gris-bleu** sont des champs de la **station** :
 > les modifier sur une ligne les modifie pour **tous les habitats du même
@@ -588,8 +646,9 @@ habitats occupe trois lignes ; ses informations de station y sont répétées.
 
 **Modifier plusieurs lignes d'un coup** — sélectionnez les lignes (Ctrl / Maj),
 puis **« Modifier les N lignes sélectionnées… »** : le bouton affiche le nombre
-de lignes visées, et reste grisé tant que vous n'avez rien sélectionné. Cochez
-les champs à modifier ; les autres restent tels quels. Un récapitulatif vous dit
+de lignes visées, et reste grisé tant que vous n'avez rien sélectionné. Saisissez
+les champs à modifier (leur case se coche à la saisie) ; les autres restent tels
+quels. Un récapitulatif vous dit
 combien de stations et d'habitats sont concernés et, surtout, **combien de
 valeurs déjà renseignées seront remplacées**.
 

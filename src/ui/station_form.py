@@ -122,6 +122,19 @@ class StationForm(QWidget):
         form.addRow(self.label_repris)  # pleine largeur : masqué, la ligne disparaît
         self._show_repris_hint(self._observers_repris, self._apply_last_dates())
 
+        # Natura 2000 : décrivent ce QU'EST le polygone, donc renseignés à
+        # chaque station en cartographie N2000. Ils étaient sous « Détails »,
+        # où on ne les voyait pas.
+        self.combo_unite_veg = QComboBox()
+        fill_eval_combo(self.combo_unite_veg, UNITES_VEGETALES)
+        # `unite_vegetale` doit rester cohérent avec le nombre d'habitats saisis :
+        # une unité non complexe n'en porte qu'un.
+        form.addRow("Unité végétale (N2000)", self.combo_unite_veg)
+
+        self.combo_nature_obs = QComboBox()
+        fill_eval_combo(self.combo_nature_obs, NATURES_OBSERVATION)
+        form.addRow("Nature de l'observation (N2000)", self.combo_nature_obs)
+
         # Extension ANA (encodés dans le commentaire, voir README §6) — gardés
         # visibles car souvent renseignés.
         self.combo_enjeu = QComboBox()
@@ -200,16 +213,9 @@ class StationForm(QWidget):
             details_form.addRow("Type de mosaïque d'habitats", self.combo_mosaique)
 
         # --- Natura 2000 (annexe 2 du cahier des charges) ---
-        # `unite_vegetale` doit rester cohérent avec le nombre d'habitats saisis :
-        # une unité non complexe n'en porte qu'un.
-        self.combo_unite_veg = QComboBox()
-        fill_eval_combo(self.combo_unite_veg, UNITES_VEGETALES)
-        details_form.addRow("Unité végétale (N2000)", self.combo_unite_veg)
-
-        self.combo_nature_obs = QComboBox()
-        fill_eval_combo(self.combo_nature_obs, NATURES_OBSERVATION)
-        details_form.addRow("Nature de l'observation (N2000)", self.combo_nature_obs)
-
+        # Unité végétale et nature de l'observation sont remontées dans la partie
+        # visible ; l'échelle de numérisation, posée une fois pour un chantier,
+        # reste ici.
         self.spin_echelle = QSpinBox()
         self.spin_echelle.setRange(0, 1_000_000)
         self.spin_echelle.setPrefix("1: ")
@@ -487,14 +493,20 @@ class StationForm(QWidget):
             "comment": comment or None,
             "geom": self._geom_wkt,
             "geom_type": self._geom_type,
-            "created_by": _current_user(),
+            "created_by": current_user(),
         }
 
-    def set_data(self, station, repris=False):
+    #: Mention par défaut quand les valeurs viennent d'une AUTRE station.
+    REPRIS_DUPLICATION = (
+        "↺ Valeurs reprises de la station dupliquée — vérifiez la date et le nom."
+    )
+
+    def set_data(self, station, repris=False, message=None):
         """Remplir le formulaire depuis une station existante.
 
-        `repris=True` en duplication : les valeurs viennent d'une AUTRE station,
-        ce qui est signalé à l'utilisateur (la date surtout).
+        `repris=True` en duplication ou en copie : les valeurs viennent d'une
+        AUTRE station, ce qui est signalé à l'utilisateur (la date surtout).
+        `message` remplace la mention par défaut.
         """
         if station.get("id_dataset"):
             self._select_dataset(int(station["id_dataset"]))
@@ -552,9 +564,7 @@ class StationForm(QWidget):
         # affichée à la construction n'a plus lieu d'être (sauf duplication).
         self.label_repris.setVisible(False)
         if repris:
-            self.label_repris.setText(
-                "↺ Valeurs reprises de la station dupliquée — vérifiez la date et le nom."
-            )
+            self.label_repris.setText(message or self.REPRIS_DUPLICATION)
             self.label_repris.setVisible(True)
 
         # Déplier « Détails » si la station en contient déjà (ne pas cacher de valeurs).
@@ -564,13 +574,14 @@ class StationForm(QWidget):
             "id_nomenclature_geographic_object", "id_nomenclature_type_sol",
             "id_nomenclature_type_mosaique_habitat",
         )
-        detail_eval = ("unite_vegetale", "nature_observation", "echelle")
+        detail_eval = ("echelle",)
         if (any(station.get(k) for k in detail_keys)
                 or any(codes.get(k) for k in detail_eval)):
             self._set_details_visible(True)
 
 
-def _current_user():
+def current_user():
+    """Nom de l'utilisateur QGIS, pour tracer qui crée ou modifie une station."""
     try:
         from qgis.core import QgsApplication
 

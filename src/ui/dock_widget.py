@@ -30,11 +30,12 @@ from qgis.PyQt.QtWidgets import (
 )
 
 from ..database.sqlite_local import BROUILLON, VALIDE, OccHabDatabase
-from ..processing.duplicate import station_template
+from ..processing.duplicate import habitat_reprise, paste_fields, station_template
 from ..processing.geometry import CrsIndetermine, wkt_en_degres_plausibles
 from .connection_dialog import ConnectionDialog
 from .flow_layout import widget_reflowable
 from .station_dialog import StationDialog
+from .station_form import current_user
 from .station_layers import StationLayerManager
 from .server_layers import ServerStationLayerManager
 
@@ -71,6 +72,15 @@ class OccHabDockWidget(QDockWidget):
         # Créée avec le menu « Nouvelle station », donc après le branchement du
         # signal de sélection du tableau : déclarée ici pour rester interrogeable.
         self.action_duplicate = None
+        # Action « nouvelle station avec les renseignements copiés », créée avec
+        # le menu : elle reste grisée tant que rien n'a été copié. Le collage,
+        # lui, est proposé par le menu contextuel, reconstruit à chaque clic.
+        self.action_new_from_clipboard = None
+        # Renseignements copiés depuis une station (modèle sans identité ni
+        # géométrie, cf. `processing.duplicate`). Session QGIS seulement : coller
+        # sur des stations d'une campagne terminée n'aurait aucun sens.
+        self._clipboard = None
+        self._clipboard_label = ""
         self.nomenclatures = {}
         self.default_nomenclatures = {}
         self.typologies = []
@@ -288,6 +298,15 @@ class OccHabDockWidget(QDockWidget):
             "Reprend le JDD, les dates, les observateurs, les attributs et les "
             "habitats de la station sélectionnée ; la géométrie est à dessiner."
         )
+        self.action_new_from_clipboard = new_menu.addAction(
+            "Dessiner un polygone avec les renseignements copiés",
+            self._new_station_from_clipboard,
+        )
+        self.action_new_from_clipboard.setToolTip(
+            "Utilise les renseignements mis de côté par « Copier les "
+            "renseignements » (clic droit sur une station) : ils restent "
+            "disponibles pour autant de nouvelles stations que voulu."
+        )
         new_menu.addSeparator()
         new_menu.addAction("Sans géométrie (à tracer plus tard)", self._new_station_no_geom)
         self.btn_new.setMenu(new_menu)
@@ -366,27 +385,53 @@ class OccHabDockWidget(QDockWidget):
         self._update_conn_summary()
         self._on_selection_changed()
 
+    #: Mémorise l'état précédent pour ne replier le bloc qu'à la TRANSITION vers
+    #: « connecté » : sans cela, un simple rafraîchissement refermerait le bloc
+    #: sous les doigts de qui vient de l'ouvrir pour changer de serveur.
+    _etait_connecte = False
+
+    def _maj_bouton_conn(self):
+        """Le libellé décrit l'ACTION du clic, jamais l'état courant.
+
+        Il était posé à trois endroits différents ; `_update_conn_summary`, lui,
+        rouvrait le bloc sans y toucher. À la reconnexion on se retrouvait donc
+        avec un bloc ouvert et un bouton « changer », soit l'inverse de ce que le
+        clic allait faire. Il se déduit désormais de la visibilité réelle.
+        """
+        self.btn_conn_toggle.setText(
+            "replier" if self.conn_details.isVisible() else "changer"
+        )
+
     def _toggle_conn_details(self):
         """Afficher / masquer les détails de connexion (divulgation progressive)."""
-        visible = not self.conn_details.isVisible()
-        self.conn_details.setVisible(visible)
-        self.btn_conn_toggle.setText("replier" if visible else "changer")
+        self.conn_details.setVisible(not self.conn_details.isVisible())
+        self._maj_bouton_conn()
 
     def _collapse_conn_details(self):
         """Replier le bloc connexion (une fois le JDD choisi)."""
         self.conn_details.setVisible(False)
-        self.btn_conn_toggle.setText("changer")
+        self._maj_bouton_conn()
 
     def _update_conn_summary(self):
-        """Résumé compact connexion + JDD."""
-        if self.client is not None and self.client.is_authenticated:
+        """Résumé compact connexion + JDD, et repli du bloc devenu inutile."""
+        connecte = self.client is not None and self.client.is_authenticated
+        if connecte:
             jdd = self.combo_jdd.currentText() if self.combo_jdd.count() else "—"
             self.label_conn.setText("✓ %s  ·  %s" % (self._user_label or "Connecté", jdd))
             self.btn_conn_toggle.setVisible(True)
+            # Replier à la connexion, mais SEULEMENT si un JDD est déterminé :
+            # sans JDD il n'y a rien à faire d'autre que d'en choisir un, et le
+            # sélecteur doit rester sous les yeux. Depuis que le JDD mémorisé est
+            # restauré, le cas courant est justement « déjà déterminé » — d'où un
+            # bloc qui restait ouvert alors qu'il n'avait plus lieu d'être.
+            if not self._etait_connecte and self.combo_jdd.currentData() is not None:
+                self.conn_details.setVisible(False)
         else:
             self.label_conn.setText("● Non connecté")
             self.conn_details.setVisible(True)
             self.btn_conn_toggle.setVisible(False)
+        self._etait_connecte = connecte
+        self._maj_bouton_conn()
 
     def _on_selection_changed(self):
         """Activer la barre d'action seulement quand une station est sélectionnée."""
@@ -405,6 +450,8 @@ class OccHabDockWidget(QDockWidget):
             btn.setEnabled(has)
         if self.action_duplicate is not None:
             self.action_duplicate.setEnabled(has)
+        if self.action_new_from_clipboard is not None:
+            self.action_new_from_clipboard.setEnabled(self._clipboard is not None)
         # « Rétablir la géométrie précédente » : grisé s'il n'y a rien à rétablir.
         has_prev = False
         if has:
@@ -456,10 +503,35 @@ class OccHabDockWidget(QDockWidget):
         index = self.table.indexAt(pos)
         if not index.isValid():
             return
-        self.table.selectRow(index.row())
+        # Ne ramener la sélection à une seule ligne que si l'on clique HORS de
+        # la sélection courante : sans cela, un clic droit sur un lot choisi au
+        # Ctrl/Maj le défaisait, et « coller sur N stations » ne visait plus
+        # qu'une ligne.
+        if index.row() not in {i.row() for i in self.table.selectedIndexes()}:
+            self.table.selectRow(index.row())
         menu = QMenu(self.table)
+        menu.setToolTipsVisible(True)
         menu.addAction("Éditer", self.edit_station)
         menu.addAction("Dupliquer", self.duplicate_station)
+        menu.addSeparator()
+        copier = menu.addAction("Copier les renseignements", self.copy_station_fields)
+        copier.setToolTip(
+            "Met de côté JDD, dates, observateurs, attributs et habitats de "
+            "cette station, pour les coller sur d'autres."
+        )
+        selection = self._selected_station_ids()
+        libelle = "Coller les renseignements"
+        if len(selection) > 1:
+            libelle += " sur %d stations" % len(selection)
+        coller = menu.addAction(libelle, self.paste_station_fields)
+        coller.setEnabled(self._clipboard is not None)
+        coller.setToolTip(
+            "Écrase les renseignements des stations sélectionnées par ceux de "
+            "« %s ». Géométries, noms et statuts conservés." % self._clipboard_label
+            if self._clipboard is not None
+            else "Copiez d'abord les renseignements d'une station."
+        )
+        menu.addSeparator()
         geom = menu.addMenu("Modifier la géométrie")
         geom.addAction("Redessiner / éditer sur la carte", self.edit_geometry)
         geom.addAction(
@@ -1094,6 +1166,131 @@ class OccHabDockWidget(QDockWidget):
         else:  # l'original n'avait pas de géométrie : rien à redessiner
             self._open_station_dialog(None, None)
 
+    # ------------------------------------- presse-papiers de renseignements
+    def copy_station_fields(self):
+        """Mettre de côté les renseignements d'une station, pour les coller ailleurs."""
+        station_id = self._selected_station_id()
+        if station_id is None:
+            QMessageBox.information(self, "OccHab", "Sélectionnez une station à copier.")
+            return
+        full = self.db.get_station(station_id)
+        if full is None:
+            return
+        self._clipboard = station_template(full)
+        self._clipboard_label = full.get("station_name") or "station sans nom"
+        self._maj_barre_action()
+        self.iface.messageBar().pushInfo(
+            "OccHab",
+            "Renseignements de « %s » copiés (%d habitat(s)). Sélectionnez une "
+            "ou plusieurs stations puis « Coller les renseignements », ou créez "
+            "une station avec eux depuis « ＋ Nouvelle station »."
+            % (self._clipboard_label, len(self._clipboard.get("habitats") or [])),
+        )
+
+    def paste_station_fields(self):
+        """Appliquer les renseignements copiés aux stations sélectionnées.
+
+        Géométrie, nom et statut de validation de chaque station cible sont
+        conservés : c'est ce qui distingue « coller » de « dupliquer ». Le reste
+        — JDD, dates, observateurs, attributs, habitats — est remplacé.
+        """
+        if self._clipboard is None:
+            QMessageBox.information(
+                self, "OccHab",
+                "Copiez d'abord les renseignements d'une station (clic droit → "
+                "« Copier les renseignements »).",
+            )
+            return
+        cibles = self._selected_station_ids()
+        if not cibles:
+            QMessageBox.information(
+                self, "OccHab", "Sélectionnez la ou les stations à renseigner."
+            )
+            return
+        habitats = self._clipboard.get("habitats") or []
+        observers = self._clipboard.get("observers") or []
+        question = (
+            "Remplacer les renseignements de %d station(s) par ceux de « %s » ?\n\n"
+            "Sont écrasés : JDD, dates, observateurs, attributs, commentaire et "
+            "les habitats (%d repris ; les habitats existants des stations "
+            "visées sont supprimés).\n"
+            "Sont conservés : la géométrie, le nom et le statut de chaque station."
+            % (len(cibles), self._clipboard_label, len(habitats))
+        )
+        if QMessageBox.question(self, "Coller les renseignements", question) != \
+                QMessageBox.StandardButton.Yes:
+            return
+        fields = paste_fields(self._clipboard)
+        # Le créateur d'origine de la station VISÉE reste le sien ; celui qui
+        # colle en devient l'éditeur (même règle que l'édition au formulaire).
+        fields.pop("created_by", None)
+        fields["updated_by"] = current_user()
+        colles = echecs = 0
+        for station_id in cibles:
+            try:
+                # `validation_status` n'est pas dans `fields` (écarté par le
+                # modèle de duplication) : le statut de la cible reste le sien.
+                self.db.update_station(station_id, sync_status="pending", **fields)
+                self.db.replace_habitats(station_id, [dict(h) for h in habitats])
+                self.db.replace_observers(station_id, observers)
+                colles += 1
+            except Exception as exc:  # noqa: BLE001
+                echecs += 1
+                self.logger.error(
+                    "Collage des renseignements sur la station %s échoué : %s",
+                    station_id, exc,
+                )
+        self.logger.info(
+            "Renseignements collés : %d station(s), %d échec(s)", colles, echecs
+        )
+        self.refresh()
+        message = "%d station(s) renseignée(s) depuis « %s »." % (
+            colles, self._clipboard_label
+        )
+        if echecs:
+            self.iface.messageBar().pushWarning(
+                "OccHab", message + " %d échec(s) — voir le journal." % echecs
+            )
+        else:
+            self.iface.messageBar().pushInfo("OccHab", message)
+
+    def _new_station_from_clipboard(self):
+        """Créer une station en reprenant les renseignements copiés (géométrie à tracer)."""
+        if self._clipboard is None:
+            QMessageBox.information(
+                self, "OccHab",
+                "Copiez d'abord les renseignements d'une station (clic droit → "
+                "« Copier les renseignements »).",
+            )
+            return
+        # Copie : le presse-papiers doit survivre à cette création, pour en
+        # enchaîner plusieurs.
+        self._begin_new_station(station_template(self._clipboard))
+        self._capture_target = "new"
+        self._start_capture("polygon")
+
+    def _pick_local_station(self, exclude_id=None):
+        """Faire choisir une station locale et la renvoyer complète (ou None)."""
+        from .station_picker_dialog import LocalStationPicker
+
+        jdd = self.combo_jdd.currentData() if self.combo_jdd.isEnabled() else None
+        stations = self.db.get_stations_full(id_dataset=jdd)
+        if exclude_id is not None:
+            stations = [s for s in stations if s.get("id") != exclude_id]
+        if not stations:
+            QMessageBox.information(
+                self, "OccHab",
+                "Aucune autre station à reprendre dans ce jeu de données.",
+            )
+            return None
+        dialog = LocalStationPicker(stations, parent=self)
+        if not dialog.exec():
+            return None
+        station_id = dialog.selected_id()
+        if station_id is None:
+            return None
+        return self.db.get_station(station_id)
+
     # ------------------------------------------ reprise de géométrie (couche)
     def _new_station_from_selection(self):
         """Créer une (ou plusieurs) station(s) depuis la ou les entités sélectionnées.
@@ -1161,7 +1358,9 @@ class OccHabDockWidget(QDockWidget):
             created, failed,
         )
         if created:
-            self._remember_last_entry(shared, observers, dialog.habref_cd_typo)
+            self._remember_last_entry(
+                shared, observers, dialog.habref_cd_typo, habitats=habitats
+            )
         parts = ["%d station(s) créée(s)" % created]
         if habitats:
             parts.append("%d habitat(s) chacune" % len(habitats))
@@ -1506,16 +1705,26 @@ class OccHabDockWidget(QDockWidget):
         """Typologie HABREF de la dernière saisie, pour pré-régler le filtre."""
         return self.config.get("last_entry.cd_typo")
 
-    def _remember_last_entry(self, station, observers, cd_typo=None):
-        """Retenir observateurs, typologie et dates pour la saisie suivante.
+    def _last_habitat(self):
+        """Habitat de la dernière saisie, pour pré-remplir le prochain."""
+        habitat = self.config.get("last_entry.habitat")
+        return habitat if isinstance(habitat, dict) and habitat else None
 
-        Observateurs et typologie HABREF : persistés en configuration — une
-        équipe et une typologie changent peu au cours d'une campagne. Dates :
-        gardées pour la session QGIS seulement, pour ne pas traîner une date
-        d'observation périmée d'un jour de terrain sur l'autre.
+    def _remember_last_entry(self, station, observers, cd_typo=None, habitats=None):
+        """Retenir observateurs, typologie, habitat et dates pour la saisie suivante.
+
+        Observateurs, typologie HABREF et habitat : persistés en configuration —
+        une équipe, une typologie et une façon de déterminer changent peu au
+        cours d'une campagne. Dates : gardées pour la session QGIS seulement,
+        pour ne pas traîner une date d'observation périmée d'un jour de terrain
+        sur l'autre.
         """
         if cd_typo is not None:
             self.config.set("last_entry.cd_typo", cd_typo)
+        if habitats:
+            # Le DERNIER habitat saisi : dans une mosaïque, c'est celui qu'on
+            # vient de décrire, donc le plus proche de ce qui vient ensuite.
+            self.config.set("last_entry.habitat", habitat_reprise(habitats[-1]))
         self.config.set(
             "last_entry.observers",
             [
@@ -1533,6 +1742,7 @@ class OccHabDockWidget(QDockWidget):
         Point unique d'assemblage partagé par la création (simple / lot / copie) et
         l'édition, pour éviter que les appels divergent.
         """
+        en_cours = (station or {}).get("id")
         return StationDialog(
             self.config,
             geom_wkt=geom_wkt,
@@ -1544,6 +1754,8 @@ class OccHabDockWidget(QDockWidget):
             last_observers=self._last_observers(),
             habref_cd_typo=self._last_cd_typo(),
             last_dates=self._session_dates,
+            last_habitat=self._last_habitat(),
+            station_picker=lambda: self._pick_local_station(exclude_id=en_cours),
             datasets=self._dataset_items(),
             station_nomenclatures=self._station_nomenclatures(),
             habitat_nomenclatures=self._habitat_nomenclatures(),
@@ -1586,7 +1798,9 @@ class OccHabDockWidget(QDockWidget):
             self.logger.error("Échec création station : %s", exc)
             QMessageBox.critical(self, "Erreur", "Création impossible : %s" % exc)
             return
-        self._remember_last_entry(station, observers, dialog.habref_cd_typo)
+        self._remember_last_entry(
+            station, observers, dialog.habref_cd_typo, habitats=habitats
+        )
         self.refresh()
 
     def open_attribute_table(self):

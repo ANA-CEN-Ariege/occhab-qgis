@@ -3,7 +3,7 @@ name=OccHab GeoNature
 qgisMinimumVersion=3.28
 qgisMaximumVersion=3.99
 description=Offline-first data entry for GeoNature's OccHab module (habitat stations) from QGIS, with local SQLite storage and synchronisation to the GeoNature REST API.
-version=0.5.7
+version=0.6.0
 author=Cédric Roy
 email=it@ariegenature.fr
 license=GPL-3.0-or-later
@@ -32,7 +32,93 @@ icon=resources/icons/occhab.svg
 experimental=True
 deprecated=False
 
-changelog=0.5.7 - Correction d'une regression de la 0.5.6 : un grand vide
+changelog=0.6.0 - Saisie en serie : recopier un polygone deja renseigne.
+    Trois chemins pour la meme idee. « Copier les renseignements » (clic droit
+    sur une station) met de cote JDD, dates, observateurs, attributs,
+    commentaire et habitats ; « Coller les renseignements » les applique aux
+    stations selectionnees, deja tracees, en conservant leur geometrie, leur nom
+    et leur statut, avec une confirmation chiffree avant ecriture. Les memes
+    renseignements servent aussi a enchainer des creations (« Nouvelle station →
+    Dessiner un polygone avec les renseignements copies »), ou se reprennent
+    depuis le formulaire ouvert par « Reprendre une station renseignee… », qui
+    propose la liste filtrable des stations locales. L'identite (id_station,
+    uuid SINP, empreinte serveur) et le drapeau « creee par moi » ne sont jamais
+    copies : une copie est une station neuve dont on est l'auteur — c'est
+    egalement corrige pour la duplication, qui pouvait produire une station que
+    l'on ne pouvait plus supprimer sur GeoNature. Un clic droit sur une
+    selection multiple ne la defait plus.
+    Champs remontes la ou on les remplit. Au niveau station, « Unite vegetale »
+    et « Nature de l'observation » quittent la zone repliee « Details » et sont
+    desormais visibles. Au niveau habitat, « Critere d'evaluation » et « PEE »
+    passent juste sous l'etat de conservation, qu'ils justifient, au lieu du
+    bloc Natura 2000 replie ou on ne pensait pas a les renseigner ; a l'inverse,
+    « Abondance » et « Sensibilite » descendent dans une section repliee en bas,
+    l'abondance se deduisant du recouvrement saisi plus haut et la sensibilite
+    ayant un defaut. Cette section s'ouvre d'elle-meme des qu'une valeur s'ecarte
+    du defaut : rien n'est cache sans le dire.
+    Liste HABREF dans la table attributaire. La colonne « Nom cite » s'edite
+    desormais avec la meme recherche assistee que le formulaire : on double-clique,
+    on tape, on choisit un habitat — et le cd_hab de la ligne suit, meme quand sa
+    colonne n'est pas affichee. Jusqu'ici la cellule etait un simple champ de
+    texte : renommer un habitat y laissait le code de l'ancienne determination,
+    incoherence invisible a l'ecran comme a l'envoi. La recherche reprend la
+    derniere typologie utilisee, et respecte le filtre en cours (le code se pose
+    bien sur la ligne editee, pas sur celle du meme rang dans la grille non
+    filtree). Hors connexion, la cellule redevient un champ libre, ce que
+    l'infobulle de l'en-tete annonce. Le composant HABREF est desormais partage
+    par les trois points de saisie — formulaire, edition en lot et cellule.
+    Le menu des propositions HABREF se tient enfin. Il se deroule desormais
+    exactement sous le champ de saisie, a une largeur que le plugin fixe
+    lui-meme : un libelle prefixe de sa typologie (« Habitats_naturels_et_semi-
+    naturels_de_La_Reunion_(2017) 1.4.1.4 - Pelouse post-pionniere… ») reclame
+    plus de 1000 pixels, et laisser Qt decider donnait un menu de travers qui
+    sortait de l'ecran par la droite. La largeur s'adapte au contenu jusqu'a 620
+    pixels, et se replie sur la place disponible quand le champ est pres du bord.
+    La ligne survolee se surligne de nouveau : Qt n'active pas le suivi de la
+    souris sur le menu d'une autocompletion, contrairement a celui d'une liste
+    deroulante. Le libelle complet reste accessible en infobulle.
+    La fenetre « Modifier les lignes selectionnees… » ne s'ouvre plus trop
+    large. Son contenu reclamait 918 pixels — une seule nomenclature en exigeait
+    611 a elle seule, Qt dimensionnant une liste deroulante sur son entree la
+    plus longue — d'ou un ascenseur HORIZONTAL sur des champs pourtant courts.
+    Les listes sont desormais bornees comme celles des formulaires, le menu
+    deroulant restant large et le libelle complet en infobulle. Le suffixe
+    « (station) » / « (habitat) », repete sur chacune des trente lignes, cede la
+    place a deux titres de section : la colonne des libelles retrecit d'autant,
+    et « Enjeu (habitat) (habitat) » retrouve un nom. Le champ « Nom cite »
+    n'embarque plus le bloc HABREF complet avec sa propre colonne de libelles,
+    qui imposait a lui seul la largeur minimale de la fenetre : la ligne de
+    saisie est posee directement, le filtre de typologie sur sa propre ligne.
+    Au total 918 pixels de contenu ramenes a 472, sans rien perdre.
+    Correction : la saisie groupee du syntaxon ne se laissait pas faire. Dans
+    « Modifier les lignes selectionnees… », chaque champ etait grise tant que sa
+    case n'etait pas cochee. Passe encore pour une ligne de texte, mais « Nom
+    cite » est un bloc HABREF — typologie plus champ de recherche — qui ne se lit
+    pas comme un champ desactive : on cliquait dedans, on tapait, rien ne se
+    passait, et l'edition en lot de la determination paraissait ne pas
+    fonctionner. Les champs restent desormais saisissables et c'est la saisie qui
+    coche la case ; une fenetre ouverte puis validee sans rien toucher n'ecrit
+    toujours rien.
+    Deux correctifs d'interface. QGIS n'avertit plus, a la fermeture du projet,
+    que « le contenu des couches temporaires sera definitivement perdu » : c'etait
+    faux pour les couches du plugin, simple affichage reconstruit depuis la base
+    SQLite a chaque rafraichissement, et l'avertissement laissait croire a une
+    perte de donnees inexistante. Le bloc connexion, lui, ne se replie a la
+    connexion que si un jeu de donnees est determine — sans JDD il n'y a rien
+    d'autre a faire que d'en choisir un, et le selecteur doit rester sous les
+    yeux ; le libelle du bouton (« changer » / « replier ») se deduit desormais
+    de ce qui est reellement affiche, au lieu d'etre pose a trois endroits qui
+    divergeaient.
+    Reprise de la saisie precedente etendue a l'habitat. Chaque nouvel habitat
+    reprend les champs du dernier saisi — type de determination, determinateur,
+    technique, interet communautaire, sensibilite, enjeu, etat de conservation,
+    critere, PEE, typicite — memorises d'une session QGIS a l'autre, comme le
+    sont deja les observateurs et la typologie HABREF. Ne sont jamais repris le
+    nom cite, le code cd_hab, le recouvrement et l'abondance, propres a chaque
+    habitat ; le recouvrement est aussi retire du bloc encode, ou il aurait
+    reapparu. Une mention « ↺ » signale ce qui a ete repris, comme pour les
+    observateurs et les dates.
+    0.5.7 - Correction d'une regression de la 0.5.6 : un grand vide
     apparaissait au milieu du formulaire habitat, entre « Nom cite » et « Code
     habitat », lorsque le bloc Natura 2000 etait replie. La zone defilante etire
     son contenu pour remplir la fenetre, et le surplus etait attribue au premier
