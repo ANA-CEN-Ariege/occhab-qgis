@@ -184,9 +184,6 @@ def _habiller_pages_suivantes(mise):
                                  QgsReadWriteContext)
             if copie is None:
                 continue
-            dans_la_page = pages.pagePositionToLayoutPosition(
-                0, QgsLayoutPoint(modele.pos().x(), modele.pos().y(), _MILLIMETRES)
-            )
             haut_page = pages.page(0).pos().y() if pages.page(0) else 0.0
             copie.attemptMove(
                 QgsLayoutPoint(modele.pos().x(),
@@ -194,7 +191,6 @@ def _habiller_pages_suivantes(mise):
                 page=numero,
             )
             copie.setId("")  # l'identifiant reste celui de la page 1
-            del dans_la_page
     _recadrer_legende(mise)
 
 
@@ -577,7 +573,9 @@ def _restreindre(legende, couche):
     for noeud in racine.findLayers():
         # Nom de couche masqué : les vrais intitulés sont les grands milieux,
         # que le rendu par règles porte déjà en sous-groupes.
-        QgsLegendRenderer.setNodeLegendStyle(noeud, QgsLegendStyle.Style.Hidden)
+        cache = _style_legende("Hidden")
+        if cache is not None:
+            QgsLegendRenderer.setNodeLegendStyle(noeud, cache)
     legende.setTitle("")  # le gabarit a déjà son cartouche « Légende »
 
 
@@ -681,11 +679,23 @@ def _mesurer(legende):
         return None
 
 
+def _style_legende(nom):
+    """Composant de légende par son nom, quelle que soit la version de QGIS.
+
+    `QgsLegendStyle.Style` est une énumération de portée, apparue après les
+    constantes posées directement sur la classe. Les deux coexistent dans les
+    versions récentes ; sur une 3.28 — la version minimale annoncée — seule la
+    seconde existe, et y accéder par la première lève un `AttributeError`.
+    """
+    portee = getattr(QgsLegendStyle, "Style", None)
+    return getattr(portee, nom, None) if portee is not None else \
+        getattr(QgsLegendStyle, nom, None)
+
+
 def _polices(legende, taille):
     """Poser le corps du texte sur tous les niveaux de la légende."""
     for composant in ("Symbol", "SymbolLabel", "Subgroup", "Group", "Title"):
-        style = getattr(QgsLegendStyle.Style, composant,
-                        getattr(QgsLegendStyle, composant, None))
+        style = _style_legende(composant)
         if style is None:
             continue
         # `setStyleFont` et non `style(...).setTextFormat(...)` : cette dernière

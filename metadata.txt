@@ -3,7 +3,7 @@ name=OccHab GeoNature
 qgisMinimumVersion=3.28
 qgisMaximumVersion=3.99
 description=Offline-first data entry for GeoNature's OccHab module (habitat stations) from QGIS, with local SQLite storage and synchronisation to the GeoNature REST API.
-version=0.7.0
+version=0.7.1
 author=Cédric Roy
 email=it@ariegenature.fr
 license=GPL-3.0-or-later
@@ -32,7 +32,19 @@ icon=resources/icons/occhab.svg
 experimental=True
 deprecated=False
 
-changelog=0.7.0 - Cartographier : mise en page, damier, et des habitats mieux
+changelog=0.7.1 - Correction : charger un export echouait sur les QGIS
+    anterieurs a la 3.36.
+    « QgsJsonUtils has no attribute geometryFromGeoJson » : cette fonction
+    n'existe que depuis QGIS 3.36, alors que l'extension annonce prendre en
+    charge la 3.28. La couche ne se chargeait pas du tout. La geometrie est
+    desormais lue par un convertisseur GeoJSON vers WKT ecrit ici — un seul
+    chemin pour toutes les versions, verifie identique a QgsJsonUtils sur les
+    236 entites d'un export reel.
+    Deux autres appels reserves aux versions recentes sont repliés sur leur
+    ancienne forme : les unites de rendu (Qgis.RenderUnit, QGIS 3.30), le type
+    de symbole (Qgis.SymbolType, QGIS 3.20) et les composants de legende
+    (QgsLegendStyle.Style).
+    0.7.0 - Cartographier : mise en page, damier, et des habitats mieux
     ranges.
     « Cartographier… », au pied du panneau, reunit les deux temps d'une carte :
     charger une couche d'habitats du serveur, puis en tirer une planche a partir

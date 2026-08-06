@@ -1322,6 +1322,21 @@ Neuf champs sont calculés à la volée avant l'écriture du GeoJSON :
 `QgsRuleBasedRenderer` **à deux niveaux** — un groupe par milieu, une règle par
 habitat.
 
+**La géométrie GeoJSON est lue par un convertisseur maison**
+(`processing/geojson_wkt.py`), pas par `QgsJsonUtils.geometryFromGeoJson()` :
+cette fonction n'existe qu'à partir de **QGIS 3.36**, alors que l'extension
+annonce prendre en charge la **3.28**. Sur un poste Windows en 3.28, charger un
+export levait `AttributeError: type object 'QgsJsonUtils' has no attribute
+'geometryFromGeoJson'` et la couche ne se chargeait pas du tout.
+`QgsGeometry.fromWkt()`, elle, existe depuis toujours — et un seul chemin pour
+toutes les versions vaut mieux qu'une branche selon celle qu'on a sous la main.
+Vérifié identique à `QgsJsonUtils` sur les 236 entités d'un export réel.
+
+Trois autres énumérations ne sont atteintes qu'avec un repli, pour la même
+raison : `Qgis.RenderUnit` (QGIS 3.30), `Qgis.SymbolType` (3.20) et
+`QgsLegendStyle.Style`. Toutes existent encore dans les versions récentes, mais
+leur ancienne place existe dans TOUTES — c'est elle qui sert de filet.
+
 **Mosaïques : deux représentations, choisies au chargement** (`MODES` dans
 `ui/export_layers.py`). Aucune convention nationale ne tranche — le guide
 MNHN/CBN 2005 normalise le modèle de données, pas la sémiologie — d'où le choix

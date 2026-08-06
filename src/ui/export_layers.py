@@ -22,7 +22,6 @@ from qgis.core import (
     Qgis,
     QgsBlurEffect,
     QgsGeometry,
-    QgsJsonUtils,
     QgsRectangle,
     QgsProperty,
     QgsFillSymbol,
@@ -31,12 +30,26 @@ from qgis.core import (
     QgsRuleBasedRenderer,
     QgsSymbol,
     QgsSymbolLayer,
+    QgsUnitTypes,
     QgsVectorLayer,
 )
 
+from ..processing import geojson_wkt as gw
 from ..processing import habitat_style as hs
 
 GROUP_NAME = "OccHab (exports)"
+
+#: Énumérations déplacées d'une version de QGIS à l'autre. `Qgis.RenderUnit`
+#: n'apparaît qu'en 3.30 et `Qgis.SymbolType` en 3.20 ; l'extension annonce
+#: prendre en charge la 3.28. Les anciennes places existent encore dans les
+#: versions récentes, mais elles ne sont pas les mieux documentées : d'où la
+#: nouvelle d'abord, l'ancienne en repli.
+_MILLIMETRES = getattr(getattr(Qgis, "RenderUnit", None), "Millimeters", None)
+if _MILLIMETRES is None:
+    _MILLIMETRES = QgsUnitTypes.RenderMillimeters
+_SYMBOLE_SURFACIQUE = getattr(getattr(Qgis, "SymbolType", None), "Fill", None)
+if _SYMBOLE_SURFACIQUE is None:
+    _SYMBOLE_SURFACIQUE = QgsSymbol.Fill
 
 
 def nom_de_fichier(libelle):
@@ -277,11 +290,18 @@ def _proprietes(feature):
 
 
 def _geometrie(feature):
-    """QgsGeometry d'une entité GeoJSON, ou None si illisible."""
-    try:
-        return QgsJsonUtils.geometryFromGeoJson(json.dumps(feature.get("geometry")))
-    except (TypeError, ValueError):
+    """QgsGeometry d'une entité GeoJSON, ou None si illisible.
+
+    Par le WKT et non par `QgsJsonUtils.geometryFromGeoJson`, qui n'existe qu'à
+    partir de QGIS 3.36 : sur une 3.28 — la version minimale annoncée — l'appel
+    levait un `AttributeError` et le chargement d'un export échouait purement et
+    simplement (cf. `processing.geojson_wkt`).
+    """
+    texte = gw.wkt((feature or {}).get("geometry"))
+    if not texte:
         return None
+    geom = QgsGeometry.fromWkt(texte)
+    return None if geom is None or geom.isNull() else geom
 
 
 def _coupe_pour_part(geom, emprise, aire_cible):
@@ -383,7 +403,7 @@ def _decoupe(couleur, expression, mosaique, flou=True):
         ),
     )
     generateur = QgsGeometryGeneratorSymbolLayer.create({})
-    generateur.setSymbolType(Qgis.SymbolType.Fill)
+    generateur.setSymbolType(_SYMBOLE_SURFACIQUE)
     generateur.setGeometryExpression(expression)
     generateur.setSubSymbol(remplissage)
     if mosaique and flou and _FLOU_MM > 0:
@@ -407,7 +427,7 @@ def _adoucir(couche_symbole):
     effet = QgsBlurEffect()
     effet.setBlurMethod(QgsBlurEffect.BlurMethod.StackBlur)  # bien plus rapide
     effet.setBlurLevel(_FLOU_MM)
-    effet.setBlurUnit(Qgis.RenderUnit.Millimeters)
+    effet.setBlurUnit(_MILLIMETRES)
     couche_symbole.setPaintEffect(effet)
 
 
