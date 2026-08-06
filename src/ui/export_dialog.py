@@ -12,7 +12,7 @@ Un filtre portant sur une colonne absente de la vue est **ignoré en silence** p
 GeoNature. Le dialogue le dit plutôt que de laisser croire à un filtrage qui
 n'aurait pas lieu, et l'appelant compare ensuite `total` et `total_filtered`.
 """
-from qgis.PyQt.QtCore import QDate
+from qgis.PyQt.QtCore import QDate, Qt
 from qgis.PyQt.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -23,9 +23,12 @@ from qgis.PyQt.QtWidgets import (
     QLabel,
     QMessageBox,
     QVBoxLayout,
+    QWidget,
 )
 
-from .dialog_size import ajuster_a_l_ecran, borner_largeur_combos
+from .dialog_size import (ajuster_a_l_ecran, borner_largeur_combos,
+                          rendre_defilant)
+from .export_layers import MODE_DEFAUT, MODES
 from .no_wheel import proteger_du_defilement
 
 #: Colonnes attendues dans la vue exportée pour que les filtres s'appliquent.
@@ -65,13 +68,35 @@ def periode_annee_en_cours(aujourdhui=None):
 class ExportPicker(QDialog):
     """Quel export, quel JDD, quelle période — puis `filtres()`."""
 
-    def __init__(self, exports, datasets=None, id_dataset=None, parent=None):
-        """Args : `exports` [{id, label, …}], `datasets` [(id, nom)], JDD courant."""
+    def __init__(self, exports, datasets=None, id_dataset=None,
+                 en_attente=None, parent=None):
+        """Args : `exports` [{id, label, …}], `datasets` [(id, nom)], JDD courant.
+
+        Le jeu de données n'est PAS à choisir ici : c'est celui du panneau, où
+        l'on travaille déjà. Le redemander posait une question dont la bonne
+        réponse était toujours la même, avec le risque de charger un export qui
+        ne parle pas des mêmes stations que la saisie en cours. Reste une case à
+        cocher pour le cas rare où l'on veut voir tous les JDD.
+
+        `en_attente` : callable(id_dataset) rendant le nombre de stations locales
+        pas encore synchronisées. Elles ne sont PAS dans l'export — celui-ci est
+        une vue du serveur — et c'est le piège de la cartographie : on compose
+        une planche en croyant y voir tout son travail, alors que les saisies du
+        jour manquent.
+        """
         super().__init__(parent)
         self.setWindowTitle("Charger un export du serveur")
         self._exports = exports or []
 
         layout = QVBoxLayout(self)
+        # Tout le contenu défile, boutons exceptés : cette fenêtre s'est
+        # enrichie au fil des besoins — avertissement de synchronisation, choix
+        # du figuré des mosaïques, aide en clair — et une taille écrite une fois
+        # pour toutes vieillit mal : les champs se compriment jusqu'à se couper,
+        # sans que rien ne le signale.
+        corps = QWidget()
+        layout_corps = QVBoxLayout(corps)
+        layout_corps.setContentsMargins(0, 0, 0, 0)
         intro = QLabel(
             "Chargement de l'export bâti sur la vue « %s » : données "
             "consolidées, identifiants déjà résolus en libellés, équivalents "
@@ -79,7 +104,16 @@ class ExportPicker(QDialog):
             "seule." % VUE_EXPORT
         )
         intro.setWordWrap(True)
-        layout.addWidget(intro)
+        layout_corps.addWidget(intro)
+
+        self._compter_en_attente = en_attente
+        self.label_attente = QLabel()
+        self.label_attente.setWordWrap(True)
+        self.label_attente.setStyleSheet(
+            "background: #fbeedb; border: 1px solid #f0d6ac; "
+            "color: #8a4d02; padding: 6px;"
+        )
+        layout_corps.addWidget(self.label_attente)
 
         form = QFormLayout()
 
@@ -92,14 +126,29 @@ class ExportPicker(QDialog):
         self.combo_export.setEnabled(len(self._exports) > 1)
         form.addRow("Export", self.combo_export)
 
-        self.combo_jdd = QComboBox()
-        self.combo_jdd.addItem("— tous les jeux de données —", None)
-        for id_ds, nom in datasets or []:
-            self.combo_jdd.addItem(nom, id_ds)
-        position = self.combo_jdd.findData(id_dataset)
-        if position >= 0:
-            self.combo_jdd.setCurrentIndex(position)
-        form.addRow("Jeu de données", self.combo_jdd)
+        self._id_dataset = id_dataset
+        self._nom_dataset = dict(datasets or {}).get(id_dataset) if datasets else None
+        if self._nom_dataset is None:
+            self._nom_dataset = next(
+                (nom for id_ds, nom in datasets or [] if id_ds == id_dataset), None
+            )
+        etiquette = QLabel(self._nom_dataset or "— aucun jeu de données choisi —")
+        etiquette.setWordWrap(True)
+        etiquette.setToolTip(
+            "Celui du panneau OccHab. Pour en changer, changez-le là-bas : "
+            "l'export doit parler des mêmes stations que votre saisie."
+        )
+        form.addRow("Jeu de données", etiquette)
+
+        self.check_tous_jdd = QCheckBox("Charger tous les jeux de données")
+        self.check_tous_jdd.setToolTip(
+            "Pour consulter au-delà de votre jeu de données courant. La couche "
+            "obtenue mélange alors des stations qui ne sont pas les vôtres."
+        )
+        self.check_tous_jdd.setChecked(id_dataset is None)
+        self.check_tous_jdd.setEnabled(id_dataset is not None)
+        self.check_tous_jdd.toggled.connect(self._maj_avertissement)
+        form.addRow("", self.check_tous_jdd)
 
         debut, fin = periode_annee_en_cours()
         self.check_periode = QCheckBox("Restreindre à une période")
@@ -109,6 +158,28 @@ class ExportPicker(QDialog):
         )
         form.addRow("", self.check_periode)
 
+        # Représentation des mosaïques : aucune convention nationale ne tranche,
+        # donc on la choisit au chargement et on compare sur les mêmes données.
+        self.combo_mode = QComboBox()
+        for cle, libelle, description in MODES:
+            self.combo_mode.addItem(libelle, cle)
+            self.combo_mode.setItemData(
+                self.combo_mode.count() - 1, description, Qt.ItemDataRole.ToolTipRole
+            )
+        position = self.combo_mode.findData(MODE_DEFAUT)
+        if position >= 0:
+            self.combo_mode.setCurrentIndex(position)
+        self.combo_mode.currentIndexChanged.connect(self._maj_aide_mode)
+        form.addRow("Mosaïques", self.combo_mode)
+
+        self._maj_avertissement()
+
+        self.label_mode = QLabel()
+        self.label_mode.setWordWrap(True)
+        self.label_mode.setStyleSheet("color: palette(mid); font-style: italic;")
+        form.addRow("", self.label_mode)
+        self._maj_aide_mode()
+
         self.date_debut = _date_edit(debut)
         self.date_fin = _date_edit(fin)
         form.addRow("Du", self.date_debut)
@@ -116,7 +187,7 @@ class ExportPicker(QDialog):
         self.check_periode.toggled.connect(self.date_debut.setEnabled)
         self.check_periode.toggled.connect(self.date_fin.setEnabled)
 
-        layout.addLayout(form)
+        layout_corps.addLayout(form)
 
         precision = QLabel(
             "La période retient les stations dont les dates de début ET de fin "
@@ -124,8 +195,9 @@ class ExportPicker(QDialog):
         )
         precision.setWordWrap(True)
         precision.setStyleSheet("color: palette(mid); font-style: italic;")
-        layout.addWidget(precision)
+        layout_corps.addWidget(precision)
 
+        layout.addWidget(rendre_defilant(corps), 1)
         boutons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
         )
@@ -142,7 +214,7 @@ class ExportPicker(QDialog):
 
     def showEvent(self, event):
         super().showEvent(event)
-        ajuster_a_l_ecran(self, 480, 320)
+        ajuster_a_l_ecran(self, 500, 560)
 
     # ------------------------------------------------------------------ API
     def id_export(self):
@@ -152,7 +224,51 @@ class ExportPicker(QDialog):
         return self.combo_export.currentText()
 
     def id_dataset(self):
-        return self.combo_jdd.currentData()
+        """JDD retenu : celui du panneau, ou aucun filtre si « tous » est coché."""
+        return None if self.check_tous_jdd.isChecked() else self._id_dataset
+
+    def mode(self):
+        """Représentation retenue pour les stations à plusieurs habitats."""
+        return self.combo_mode.currentData() or MODE_DEFAUT
+
+    def libelle_mode(self):
+        return self.combo_mode.currentText()
+
+    def _maj_avertissement(self):
+        """Compter les saisies en attente DANS LA PORTÉE choisie.
+
+        Un compte tous JDD confondus serait du bruit : les stations d'un autre
+        jeu de données n'ont rien à faire dans cet export, et leur absence n'est
+        pas un oubli.
+        """
+        if not callable(self._compter_en_attente):
+            self.label_attente.setVisible(False)
+            return
+        try:
+            nombre = int(self._compter_en_attente(self.id_dataset()) or 0)
+        except Exception:  # noqa: BLE001 - un compteur ne doit rien bloquer
+            nombre = 0
+        self.label_attente.setVisible(bool(nombre))
+        if not nombre:
+            return
+        portee = ("tous jeux de données confondus"
+                  if self.check_tous_jdd.isChecked()
+                  else "dans « %s »" % (self._nom_dataset or "ce jeu de données"))
+        self.label_attente.setText(
+            "⚠ <b>%d station(s) locale(s) %s ne sont pas encore synchronisées</b> : "
+            "elles ne figureront pas dans cet export, donc pas sur les cartes que "
+            "vous en tirerez. Synchronisez d'abord si vous voulez les voir."
+            % (nombre, portee)
+        )
+
+    def _maj_aide_mode(self):
+        """Décrire le mode choisi : les libellés seuls ne disent pas ce qu'on voit."""
+        cle = self.combo_mode.currentData()
+        for candidat, _libelle, description in MODES:
+            if candidat == cle:
+                self.label_mode.setText(description)
+                return
+        self.label_mode.setText("")
 
     def filtres(self):
         """Paramètres de requête pour `GET /exports/api/<id>`.

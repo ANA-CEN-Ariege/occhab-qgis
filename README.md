@@ -247,7 +247,10 @@ Une suppression serveur portant sur une station **déjà absente** (HTTP 404) n'
 plus comptée en échec : la base locale est simplement nettoyée.
 
 ### Récupérer / éditer une station serveur
-**« Récupérer une station du serveur… »** offre **deux chemins** :
+**« Récupérer une station du serveur… »** offre **deux chemins**. Tous deux
+rapatrient des données ÉDITABLES : charger un export, qui donne une couche de
+consultation, est rangé ailleurs (« Cartographier… »), pour que le bouton ne
+mélange pas deux natures d'objet.
 - **Depuis la carte (sélection)** : sélectionner des stations dans la couche
   « OccHab — stations serveur » (outil de sélection QGIS). Si rien n'est
   sélectionné, le plugin **active la couche + l'outil** et affiche un bouton
@@ -340,7 +343,7 @@ dizaine de `regexp_match`.
 | `nature_observation` | station | `inconnu` `directe_avec_releve` `directe_sans_releve` `a_distance` `photo_interpretation` `autre` — `id_nat_obs` |
 | `critere` · `remarque` | habitat | texte libre |
 | `pee` | habitat | liste de **3 taxons au plus** (plantes exotiques envahissantes) |
-| `zone_humide` | station | booléen |
+| `zone_humide` | station | `oui` `non` `a_verifier` — extension **ANA**. Anciennement un booléen : `true` se relit `oui`, `false` ne se relit pas (une case décochée ne disait pas « non ») |
 | `recouvrement` | habitat | 0-100 ; **pré-sélectionne** l'Abondance (< 5 %, 5-25 %, 25-50 %, 50-75 %, > 75 %) **et** alimente le champ natif `recovery_percentage` |
 
 Les codes internes sont **textuels** ; leur équivalent **numérique** attendu par
@@ -393,6 +396,13 @@ observateurs, numérisateur, nomenclatures) et champs ANA-EVAL extraits. La géo
 `CREATE SCHEMA` demande des droits sur la base que l'administrateur GeoNature
 n'accorde pas toujours ; poser les fonctions à côté de la vue n'exige que le
 droit dont on a déjà besoin pour créer la vue.
+
+> 📄 **Les étapes 1 à 4 sont réunies dans [`sql/v_occhab_complet.sql`](sql/v_occhab_complet.sql)**,
+> prêt à exécuter d'un seul tenant dans DBeaver, psql ou pgAdmin. Le fichier fait
+> foi : les blocs ci-dessous en sont la copie commentée, et un test
+> (`tests/test_sql_script.py`) vérifie qu'ils ne divergent pas. Écrit et vérifié
+> pour **PostgreSQL 15**, rejoué deux fois de suite pour s'assurer qu'il se
+> relance sans erreur.
 
 **Cinq objets, à poser dans cet ordre.** Chacun est indépendant : on peut
 s'arrêter après le 4 et avoir une vue qui marche, en acceptant qu'elle soit lente.
@@ -631,6 +641,11 @@ C'est elle qu'on déclare dans le module Exports. Une ligne par habitat, les
 stations sans habitat comprises.
 
 ```sql
+-- `CREATE OR REPLACE` refuse de changer le TYPE d'une colonne existante. Une vue
+-- créée avant que `zone_humide` passe de booléen à texte doit donc être
+-- supprimée d'abord — l'export qui s'appuie dessus n'en est pas affecté, il
+-- pointe sur le nom.
+DROP VIEW IF EXISTS gn_exports.v_occhab_complet;
 CREATE OR REPLACE VIEW gn_exports.v_occhab_complet AS
 SELECT
     -- Clé stable, unique et NON NULLE : c'est elle à déclarer comme « colonne
@@ -669,7 +684,12 @@ SELECT
                           ELSE es.j ->> 'enjeu' END             AS station_niveau_enjeu,
     CASE es.j ->> 'etat_conservation' WHEN 'nd' THEN 'inconnu'
                           ELSE es.j ->> 'etat_conservation' END AS station_etat_conservation,
-    (es.j ->> 'zone_humide')::boolean                           AS station_zone_humide,
+    -- Trois états depuis que « à vérifier » existe ; les stations antérieures
+    -- portent encore le booléen de la case à cocher.
+    CASE lower(es.j ->> 'zone_humide')
+         WHEN 'true'  THEN 'oui'
+         WHEN 'false' THEN 'non'
+         ELSE es.j ->> 'zone_humide' END                        AS station_zone_humide,
     es.j ->> 'unite_vegetale'                                   AS station_unite_vegetale,
     es.j ->> 'nature_observation'                               AS station_nature_observation,
     -- ---- Habitat (libellés, pas d'id) ----
@@ -1095,11 +1115,13 @@ Le module Exports expose **deux** routes, dont une seule sert ici :
 | `GET /exports/{id}/{format}` | **Asynchrone** : met la génération en file (Celery) et répond « en cours, vous recevrez une notification ». Pas de fichier en retour. |
 | `GET /exports/api/{id}` | **Synchrone**, paginée, **GeoJSON** dès que la vue porte une géométrie. C'est celle qu'utilise le plugin. |
 
-« Récupérer une station du serveur… ▸ **Charger un export du serveur (couche)** »
-propose le JDD courant et une période (année en cours par défaut), puis dépose le
-résultat en couche lecture seule sous le groupe **« OccHab (exports) »** — groupe
-distinct de « OccHab (serveur) », qui est lui reconstruit à chaque
-rafraîchissement.
+« Cartographier… ▸ **Charger un export du serveur (couche)** » propose le JDD
+courant et une période (année en cours par défaut), puis dépose le
+résultat en couche lecture seule **en tête** du groupe **« OccHab (exports) »**.
+En tête, et non à la suite : `addLayer` ajoute en DERNIER enfant, c'est-à-dire
+sous les couches déjà présentes — un deuxième export se retrouvait caché par le
+premier, et on le croyait vide. Le groupe est distinct de « OccHab (serveur) »,
+qui est lui reconstruit à chaque rafraîchissement.
 
 **Seuls les exports bâtis sur `v_occhab_complet` sont proposés** (filtrage sur le
 `view_name` renvoyé par `GET /exports/`). Les autres exports d'une instance —
@@ -1127,6 +1149,41 @@ Les filtres de période suivent la convention de la route : `filter_d_up_date_mi
 la **nuance** distingue chaque habitat dans ce ton — les habitats présents étant
 étalés sur la plage du milieu dans l'ordre de leur code. Jamais de liste
 d'habitats codée en dur : un habitat inconnu se colore de lui-même.
+
+**La vue peut fournir le grand type elle-même.** Si elle expose `grand_type_code`
+et `grand_type_nom` — la racine hiérarchique HABREF de l'équivalent EUNIS — ils
+font autorité et le vote n'a pas lieu : le rattachement et son libellé viennent
+alors du référentiel, plus des tables de ce module. La racine n'est retenue que
+si c'est une classe EUNIS connue, faute de quoi aucune couleur ne lui serait
+attribuée.
+
+```sql
+-- Racine hiérarchique d'un habitat dans SA typologie (niveau 1).
+CREATE OR REPLACE FUNCTION gn_exports.habref_racine(p_cd_hab integer)
+RETURNS TABLE(o_cd_hab integer, o_code character varying, o_nom character varying)
+LANGUAGE sql STABLE PARALLEL SAFE AS $fn$
+    WITH RECURSIVE remonte AS (
+        SELECT h.cd_hab, h.cd_hab_sup, h.lb_code, h.lb_hab_fr, 0 AS d
+        FROM ref_habitats.habref h WHERE h.cd_hab = p_cd_hab
+      UNION ALL
+        -- Borne à 20 : une boucle dans cd_hab_sup ferait tourner sans fin.
+        SELECT s.cd_hab, s.cd_hab_sup, s.lb_code, s.lb_hab_fr, r.d + 1
+        FROM remonte r JOIN ref_habitats.habref s ON s.cd_hab = r.cd_hab_sup
+        WHERE r.d < 20
+    )
+    SELECT cd_hab, lb_code, lb_hab_fr FROM remonte ORDER BY d DESC LIMIT 1;
+$fn$;
+```
+
+⚠ **Prenez la racine de l'ÉQUIVALENT EUNIS, pas celle de l'habitat saisi.** Le
+niveau 1 d'EUNIS est un découpage en milieux (11 classes) ; celui du Prodrome est
+la classe phytosociologique — plusieurs dizaines, donc une légende à 80 groupes.
+La colonne se construit en appliquant `habref_racine` au `cd_hab` que
+`habref_equivalents(h.cd_hab, 'EUNIS')` désigne.
+
+**Ce que cela ne règle pas** : les couleurs. Associer « forêt » à un vert foncé
+reste un choix de ce module — HABREF ne porte pas de sémiologie. Le gain est que
+le *regroupement* et les *libellés* cessent d'être une interprétation.
 
 Le milieu est déterminé par **vote de tous les équivalents** (`classe_habitat`),
 et non par le premier code venu : première lettre des codes **EUNIS** (poids 2),
@@ -1183,35 +1240,171 @@ C'est **le seul usage où un rang de correspondance dégradé est sans conséque
 colonne peut porter plusieurs codes séparés par « ; » — la lettre du premier
 l'emporte, ce qui suffit à colorier mais ne prétend pas trancher une mosaïque.
 
+**Un habitat de l'annexe I, une voix — pas une par fiche.** Les Cahiers
+d'habitats déclinent chaque habitat en autant de fiches qu'il a de variantes, et
+le compte varie du simple au quadruple : l'habitat **6210** (pelouses calcicoles)
+en aligne **45**, l'habitat **4060** (landes) en aligne 11. Laisser voter chaque
+fiche revient à voter le nombre de variantes plutôt que le milieu.
+
+Mesuré sur le `Prunetalia spinosae`, un ordre de **fourrés** : HABREF le relie à
+4060, 4070, 5110, 5130 et 5210 — landes et fruticées — contre le seul 6210. Il
+ressortait pourtant en « Prairies et pelouses », les 45 fiches de 6210 écrasant
+les 36 des cinq autres. `habitats_annexe_i()` ne retient donc que les codes à
+quatre chiffres, dédoublonnés : cinq voix pour les landes contre une pour la
+pelouse, et le Prunetalia rejoint les fruticées.
+
+**L'annexe I ne peut pas, à elle seule, désigner un milieu littoral.** Ses
+correspondances disent où une végétation *peut se rencontrer*, pas ce qu'elle
+est. HABREF relie ainsi le `Caricion gracilis`, le `Mentho longifoliae-Juncion
+inflexi` et l'`Oenanthion fistulosae` à l'habitat **2190 « Dépressions humides
+intradunales »**, parce que ces alliances décrivent aussi la végétation des
+pannes dunaires. Prises au mot, elles peuplaient un poste « Côtes, dunes et
+plages » sur une carte ariégeoise, à 600 m d'altitude et 150 km de la mer. Un
+milieu littoral demande donc un témoin **EUNIS ou CORINE**
+(`_TEMOINS_LITTORAUX`) ; sans lui, l'habitat reste « non rattaché », ce qui est
+la vérité. Une vraie dune, elle, ressort toujours : EUNIS la code `B1`.
+
+**En dernier recours, la CLASSE du Prodrome tranche**
+(`_rattacher_par_classe_pvf`). HABREF ne donne à certains syntaxons aucune
+correspondance vers EUNIS, CORINE ou l'annexe I. Ils restaient gris — alors que
+le référentiel sait très bien où les ranger : le code d'un syntaxon commence par
+le numéro de sa **classe phytosociologique**, et une classe de végétation est une
+unité écologique. Trois rattachements sur une carto ariégeoise, tous justes :
+
+| Sans correspondance | Rejoint | Milieu |
+|---|---|---|
+| `Caricion gracilis` (**51**.0.2.0.2) | `Phragmition communis` (**51**.0.1.0.1) | Tourbières et bas-marais |
+| `Cynosurion cristati` (**6**.0.2.0.1) | `Brachypodio rupestris-Centaureion nemoralis` (**6**.0.1.0.2) | Prairies et pelouses |
+| `Lonicerion periclymeni` (**20**.0.2.0.4) | `Prunetalia spinosae` (**20**.0.2) | Landes et fruticées |
+
+Seuls les codes **numériques** comptent — « C1.6 » et « E2.12 » sont des codes
+EUNIS, dont le milieu se lit directement — et seules les alliances **présentes
+sur la carte** votent : on ne rattache jamais à partir d'un référentiel qu'on n'a
+pas sous les yeux. Sur l'export réel, les habitats non rattachés passent de six à
+trois, et `source_classe` porte `classe PVF` pour dire d'où vient la couleur.
+
+**Un habitat non rattaché reprend le milieu de son homonyme**
+(`_rattacher_les_homonymes`). HABREF porte la même alliance sous plusieurs
+`cd_hab` dont les correspondances diffèrent : `16747` « Mentho longifoliae -
+Juncion inflexi » ressort d'EUNIS `E3.1` et de CORINE `37.24`, tandis que
+`16573` « Mentho longifoliae-Juncion inflexi » n'a que l'annexe I. C'est la même
+végétation, et la légende la regroupe déjà sous une seule entrée — deux milieux
+la feraient apparaître deux fois, dans deux groupes. La propagation ne va que
+dans un sens : une classe établie n'est jamais remise en cause par un silence.
+
+Le rapprochement suppose que les deux noms se ressemblent, et HABREF ne les écrit
+pas deux fois pareil. `_normaliser()` ignore la casse, les espaces multiples et
+les espaces autour du tiret ; **`_squelette()` réduit un nom de syntaxon à ses
+genres** — le premier mot de chaque membre — pour que la forme abrégée rejoigne
+la complète. Trois paires relevées sur une seule carto, chacune sortie en deux
+postes de deux couleurs :
+
+| Forme complète | Forme abrégée |
+|---|---|
+| Brachypodio **rupestris**-Centaureion **nemoralis** | Brachypodio-Centaureion nemoralis |
+| Tetragonolobo **maritimi**-Mesobromenion **erecti** | Tetragonolobo-Mesobromenion |
+| Mentho **longifoliae**-Juncion **inflexi** | Mentho-Juncion inflexi |
+
+Les épithètes tombent — et pas toujours les mêmes, d'où la réduction à un seul
+mot par membre. La réduction ne s'applique **qu'aux noms de syntaxons**, reconnus
+au suffixe de leur dernier membre (`-ion`, `-enion`, `-etalia`, `-etea`,
+`-etum`) : sans ce garde-fou, « Lacs, étangs et mares temporaires » tomberait à
+« Lacs, » et se confondrait avec tout ce qui commence pareil.
+
+En légende, c'est le libellé **le plus renseigné** qui s'affiche : « Brachypodio
+rupestris-Centaureion nemoralis (6.0.1.0.2) » dit l'épithète et le code, sa forme
+abrégée n'apprend rien de plus. Mesuré sur l'export réel : **26 postes de légende
+au lieu de 42**.
+
 Neuf champs sont calculés à la volée avant l'écriture du GeoJSON :
 `classe_milieu`, `libelle_milieu`, `source_classe`, `cle_habitat`, `couleur`,
 `rang_habitat`, `est_dominant`, `est_mosaique` et `composition`. Le rendu est un
 `QgsRuleBasedRenderer` **à deux niveaux** — un groupe par milieu, une règle par
 habitat.
 
-**Mosaïques : tous les habitats sont dessinés, CÔTE À CÔTE.** Chaque habitat
-reçoit une **bande** du polygone proportionnelle à son recouvrement, découpée par
-un `QgsGeometryGeneratorSymbolLayer` entre `bande_debut_pct` et `bande_fin_pct`.
-Plus aucune superposition : chaque habitat garde un aplat franc, et la carte a la
-lisibilité d'une carte mono-habitat quelle que soit sa densité.
+**Mosaïques : deux représentations, choisies au chargement** (`MODES` dans
+`ui/export_layers.py`). Aucune convention nationale ne tranche — le guide
+MNHN/CBN 2005 normalise le modèle de données, pas la sémiologie — d'où le choix
+laissé à l'utilisateur, le mode figurant dans le nom de la couche pour que deux
+représentations des mêmes données cohabitent.
 
-Une première version superposait des hachures colorées : illisible dès que la
-carte se densifiait, et il fallait deviner qu'une hachure reprenait la couleur
-d'un autre poste de légende. Trois points d'implémentation :
+| Mode | Mise en œuvre |
+|---|---|
+| `bandes` | `QgsGeometryGeneratorSymbolLayer` découpant des bandes horizontales |
+| `damier` | grille régulière, mailles affectées par déficit, stockées en WKT et relues par `geom_from_wkt` |
 
-- les bornes sont calculées **en Python à l'export** (`_bandes`) et non par
-  expression : un `aggregate` par entité au rendu serait ruineux ;
-- les bandes ne portent **pas de contour** — il dessinerait de fausses limites
+Quatre autres figurés ont été construits, rendus sur les données réelles, puis
+**écartés** ; le détail vaut d'être gardé, ne serait-ce que pour ne pas les
+reproposer :
+
+| Écarté | Pourquoi |
+|---|---|
+| hachures colorées superposées | illisible dès que la carte se densifie ; il fallait deviner qu'une hachure reprenait la couleur d'un autre poste de légende |
+| diagramme circulaire, couche par rang, aplat + étiquette | tous privilégient l'habitat dominant, ou demandent d'allumer les couches une à une |
+| semis de points | dit une densité, pas une surface, et laisse le dominant seul en aplat |
+| cercles et carrés concentriques | surfaces exactes, mais la lecture centre-bord suggère une organisation que la donnée ne contient pas, et un rond au milieu d'une parcelle se confond avec une mare |
+| damier de pois ronds | trop chargé sur les stations petites ou étroites — les haies viraient au chapelet |
+
+Le **damier** ne partage pas le polygone dans un sens de lecture : il le
+quadrille, et la proportion se lit au NOMBRE de mailles. C'est le seul mode qui
+ne suggère aucune organisation spatiale — là où les bandes se lisent de haut en
+bas — alors que la donnée n'en contient aucune. Les
+mailles reviennent aux habitats **par déficit** : à chaque maille, celui qui est
+le plus loin de sa surface due la prend, si bien que les arrondis ne s'accumulent
+pas et que les habitats s'alternent d'eux-mêmes. Le parcours suit la suite R2 de
+Roberts ; ligne par ligne, il aurait refait des bandes. Un habitat trop
+minoritaire pour décrocher une maille s'en voit céder une par le mieux servi —
+mieux vaut 1,6 % de trop qu'un habitat relevé mais absent de la carte.
+
+La précision du WKT est **calée sur la maille** (`_decimales`), jamais fixée
+d'avance : les exports GeoNature arrivent en **degrés**, où une décimale vaut
+onze kilomètres. Écrite à une décimale — un choix qui valait dix centimètres en
+Lambert 93 — la géométrie s'effondrait sur un point et **toutes les mosaïques
+ressortaient vides**, sans la moindre erreur au chargement. Deux chiffres de plus
+que la maille suffisent, soit un centième de maille. `tests/test_export_layers.py`
+monte le damier dans les deux unités pour que la panne ne revienne pas.
+
+Mesuré sur carré, rectangle allongé et L concave, 64 mailles visées : **50,0 /
+29,7 / 20,3 %** pour un 50/30/20 et **59,4 / 37,5 / 1,6 / 1,6 %** pour un
+60/37/2/1, l'union des mailles couvrant le polygone au millionième près et sans
+chevauchement. Les mailles voisines d'un même habitat sont **fusionnées** avant
+écriture : invisible à l'écran, mais les côtés communs quittent le fichier
+(910 → 601 Ko sur 200 stations dont 100 en mosaïque).
+
+**Tous les habitats sont dessinés, CÔTE À CÔTE**, chacun sur la part du polygone
+qui revient à son recouvrement, découpée par un
+`QgsGeometryGeneratorSymbolLayer`. Plus aucune superposition : chaque habitat
+garde un aplat franc, et la carte a la lisibilité d'une carte mono-habitat quelle
+que soit sa densité.
+
+**Les hauteurs de coupe des bandes sont calculées par dichotomie au chargement**
+(`_poser_coupes`), jamais déduites d'une fraction de la hauteur : sur un carré ou
+un rectangle allongé le partage naïf tombe juste, mais sur une forme en L — banale
+en cartographie d'habitats — il donne **68,8 / 18,8 / 12,5 %** au lieu de
+50 / 30 / 20, la partie basse étant plus large. On cherche donc directement la
+hauteur sous laquelle le polygone couvre la surface voulue : 24 itérations par
+borne, une fois pour toutes, mesuré ensuite à 50,0 / 30,0 / 20,0 % sur les trois
+formes. Le même écueil avait fait écarter les anneaux à rayon ∝ √part, qui
+donnaient 30 / 9 / 61 sur un rectangle allongé.
+
+Trois points d'implémentation :
+
+- les parts cumulées sont calculées **en Python à l'export** (`_bandes`) et non
+  par expression : un `aggregate` par entité au rendu serait ruineux ;
+- les parts ne portent **pas de contour** — il dessinerait de fausses limites
   d'habitat ; un contour unique par station est tiré par l'entité dominante ;
-- leurs bords sont **estompés** (`QgsBlurEffect`, 1,4 mm, méthode `StackBlur`)
+- leurs bords sont **estompés** (`QgsBlurEffect`, 0,3 mm, méthode `StackBlur`)
   tandis que ce contour reste net : la limite relevée sur le terrain et le
   partage conventionnel ne doivent pas se lire pareil. L'effet est posé sur la
-  COUCHE de symbole (`setPaintEffect` n'existe pas sur `QgsSymbol`) et réglé en
-  millimètres, pour tenir à l'écran comme à 300 ppp ;
-- les **niveaux de symboles** deviennent inutiles, les bandes ne se recouvrant
+  COUCHE de symbole (`setPaintEffect` n'existe pas sur `QgsSymbol`), réglé en
+  millimètres pour tenir à l'écran comme à 300 ppp, et **seulement sur les
+  mosaïques** — un polygone à un seul habitat n'a aucune séparation interne. Les
+  deux variantes tiennent dans un même symbole, chacune s'effaçant quand l'autre
+  s'applique, pour que la légende garde une entrée par habitat ;
+- les **niveaux de symboles** deviennent inutiles, les parts ne se recouvrant
   plus.
 
-**Limite assumée** : la bande dit la *proportion*, pas la *localisation* — la
+**Limite assumée** : le figuré dit la *proportion*, pas la *localisation* — la
 donnée ne contient pas où se trouve chaque habitat dans le polygone. C'est une
 convention de lecture, comme un diagramme. Le guide méthodologique national
 (MNHN/CBN 2005) ne normalise d'ailleurs que le modèle de données, pas la
@@ -1219,7 +1412,7 @@ sémiologie ; les cartes publiées traitent le plus souvent la mosaïque comme u
 poste de légende composite (couleur du dominant + surcharge), ce que cette
 représentation remplace par un partage explicite.
 
-L'infobulle donne la composition chiffrée, que les hachures ne disent pas.
+L'infobulle donne la composition chiffrée, que le figuré ne dit pas.
 
 La palette couvre **tous** les habitats, dominants ou non — un habitat secondaire
 est bel et bien dessiné — mais seuls les milieux présents entrent en légende, au
@@ -1311,10 +1504,214 @@ aussitôt en brouillon. ⚠️ Cette règle vaut dans la **table** ; dans le for
 station, la liste « Statut » est **autoritaire** (ce qu'elle affiche est
 enregistré), pour ne pas empêcher de conserver une station validée qu'on rouvre.
 
+**Numéro de polygone** — la colonne `N° polygone` (clé `champs.POLYGONE`) est
+posée par `Grille.__init__`, une par station, et **partagée par toutes ses
+lignes** : c'est ce qui permet de voir qu'un bloc de trois lignes décrit une
+seule mosaïque. Elle est `lecture_seule` et `cellule=False`, donc jamais dans
+`colonnes_modifiees()` — ni la base ni le payload GeoNature ne peuvent la
+recevoir, tous deux filtrant d'ailleurs sur une liste de colonnes figée. Le
+numéro vaut pour la session et se renumérote au chargement suivant : c'est un
+repère de lecture, pas un identifiant.
+
+Le fond des cellules le suit — un **polygone sur deux** est teinté sur toute la
+largeur de la ligne, ce qui a remplacé l'alternance ligne à ligne de Qt
+(`setAlternatingRowColors`). Les deux rythmes se contrariaient : une mosaïque de
+trois habitats paraissait en compter six.
+
+**Copier vers un tableur** — `Ctrl+C`, le bouton « Copier » et le menu
+contextuel produisent du **TSV** (`processing/tableur.py`), le seul format que
+LibreOffice et Excel collent sans rien demander. Les cellules contenant une
+tabulation, un saut de ligne ou un guillemet sont encadrées à la convention CSV,
+faute de quoi un commentaire de station sur deux lignes décalerait tout le
+tableau — une erreur qu'on ne voit qu'après coup, une fois les colonnes
+mélangées. La copie d'une **cellule seule** échappe à cette règle : on la recolle
+le plus souvent dans un champ de saisie, où les guillemets seraient à effacer à
+la main. « Copier tout » suit le proxy, donc les filtres et le tri à l'écran.
+
 **Architecture** — toute la logique risquée (propagation, suivi des
 modifications, application en masse, rétrogradation) est dans
 `processing/grille.py`, **pur et testé sans Qt** ; `ui/attribute_table.py` n'en
 est qu'un adaptateur.
+
+---
+
+## 6 ter. Mise en page cartographique
+
+**La carte montre le SERVEUR, pas la base locale.** Une couche d'export est une
+vue de GeoNature ; une station non synchronisée n'y est pas, et rien à l'écran ne
+le signalerait. `_stations_en_attente(id_dataset)` les compte **dans la portée
+retenue**, et le nombre est rappelé deux fois : dans la fenêtre de chargement
+d'un export, et à la création d'une mise en page — le moment où la carte devient
+un livrable. La portée compte : additionner les stations en attente de tous les
+jeux de données serait du bruit, celles d'un autre JDD n'ayant rien à faire dans
+cet export.
+
+**Les fenêtres de choix rendent leur contenu défilant** (`rendre_defilant`),
+boutons exceptés. Une taille écrite une fois pour toutes vieillit mal : on ajoute
+un avertissement de synchronisation, un choix de figuré, une ligne d'aide, et les
+champs se compriment jusqu'à se couper — sans que rien ne le signale. Avec un
+ascenseur, la fenêtre peut être trop courte sans que rien ne disparaisse. Vérifié
+en la forçant à 500 × 380 puis à 520 × 300 : aucun champ tronqué.
+
+**Le JDD ne se choisit pas dans la fenêtre d'export.** C'est celui du panneau, où
+l'on travaille déjà ; le redemander posait une question dont la bonne réponse
+était toujours la même, avec le risque de charger un export qui ne parle pas des
+mêmes stations que la saisie en cours. Reste une case « tous les jeux de
+données » pour la consultation.
+
+**Le plugin ne dessine pas de planche : il remplit celles de l'ANA.** Les
+gabarits `.qpt` de la structure (`composer_templates` sur le partage) portent
+déjà le bandeau vert, le logo, l'adresse, les mentions légales et la place des
+cadres. Réinventer tout cela produirait une carte hors charte, à recomposer à
+chaque fois.
+
+`ui/print_layout.creer()` charge le gabarit et ne renseigne que ce qui varie :
+
+| Objet du gabarit | Ce que le plugin y met |
+|---|---|
+| nom de la mise en page | le titre — les gabarits ANA titrent par `@layout_name` |
+| `Sous-titre` | le texte saisi, **ou rien** : sans cela le « Sous-titre ou texte complémentaire » du gabarit partirait à l'impression |
+| `Carte principale` | l'emprise (vue courante ou couche entière), le CRS du canevas, et **la pile de couches du canevas** — fond de plan compris |
+| `Légende` | liée à la carte, filtrée sur elle, réduite à la couche d'habitats |
+| `Échelle` | liée à la carte, remise en mètres |
+| `@fond_bd_ortho` · `@fond_scan25` · `@fond_cartes_ign` | le fond choisi, **les deux autres remises à vide** — citer un fond qu'on n'affiche pas est une erreur de source |
+| `@footer_text` | « ANA-CEN Ariège — <date> » |
+
+**Aucun cadre n'est déplacé** : la charte appartient à la structure. La seule
+retouche est la taille du texte de la légende, et pour cause — c'est la seule
+chose que le gabarit ne peut pas prévoir.
+
+**La légende est le point de rupture.** Une carte d'habitats en compte trois sur
+un secteur homogène et quarante sur une mosaïque, et la colonne d'un gabarit A4
+n'en tient pas quarante, à aucune taille lisible.
+
+- la place disponible n'est **pas** la taille du cadre. Celui du gabarit A4 fait
+  4 × 7,5 mm et grandit à son contenu ; s'y fier réduirait le texte à 5 pt pour
+  tenir dans 8 mm alors que la colonne en offre 130. `mise_en_page.espace_libre()`
+  cherche donc jusqu'où le cadre peut s'étendre avant de buter sur un voisin, en
+  ignorant ceux qui l'**englobent** — le fond de page et la carte pleine page
+  sont sous lui, pas devant ;
+- **l'encombrement n'est pas calculé, il est MESURÉ** (`print_layout._essayer`).
+  Une première version l'estimait au caractère : plausible, et faux, parce que la
+  hauteur d'une entrée dépend du symbole, des marges de groupe et du rendu de la
+  police. On applique donc chaque combinaison (taille, colonnes) et on demande à
+  QGIS ce qu'elle donne. Attention, `rect()` **ne convient pas** : hors écran il
+  rend la taille du CADRE et non celle du contenu, et une légende trop haute
+  paraît alors tenir. La mesure juste est
+  `QgsLegendRenderer(model, settings).minimumSize(contexte)` ;
+- **la taille se règle sur la largeur autant que sur la hauteur.** QGIS ne coupe
+  pas les libellés d'une légende : il ÉLARGIT le cadre. Un « Tetragonolobo
+  maritimi-Mesobromenion erecti (26.0.2.0.3.3) » pousse donc la légende
+  par-dessus la carte, hors de sa colonne — c'est le débordement qu'on voit en
+  premier ;
+- **la page de légende reprend l'habillage de la page 1**
+  (`_habiller_pages_suivantes`) : bandeau, titre, logo, adresse, sources, pied de
+  page, à la même place. Une page de légende nue ne s'identifie pas — sortie du
+  PDF, imprimée seule, plus rien ne dit de quelle carte elle est la légende ni
+  qui l'a produite. Sont exclus les cartes, la légende, et la **barre d'échelle**,
+  qui sans carte ne veut rien dire et ferait prendre la page pour une carte.
+  La copie passe par une **sérialisation XML** — les objets de mise en page n'ont
+  pas de `clone()` en Python — avec deux pièges, tous deux silencieux :
+  **l'identifiant unique doit être effacé** de l'élément avant relecture, sinon
+  `readXml` le reprend tel quel et la copie devient un homonyme parfait de
+  l'original ; QGIS ne sait alors plus lequel des deux il manipule, les deux se
+  dessinent à l'écran mais **l'export sort la page de légende nue**. Et il faut
+  **`refresh()`** après ajout : une image embarquée en base64 et une étiquette en
+  expression ne sont décodées qu'au rafraîchissement, sans quoi le bandeau existe
+  à la bonne place et s'imprime blanc.
+  La légende est ensuite **recalée** dans la bande restée libre
+  (`_recadrer_legende`) : posée avant l'habillage, elle passait sous le titre.
+  Un objet large d'au moins 60 % de la page est tenu pour un **bandeau** et
+  borne la HAUTEUR ; en deçà c'est un cartouche, qui borne la LARGEUR. Les
+  confondre coûtait 46 mm de hauteur à toute la légende pour un bloc large d'un
+  quart de page ;
+- **si rien ne tient, la légende part sur une DEUXIÈME PAGE** (`_page_dediee`),
+  en pleine page et en colonnes, plutôt que d'être coupée. La carte n'y perd
+  rien : dans les gabarits ANA elle occupe déjà toute la page, la colonne de
+  légende était posée par-dessus. La couper aurait été le pire des cas — QGIS le
+  fait sans un mot, et on lit une carte à laquelle il manque des postes sans
+  pouvoir s'en apercevoir.
+
+> Vérifié sur l'export réel (114 stations, 42 postes de légende) avec
+> `carte_seule_pleine_page_a4_cen.qpt` : fond de plan conservé sous les
+> polygones, échelle graduée 0-100-200 m, légende complète sur une page 2 à 9 pt
+> et deux colonnes, mentions lisibles, deux planches du même nom créées d'affilée
+> sans erreur.
+
+**Les grands milieux sont EN CAPITALES** dans la légende. QGIS rend les
+règles-groupes d'un rendu par règles comme de simples entrées
+(`QgsSymbolLegendNode`), au même style que les habitats : impossible de les
+mettre en gras par `setStyleFont`, elles se lisaient donc à la même hauteur que
+les habitats sans qu'on voie que c'étaient des titres. La capitale est le procédé
+classique quand la graisse n'est pas disponible.
+
+**Les intitulés techniques sont effacés** de la légende : sans cela elle s'ouvre
+sur « OccHab (exports) » puis « Occhab complet (2026-01-01 → 2026-12-31) [bandes
+proportionnelles] » — le nom du groupe de couches et celui du fichier chargé. Ce
+sont des repères de travail, pas des postes de légende. Les groupes de projet
+sont aplatis (`_degrouper`, **par clones** : `removeChildNode` détruit le nœud, et
+le déplacer lève « QgsLayerTreeLayer has been deleted ») et le nom de couche
+passe en style `Hidden`. Restent les grands milieux, que le rendu par règles
+porte déjà en sous-groupes.
+
+**Quatre pièges d'API**, tous silencieux :
+
+- **`layoutManager().addLayout()` DÉTRUIT la mise en page** si une autre porte
+  déjà ce nom. L'objet Python survit, son C++ a disparu, et le premier accès
+  lève « wrapped C/C++ object of type QgsPrintLayout has been deleted » — sur
+  la ligne d'après, loin de la cause. D'où `_nom_unique()`, qui numérote, et le
+  contrôle de la valeur de retour ;
+- `carte.setCrs()` sans reprojeter l'emprise donne une **carte vide** et une
+  échelle à 1:0. Les couches d'export arrivent en degrés (WGS84), le canevas est
+  en Lambert 93 : `_cadrer()` transforme l'emprise avant de cadrer ;
+- `carte.setLayers([couche])` **efface le fond de plan**. On passe la pile du
+  canevas (`iface.mapCanvas().layers()`) ; seule la LÉGENDE est restreinte à la
+  couche d'habitats ;
+- `legende.style(x).setTextFormat(...)` travaille sur un objet **temporaire**,
+  détruit à la fin de l'expression : Qt lève « wrapped C/C++ object has been
+  deleted ». On passe par `setStyleFont()`.
+
+**QtWebKit** — les blocs « Sources », « Adresse » et « Fond » des gabarits ANA
+sont des `QgsLayoutItemHtml`, seul objet de mise en page à réclamer WebKit.
+Plusieurs paquets QGIS de Debian et d'Ubuntu sont construits sans lui : QGIS les
+remplace alors par un pavé rouge « WebKit not available », à l'écran comme dans
+le PDF.
+
+`_sans_webkit()` les **convertit en étiquettes en mode HTML**, qui rendent le
+même balisage (`<strong>`, `<br />`) par le moteur de texte de Qt, présent
+partout. Le gabarit sur disque n'est pas touché. Deux détails :
+
+- la feuille de style ne survit pas à la conversion, et une étiquette ne réduit
+  jamais son texte : sans corps imposé, l'adresse s'affiche à la taille par
+  défaut, à cheval sur le bandeau de pied. `mise_en_page.taille_pour_bloc()`
+  choisit un corps, appliqué **à l'objet** (`setTextFormat`) et pas seulement en
+  CSS — en mode HTML, QGIS part de la police de l'objet ;
+- la mention du fond est figée dans le gabarit (SCAN25 dans les nôtres). La
+  laisser telle quelle citerait une source qu'on n'affiche pas : elle est
+  réécrite depuis le choix « Fond de plan cité » (`gabarits.MENTIONS_FOND`).
+
+---
+
+### Reconnexion d'une session à l'autre
+
+Le mot de passe n'est **nulle part** dans le plugin : il vit dans le gestionnaire
+d'authentification de QGIS, qui le chiffre. Seuls l'URL et l'identifiant de
+configuration (`geonature.authcfg`) sont mémorisés. Rouvrir QGIS ne perdait donc
+que le **jeton de session** — et obligeait à refaire le tour du dialogue pour
+retrouver des identifiants que la machine avait déjà.
+
+`OccHabDockWidget._reconnecter()` reprend la session à l'ouverture du dock, avec
+trois garde-fous, parce qu'un plugin qui parle au réseau au démarrage de QGIS se
+fait vite détester :
+
+- **rien sans mot de passe principal déjà saisi.** Lire une configuration
+  d'authentification le réclame, et le demander de nous-même ferait surgir une
+  fenêtre que personne n'a appelée. `masterPasswordIsSet()` sert de test ; s'il
+  est faux, on ne tente rien et le bouton « Connexion » reste le chemin normal ;
+- **aucun message en cas d'échec.** Hors ligne — le cas d'usage même de cette
+  extension — la tentative échoue, et c'est normal. Mesuré à 0,3 s de démarrage
+  supplémentaire contre un serveur injoignable, sans exception ni fenêtre ;
+- **désactivable** par `geonature.reconnexion_auto = false`.
 
 ---
 
@@ -1381,9 +1778,15 @@ occhab/
     │                 grille.py                  # tampon d'édition en masse (pur, testé)
     │                 export.py                  # aplatissement cartographie (pur, testé)
     │                 duplicate.py               # duplication / collage / reprise (pur, testé)
+    │                 tableur.py                 # mise en TSV pour le presse-papiers (pur, testé)
+    │                 gabarits.py                # repérage des .qpt de mise en page (pur, testé)
+    │                 mise_en_page.py            # dimensionnement de la légende (pur, testé)
     │                 habitat_style.py           # classes de milieu EUNIS, mosaïques (pur, testé)
     │                 geometry.py                # WKT/GeoJSON, reprojection 4326
+    ├── sql/          v_occhab_complet.sql       # vue d'export, prête à exécuter (PostgreSQL 15)
     └── ui/           dock_widget.py             # dock principal
+                      print_layout.py            # planche cartographique depuis un gabarit ANA
+                      layout_dialog.py           # choix du gabarit, du titre, du cadrage
                       attribute_table.py         # table stations × habitats (adaptateur Qt)
                       dialog_size.py             # dialogues défilants, bornés à l'écran
                       station_form.py · habitat_form.py · station_dialog.py

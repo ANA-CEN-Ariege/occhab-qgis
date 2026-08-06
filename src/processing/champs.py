@@ -85,8 +85,16 @@ def _champ(cle, niveau, libelle, type_, stockage, groupe, referentiel=None,
                  nomenclature, masse, cellule, lecture_seule, largeur)
 
 
+#: Clé du numéro de polygone. Ce n'est pas une donnée : le numéro est posé au
+#: chargement de la table (cf. `grille.Grille`), le temps d'une session, pour
+#: qu'on voie d'un coup d'œil quelles lignes décrivent la MÊME station. Sans
+#: lui, trois habitats d'une mosaïque se lisent comme trois polygones.
+POLYGONE = "polygone"
+
 CHAMPS = [
     # ---------------------------------------------------------- identité
+    _champ(POLYGONE, STATION, "N° polygone", ENTIER, COLONNE, G_IDENTITE,
+           masse=False, cellule=False, lecture_seule=True, largeur=80),
     _champ("validation_status", STATION, "Statut", CODE, COLONNE, G_IDENTITE,
            referentiel=ref.STATUTS_VALIDATION, largeur=90),
     _champ("sync_status", STATION, "Synchro", TEXTE, COLONNE, G_IDENTITE,
@@ -111,8 +119,8 @@ CHAMPS = [
            referentiel=ref.NIVEAUX_ENJEU, largeur=110),
     _champ("etat_conservation", STATION, "État (station)", CODE, EVAL, G_METIER,
            referentiel=ref.ETATS_CONSERVATION, largeur=110),
-    _champ("zone_humide", STATION, "Zone humide", BOOLEEN, EVAL, G_METIER,
-           largeur=90),
+    _champ("zone_humide", STATION, "Zone humide", CODE, EVAL, G_METIER,
+           referentiel=ref.ZONES_HUMIDES, largeur=100),
 
     # ------------------------------------------------ Natura 2000 (station)
     _champ("unite_vegetale", STATION, "Unité végétale", CODE, EVAL, G_N2000,

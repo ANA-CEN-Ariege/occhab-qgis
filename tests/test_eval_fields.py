@@ -130,7 +130,7 @@ def test_ancien_format_relu():
     assert codes["enjeu"] == "fort"
     assert codes["etat_conservation"] == "bon"
     assert codes["recouvrement"] == 45
-    assert codes["zone_humide"] is True
+    assert codes["zone_humide"] == "oui"
     assert ef.strip_eval(ancien) == "Texte de terrain."
 
 
@@ -155,7 +155,7 @@ def test_migration_ancien_vers_json_sans_perte():
     assert "Relevé du 12 juin." in reecrit
     relu = ef.decode_eval(reecrit)
     assert relu == {"enjeu": "tres_fort", "etat_conservation": "bon",
-                    "recouvrement": 60, "zone_humide": True}
+                    "recouvrement": 60, "zone_humide": "oui"}
     # …et le bloc est désormais du JSON.
     assert reecrit.split(ef.EVAL_START)[1].split(ef.EVAL_END)[0].strip().startswith("{")
 
@@ -261,3 +261,41 @@ def test_merge_eval_sur_ancien_format():
 def test_statut_validation_est_un_code_ferme():
     assert ef.decode_eval(ef.encode_eval("", statut="valide"))["statut"] == "valide"
     assert "statut" not in ef.decode_eval(ef.encode_eval("", statut="en_cours"))
+
+
+# --- Zone humide : trois états, et non plus une case à cocher ----------------
+def test_zone_humide_a_verifier():
+    """Le troisième état, celui qui manquait : ni oui, ni non."""
+    comment = ef.encode_eval("Bas-fond sec en août.", zone_humide="a_verifier")
+    assert ef.decode_eval(comment)["zone_humide"] == "a_verifier"
+
+
+def test_zone_humide_non_est_une_information():
+    """« Non » se stocke, alors qu'une case décochée ne disait rien."""
+    assert ef.decode_eval(ef.encode_eval("", zone_humide="non"))["zone_humide"] == "non"
+
+
+def test_zone_humide_ancien_booleen():
+    """Les stations déjà saisies portent True / False, pas un code."""
+    assert ef.decode_eval(ef.encode_eval("", zone_humide=True))["zone_humide"] == "oui"
+    # `False` ne voulait dire que « case décochée » : rien à en conclure.
+    assert "zone_humide" not in ef.decode_eval(ef.encode_eval("", zone_humide=False))
+
+
+def test_zone_humide_ancien_texte():
+    """Ancien format textuel du bloc : `zone_humide=true`."""
+    comment = "[ANA-EVAL] zone_humide=true [/ANA-EVAL]"
+    assert ef.decode_eval(comment)["zone_humide"] == "oui"
+
+
+def test_zone_humide_code_inconnu_ecarte():
+    assert "zone_humide" not in ef.decode_eval(
+        ef.encode_eval("", zone_humide="peut-etre-bien")
+    )
+
+
+def test_zone_humide_dans_le_referentiel():
+    assert ref.codes(ref.ZONES_HUMIDES) == {"oui", "non", "a_verifier"}
+    # L'ordre d'AFFICHAGE compte : « À vérifier » se choisit après avoir hésité
+    # entre les deux autres, pas avant.
+    assert [code for code, _ in ref.ZONES_HUMIDES] == ["oui", "non", "a_verifier"]

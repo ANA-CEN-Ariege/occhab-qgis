@@ -24,6 +24,29 @@ from qgis.PyQt.QtWidgets import (
 from qgis.gui import QgsAuthConfigSelect
 
 
+def libelle_utilisateur(user):
+    """Libellé lisible d'un utilisateur GeoNature (nom, login, id_role).
+
+    Hors de la classe : la reconnexion silencieuse du dock l'utilise sans
+    qu'aucun dialogue ne soit ouvert.
+    """
+    user = user or {}
+    if not isinstance(user, dict):
+        return "connecté"
+    complet = (
+        user.get("nom_complet")
+        or ("%s %s" % (user.get("prenom_role") or "", user.get("nom_role") or "")).strip()
+        or user.get("identifiant")
+        or "connecté"
+    )
+    details = []
+    if user.get("identifiant"):
+        details.append(str(user["identifiant"]))
+    if user.get("id_role"):
+        details.append("id_role=%s" % user["id_role"])
+    return "%s (%s)" % (complet, ", ".join(details)) if details else complet
+
+
 class ConnectionDialog(QDialog):
     """Connexion à GeoNature via une configuration d'authentification QGIS."""
 
@@ -75,7 +98,7 @@ class ConnectionDialog(QDialog):
                 "Choisissez une configuration d'authentification QGIS.",
             )
             return
-        login, password = self._credentials_from_authcfg(authcfg)
+        login, password = self.credentials_from_authcfg(authcfg)
         if not login:
             QMessageBox.warning(
                 self,
@@ -112,8 +135,13 @@ class ConnectionDialog(QDialog):
         self.config.set("geonature.authcfg", authcfg)
         self.accept()
 
-    def _credentials_from_authcfg(self, authcfg):
-        """Lire identifiant/mot de passe depuis le gestionnaire d'auth de QGIS."""
+    @staticmethod
+    def credentials_from_authcfg(authcfg):
+        """Lire identifiant/mot de passe depuis le gestionnaire d'auth de QGIS.
+
+        Statique et publique : la reconnexion silencieuse du dock s'en sert
+        aussi, sans ouvrir de fenêtre.
+        """
         from qgis.core import QgsApplication, QgsAuthMethodConfig
 
         manager = QgsApplication.authManager()
@@ -128,18 +156,4 @@ class ConnectionDialog(QDialog):
 
     def user_label(self):
         """Libellé lisible de l'utilisateur connecté (nom, login, id_role)."""
-        user = self.user or {}
-        if not isinstance(user, dict):
-            return "connecté"
-        full = (
-            user.get("nom_complet")
-            or ("%s %s" % (user.get("prenom_role") or "", user.get("nom_role") or "")).strip()
-            or user.get("identifiant")
-            or "connecté"
-        )
-        details = []
-        if user.get("identifiant"):
-            details.append(str(user["identifiant"]))
-        if user.get("id_role"):
-            details.append("id_role=%s" % user["id_role"])
-        return "%s (%s)" % (full, ", ".join(details)) if details else full
+        return libelle_utilisateur(self.user)

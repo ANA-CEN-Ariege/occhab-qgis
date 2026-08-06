@@ -23,8 +23,9 @@ QGIS. Il couvre l'installation, la première configuration et l'usage quotidien.
 10. [Supprimer : base locale ou serveur](#10-supprimer--base-locale-ou-serveur)
 11. [Travailler hors-ligne](#11-travailler-hors-ligne)
 12. [Sauvegarde et export des données](#12-sauvegarde-et-export-des-données)
-13. [Les champs « enjeu / état / recouvrement »](#13-les-champs-enjeu--état--recouvrement)
+13. [Les champs « enjeu / état / zone humide / recouvrement »](#13-les-champs-enjeu--état--zone-humide--recouvrement)
 13 bis. [Brouillon, validé, et la table des stations](#13-bis-brouillon-validé-et-la-table-des-stations)
+13 ter. [Sortir une carte : la mise en page](#13-ter-sortir-une-carte--la-mise-en-page)
 14. [Dépannage (FAQ)](#14-dépannage-faq)
 15. [Glossaire](#15-glossaire)
 
@@ -147,6 +148,30 @@ Utile hors ligne, en avant-première, ou si le dépôt n'est pas accessible :
 > **méthode A**. Cette voie sera rouverte quand l'extension sortira de sa phase
 > d'expérimentation.
 
+### Rester connecté d'une session à l'autre
+
+**Vous n'avez à vous connecter qu'une fois.** À la réouverture de QGIS, le plugin
+reprend la session tout seul : vos identifiants sont dans le **gestionnaire
+d'authentification de QGIS**, qui les chiffre — le plugin, lui, ne mémorise que
+l'URL de l'API et la configuration à utiliser, jamais le mot de passe.
+
+Deux cas où la reconnexion n'a pas lieu, et c'est voulu :
+
+- **QGIS protège ses mots de passe par un mot de passe principal** que vous
+  n'avez pas encore saisi dans cette session. Le plugin ne le réclame pas de
+  lui-même — ce serait une fenêtre surgissant au démarrage, sans que vous l'ayez
+  demandée. Cliquez « Connexion GeoNature… » quand vous en avez besoin : QGIS
+  vous le demandera à ce moment-là.
+  *Astuce* : dans **Préférences ▸ Options ▸ Authentification**, QGIS peut retenir
+  ce mot de passe principal dans le trousseau du système ; la reconnexion devient
+  alors totalement automatique.
+- **Vous êtes hors ligne.** Le plugin démarre déconnecté, ce qui est son mode de
+  travail normal : vous saisissez, vous synchroniserez plus tard.
+
+Pour désactiver la reconnexion automatique, mettez `geonature.reconnexion_auto`
+à `false` dans le fichier `config.json` du plugin (menu **Base locale… ▸ Ouvrir
+le dossier**).
+
 ### Ouvrir le plugin
 
 Une fois activé, cliquez sur son **icône dans la barre d'outils** (ou via le menu
@@ -210,7 +235,7 @@ vos **stations locales** avec leurs actions, puis le bloc **Serveur** :
 │  [Synchroniser (2)]  [Rafraîchir]                         │
 │  [Récupérer une station du serveur… ▾]                    │
 │─────────────────────────────────────────────────────────│
-│ Base locale : occhab_local.db          [Base locale…]     │
+│ Base locale : occhab_local.db  [Base locale…] [Cartographier…]│
 └─────────────────────────────────────────────────────────┘
 ```
 
@@ -223,7 +248,11 @@ vos **stations locales** avec leurs actions, puis le bloc **Serveur** :
   une **multi-sélection** (Ctrl/Maj) pour effacer plusieurs stations d'un coup
   (voir §10). Les mêmes actions sont accessibles par **clic-droit** sur une ligne,
   et **double-clic** ouvre la station. **« ＋ Nouvelle station ▾ »** la crée (voir §6).
-- **Serveur** : *Synchroniser*, *Rafraîchir*, *Récupérer une station du serveur…*.
+- **Serveur** : *Synchroniser*, *Rafraîchir*, *Récupérer une station du serveur…*
+  — ces actions rapatrient des données **éditables** dans votre base.
+- **Pied de panneau** : *Base locale…* (dossier, sauvegarde, exports) et
+  *Cartographier…*, qui regroupe les deux temps d'une carte — charger la couche
+  d'habitats depuis le serveur, puis en tirer une planche imprimable.
 - **Astuce carte** : double-cliquer une station sur la carte (ou cliquer dessus
   avec l'outil **Identifier des entités**) ouvre son formulaire.
 - **La sélection est commune à la liste et à la carte** : sélectionner des lignes
@@ -473,9 +502,25 @@ Ensuite : éditez comme d'habitude (§7), puis **synchronisez** (§9).
 
 ### Charger un export du serveur (couche de consultation)
 
-Troisième entrée du même menu : **« Charger un export du serveur (couche)… »**.
-À ne pas confondre avec les deux précédentes — celles-ci rapatrient des stations
-**éditables** dans votre base ; un export est une **vue préparée côté GeoNature**
+> ⚠️ **La cartographie se fait sur les données de GeoNature, pas sur votre base
+> locale.** Un export est une vue du **serveur** : tant qu'une station n'est pas
+> **synchronisée**, elle n'y figure pas — donc pas non plus sur les cartes que
+> vous en tirerez. La fenêtre de chargement compte vos stations en attente
+> **dans le jeu de données courant** et vous le dit ; le même rappel revient à la
+> création d'une mise en page. **Synchronisez avant de cartographier** (§9).
+
+> **Le jeu de données ne se choisit pas ici** : c'est celui du panneau, où vous
+> travaillez déjà. Le redemander posait une question dont la bonne réponse était
+> toujours la même, avec le risque de charger un export qui ne parle pas des
+> mêmes stations que votre saisie. Pour en changer, changez-le dans le panneau.
+> Une case **« Charger tous les jeux de données »** reste là pour la
+> consultation au-delà du vôtre — la couche mélange alors des stations qui ne
+> sont pas les vôtres.
+
+**Ce n'est pas dans le même bouton** : cherchez **« Cartographier… ▸ Charger un
+export du serveur (couche)… »**, au pied du panneau. Les deux entrées
+précédentes rapatrient des stations **éditables** dans votre base ; un export est
+une **vue préparée côté GeoNature**
 (données consolidées, identifiants déjà traduits en libellés, champs ANA-EVAL
 décodés), chargée en **couche QGIS en lecture seule**.
 
@@ -537,33 +582,44 @@ avez chargé : elle se reconstruit à chaque chargement.
 
 #### Les stations en mosaïque
 
-Un polygone portant plusieurs habitats est **partagé en bandes**, chacune de la
-couleur d'un habitat et **proportionnelle à son recouvrement** : une station à
-60 % de hêtraie, 25 % de lande et 15 % de prairie se lit en trois bandes de ces
-tailles-là, du bas vers le haut, de la plus couvrante à la moins couvrante. Un
-contour unique cerne la station.
+Un polygone peut porter plusieurs habitats. **Aucune convention nationale ne dit
+comment les représenter** — le guide méthodologique du MNHN normalise le modèle
+de données, pas la sémiologie. La fenêtre de chargement propose donc **deux
+représentations**, à comparer sur vos propres données :
 
-Chaque habitat garde donc un **aplat de couleur franc** — la même lisibilité
-qu'une carte à un seul habitat, quelle que soit la densité de polygones. La
-composition chiffrée reste en infobulle (**Afficher les infobulles** dans la
-barre d'outils) : « Hêtraie 60 % ; Lande à genêts 25 % ; Prairie de fauche 15 % ».
+| Mode | Ce qu'on voit |
+|---|---|
+| **Bandes proportionnelles** | le polygone partagé en bandes horizontales, une par habitat, à la surface exacte de son recouvrement |
+| **Damier de mailles carrées** | la station quadrillée ; chaque maille revient en entier à un habitat, en nombre proportionnel à son recouvrement |
 
-La séparation entre deux bandes est volontairement **estompée**, alors que le
-contour de la station reste **net**. C'est la différence entre les deux qu'il
-faut lire : le trait franc est une limite relevée sur le terrain, le passage
-flou n'existe pas — il ne fait que partager la surface.
+Dans les deux cas, **chaque habitat occupe la surface de son recouvrement** : un
+50 / 30 / 20 se mesure à la règle sur la carte. Les parts sont calculées au
+chargement, y compris sur les polygones concaves, où un simple partage de la
+hauteur donnerait de fausses surfaces.
 
-> **Les bandes ne disent pas OÙ se trouve chaque habitat** dans le polygone :
-> elles en donnent la proportion, pas la localisation, que la donnée ne contient
-> pas. C'est une convention de lecture, comme un diagramme.
+> **Ce qui les distingue.** Les bandes se lisent de haut en bas, ce qui suggère
+> une stratification que la donnée ne contient pas ; en échange, les surfaces
+> sont exactes au millionième. Le damier ne suggère rien sur l'emplacement des
+> habitats, mais arrondit à la maille près — environ 1,6 %.
+
+Le mode retenu figure dans le **nom de la couche** : chargez deux fois le même
+export avec deux modes différents et comparez-les côte à côte dans le panneau
+Couches.
+
+Quel que soit le mode, un contour unique cerne la station, la légende garde une
+entrée par habitat, et la composition chiffrée reste en infobulle (**Afficher les
+infobulles** dans la barre d'outils) : « Chênaie 50 % ; Lande à callune 30 % ;
+Prairie de fauche 20 % ».
+
+> **Aucun de ces modes ne dit OÙ se trouve chaque habitat** dans le polygone :
+> ils en donnent la proportion, pas la localisation, que la donnée ne contient
+> pas. Ce sont des conventions de lecture, comme un diagramme.
 >
-> Une première version superposait des hachures colorées. Elle saturait la carte
-> dès qu'elle se densifiait, et obligeait à deviner qu'une hachure reprenait la
-> couleur d'un autre poste de légende.
->
-> Les colonnes `classe_milieu`, `source_classe`, `rang_habitat`, `couleur`,
-> `est_dominant`, `est_mosaique` et `composition` sont dans la table
-> attributaire, à votre disposition pour vos propres styles.
+> Les **surfaces sont exactes** en mode bandes, quelle que soit la forme du
+> polygone : les hauteurs de coupe sont calculées au chargement. Un simple
+> partage de la hauteur suffisait sur un rectangle mais donnait 68,8 / 18,8 /
+> 12,5 % au lieu de 50 / 30 / 20 sur une forme en L — la partie basse étant plus
+> large, une tranche de même hauteur y pèse davantage.
 
 La couche arrive dans un groupe **« OccHab (exports) »**, nommée avec sa période
 — deux années peuvent donc coexister pour être comparées. Ce groupe n'est **pas**
@@ -712,13 +768,18 @@ libre que vous y mettez.
   déroulante). Cette liste suit désormais le **cahier des charges des
   cartographies Natura 2000 d'Occitanie** (annexe 2). L'ancienne valeur « Non
   déterminé » se rouvre automatiquement sur **« Inconnu »** : rien n'est perdu.
-- **Zone humide** : case à cocher — simple oui/non pour indiquer si la station
-  est en zone humide.
+- **Zone humide** : **Oui / Non / À vérifier** (liste déroulante). « À vérifier »
+  est là pour ce qu'on ne peut pas trancher sur le moment — un bas-fond vu en fin
+  d'été, une parcelle interprétée par photo aérienne : la station est marquée
+  pour un retour sur le terrain au lieu d'être rangée dans « non » faute de
+  mieux. Les stations saisies avec l'ancienne **case à cocher** se rouvrent sur
+  **« Oui »** si elle était cochée ; si elle ne l'était pas, la liste reste vide,
+  car une case décochée ne voulait pas dire « non ».
 - **Recouvrement (%)** : de 0 à 100 (habitat seulement) ; il **pré-sélectionne** 
   aussi la classe d'**abondance** de l'habitat.
 
-Vous les saisissez dans le formulaire de station (les deux premiers visibles, 
-la zone humide juste dessous, le recouvrement au niveau habitat) ; à la relecture 
+Vous les saisissez dans le formulaire de station (les trois premiers l'un sous
+l'autre, le recouvrement au niveau habitat) ; à la relecture 
 (édition), le plugin les ré-affiche automatiquement. Côté GeoNature, ces valeurs 
 restent ré-extractibles (voir README §6 pour les administrateurs).
 
@@ -751,6 +812,13 @@ Le bouton **« Tableau »**, au-dessus de la liste, ouvre une fenêtre qui montr
 tout le JDD courant : **une ligne par habitat**. Une station qui porte trois
 habitats occupe trois lignes ; ses informations de station y sont répétées.
 
+- **La colonne « N° polygone »**, tout à gauche, porte le **numéro de la
+  station** — pas celui de la ligne. Trois habitats d'une même mosaïque portent
+  donc le **même numéro**, et le fond de la ligne change d'un polygone au
+  suivant : les mosaïques se repèrent d'un coup d'œil. L'infobulle du numéro
+  précise « habitat 2 sur 3 ». Ce numéro vaut **pour la session** : il se
+  renumérote au prochain chargement, ne se modifie pas, et ne part ni en base ni
+  vers GeoNature.
 - **Colonnes** : choisissez *Essentiel*, *Natura 2000* ou *Tout*.
 - **Filtres** : statut, synchro, et une zone de recherche (nom de station,
   habitat, cd_hab). Cliquez un en-tête pour trier.
@@ -784,6 +852,23 @@ habitats occupe trois lignes ; ses informations de station y sont répétées.
 > les modifier sur une ligne les modifie pour **tous les habitats du même
 > polygone**. L'infobulle vous le rappelle.
 
+**Copier vers Excel ou LibreOffice** — le bouton **« Copier »**, en haut à
+droite, propose trois portées :
+
+| Action | Ce qui part dans le presse-papiers |
+|---|---|
+| **Copier les lignes sélectionnées** (ou `Ctrl+C`) | les lignes retenues, sans en-têtes |
+| **Copier la cellule** | le contenu de la seule cellule où vous êtes, tel quel |
+| **Copier tout le tableau (avec en-têtes)** | tout ce qui est **affiché** — donc filtré et trié comme à l'écran — précédé de la ligne d'en-têtes |
+
+Les trois se retrouvent aussi au **clic droit** dans le tableau. Collez ensuite
+avec `Ctrl+V` : les colonnes se placent d'elles-mêmes dans le tableur. Un
+commentaire à plusieurs lignes reste dans sa cellule et ne décale rien.
+
+> « Copier tout » suit vos filtres : si la recherche ne laisse voir que douze
+> lignes, ce sont ces douze-là qui partent, pas les quatre cents du jeu de
+> données.
+
 **Modifier plusieurs lignes d'un coup** — sélectionnez les lignes (Ctrl / Maj),
 puis **« Modifier les N lignes sélectionnées… »** : le bouton affiche le nombre
 de lignes visées, et reste grisé tant que vous n'avez rien sélectionné. Saisissez
@@ -803,6 +888,60 @@ cellules modifiées apparaissent en orangé. À l'enregistrement, le plugin :
 
 Une station **validée** que vous retouchez dans la table **repasse en brouillon**
 automatiquement : y revenir, c'est que le travail n'était pas fini.
+
+---
+
+## 13 ter. Sortir une carte : la mise en page
+
+> ⚠️ **Synchronisez avant.** La planche est faite à partir d'une couche d'export,
+> donc des données **du serveur**. Vos saisies du jour n'y seront pas tant
+> qu'elles ne sont pas parties. Un message jaune vous rappelle combien de
+> stations sont encore en attente.
+
+**« Cartographier… ▸ Créer une mise en page… »**, au pied du panneau, compose une planche
+cartographique dans QGIS à partir des **gabarits de l'ANA** — ceux du dossier
+partagé `composer_templates`. Bandeau vert, logo, adresse et mentions y sont
+déjà : vous ne renseignez que ce qui change.
+
+1. **Gabarit** — la liste montre les `.qpt` trouvés. S'ils sont ailleurs,
+   cliquez **« Dossier… »** : le chemin est retenu pour les fois suivantes.
+   *Carte seule pleine page A4* pour une carte simple, *A3* quand la légende est
+   longue, *carte rapport* pour l'insérer dans un document.
+2. **Titre** — c'est lui qui s'affiche dans le bandeau vert.
+3. **Sous-titre** — jeu de données, année, nom du projet. Laissez vide si vous
+   n'en voulez pas : le texte d'exemple du gabarit est effacé de toute façon.
+4. **Couche à cartographier** — c'est celle que la **légende** détaille. La carte,
+   elle, reprend **toutes les couches allumées à l'écran** : votre ortho reste
+   sous les polygones.
+5. **Cadrage** — ce que montre l'écran, ou toute la couche.
+6. **Fond de plan cité** — BD ORTHO, SCAN25, Cartes IGN. Ce choix alimente la
+   ligne « Sources » du gabarit. **Ne citez que ce que vous affichez vraiment.**
+
+La planche s'ouvre dans le composeur de QGIS, **entièrement modifiable** :
+déplacez les cadres, changez les polices, exportez en PDF ou en PNG.
+
+> **Si la légende compte trop d'habitats** pour la colonne du gabarit — au-delà
+> d'une vingtaine — elle est **placée sur une deuxième page**, en pleine page et
+> en colonnes. Rien n'est coupé, et la carte occupe alors toute la page 1. Un
+> message vous le dit au moment de la création. Le PDF sort en deux pages : la
+> carte, puis sa légende.
+>
+> La page de légende **reprend l'habillage de la première** — bandeau, titre,
+> logo, adresse, sources — pour qu'imprimée seule, on sache de quelle carte elle
+> parle. Les **grands types d'habitats y sont en capitales**, pour se distinguer
+> des habitats qu'ils regroupent.
+
+> La barre d'échelle et la légende sont rattachées à la carte : elles se mettent
+> à jour toutes seules si vous recadrez.
+
+> **Titre court.** Le bandeau vert est d'une hauteur fixe : un titre long passe à
+> la ligne et le déborde. Le nom du jeu de données suffit — « Cartographie des
+> habitats » tient très bien en sous-titre.
+
+> **Les pavés rouges « WebKit not available »** n'apparaissent plus : votre QGIS
+> est construit sans QtWebKit, et le plugin convertit donc les blocs HTML du
+> gabarit (adresse, sources, mention du fond) en étiquettes ordinaires. Le
+> gabarit lui-même n'est pas modifié.
 
 ---
 

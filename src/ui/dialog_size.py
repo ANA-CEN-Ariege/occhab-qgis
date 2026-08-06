@@ -56,6 +56,11 @@ def ajuster_a_l_ecran(dialog, largeur=0, hauteur=0, marge=MARGE):
 
     `largeur` / `hauteur` sont les dimensions *souhaitées* ; 0 laisse le contenu
     décider. Le résultat ne dépasse jamais la zone disponible de l'écran.
+
+    Les fenêtres de ce plugin rendent leur contenu DÉFILANT (`rendre_defilant`)
+    plutôt que de compter sur ces dimensions : une taille écrite une fois pour
+    toutes vieillit mal — on ajoute un avertissement, une ligne d'aide, et les
+    champs se compriment jusqu'à se couper sans que rien ne le signale.
     """
     ecran = ecran_de(dialog)
     if ecran is None:  # pragma: no cover - aucun écran (tests hors session graphique)

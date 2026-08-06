@@ -109,6 +109,7 @@ class OccHabDockWidget(QDockWidget):
         self._build_ui()
         self._install_map_interaction()
         self.refresh()
+        self._reconnecter()
 
     # ------------------------------------------------------------- UI
     def _build_ui(self):
@@ -343,18 +344,6 @@ class OccHabDockWidget(QDockWidget):
         import_menu.setToolTipsVisible(True)
         import_menu.addAction("Depuis la carte (sélection)…", self.import_server_stations)
         import_menu.addAction("Chercher une station…", self.open_server_picker)
-        import_menu.addSeparator()
-        # Distinct des deux précédentes : celles-ci rapatrient des stations
-        # ÉDITABLES dans la base locale ; un export est une vue préparée côté
-        # serveur, chargée en couche de consultation.
-        act_export = import_menu.addAction(
-            "Charger un export du serveur (couche)…", self.load_server_export
-        )
-        act_export.setToolTip(
-            "Charge un export du module Exports de GeoNature (données "
-            "consolidées, libellés résolus) en couche QGIS lecture seule, "
-            "filtrable par jeu de données et par période."
-        )
         self.btn_import.setMenu(import_menu)
         layout.addWidget(self.btn_import)
 
@@ -386,6 +375,37 @@ class OccHabDockWidget(QDockWidget):
         )
         btn_storage.setMenu(menu)
         footer.addWidget(btn_storage)
+
+        # Faire une carte, en deux temps : charger la couche, puis composer la
+        # planche. Ces deux actions se suivent et n'ont rien à voir avec
+        # « Récupérer une station », qui rapatrie des données ÉDITABLES dans la
+        # base locale — un export est une couche de consultation, en lecture
+        # seule, et une planche n'est même plus de la donnée.
+        btn_carte = QPushButton("Cartographier…")
+        btn_carte.setToolTip(
+            "Charger une couche d'habitats depuis le serveur, puis en tirer une "
+            "planche imprimable."
+        )
+        menu_carte = QMenu(btn_carte)
+        menu_carte.setToolTipsVisible(True)
+        act_export = menu_carte.addAction(
+            "Charger un export du serveur (couche)…", self.load_server_export
+        )
+        act_export.setToolTip(
+            "Charge un export du module Exports de GeoNature (données "
+            "consolidées, libellés résolus) en couche QGIS lecture seule, "
+            "filtrable par jeu de données et par période, avec une couleur par "
+            "habitat."
+        )
+        act_planche = menu_carte.addAction(
+            "Créer une mise en page…", self.create_print_layout
+        )
+        act_planche.setToolTip(
+            "Composer une planche dans QGIS à partir d'un gabarit de l'ANA : "
+            "bandeau, logo, légende et échelle déjà en place."
+        )
+        btn_carte.setMenu(menu_carte)
+        footer.addWidget(btn_carte)
         layout.addLayout(footer)
 
         # Ascenseur : le panneau peut être plus haut que le dock ; sans scroll, le
@@ -625,6 +645,81 @@ class OccHabDockWidget(QDockWidget):
         return widget
 
     # ------------------------------------------------------- connexion
+    #: Reconnexion silencieuse à l'ouverture. Le mot de passe n'est nulle part
+    #: dans le plugin : il vit dans le gestionnaire d'authentification de QGIS,
+    #: qui le chiffre. Seuls l'URL et l'identifiant de configuration sont
+    #: mémorisés (cf. `connection_dialog`). Rouvrir QGIS ne perdait donc que le
+    #: JETON de session — et obligeait à refaire le tour du dialogue pour
+    #: retrouver des identifiants que la machine avait déjà.
+    CLE_RECONNEXION = "geonature.reconnexion_auto"
+
+    def _reconnecter(self):
+        """Reprendre la session GeoNature si QGIS peut relire les identifiants.
+
+        Trois garde-fous, parce qu'un plugin qui parle au réseau à l'ouverture
+        de QGIS se fait vite détester :
+
+        - **rien sans mot de passe principal déjà donné.** Lire une
+          configuration d'authentification le réclame ; le demander de nous-même
+          au démarrage ferait surgir une fenêtre que personne n'a appelée. S'il
+          n'est pas encore saisi, on ne tente rien : le bouton « Connexion »
+          reste là, et c'est lui qui le demandera, au moment choisi ;
+        - **aucun message en cas d'échec.** Hors ligne — le cas d'usage même de
+          cette extension — la tentative échoue, et c'est normal : le plugin
+          démarre déconnecté, comme avant ;
+        - **désactivable** par `geonature.reconnexion_auto = false`.
+        """
+        if self.client is not None:
+            return
+        if not self.config.get(self.CLE_RECONNEXION, True):
+            return
+        api_url = self.config.get("geonature.api_url")
+        authcfg = self.config.get("geonature.authcfg")
+        if not api_url or not authcfg:
+            return
+        if not self._mot_de_passe_principal_disponible():
+            self.logger.debug(
+                "Reconnexion différée : mot de passe principal QGIS non saisi."
+            )
+            return
+
+        from .connection_dialog import ConnectionDialog, libelle_utilisateur
+
+        login, password = ConnectionDialog.credentials_from_authcfg(authcfg)
+        if not login:
+            return
+        try:
+            from ..api.geonature_client import GeoNatureAPIClient
+
+            client = GeoNatureAPIClient(
+                api_url, verify_ssl=bool(self.config.get("geonature.verify_ssl", True))
+            )
+            client.login(
+                login, password,
+                id_application=int(self.config.get("geonature.id_application", 0) or 0),
+            )
+        except Exception as exc:  # noqa: BLE001 - hors ligne : on reste déconnecté
+            self.logger.info("Reconnexion automatique impossible : %s", exc)
+            return
+
+        self.client = client
+        self._user_label = libelle_utilisateur(client.user)
+        self.logger.info("Reconnecté à %s en tant que %s", api_url, self._user_label)
+        self._load_datasets()
+        self._load_reference_data()
+        self._update_conn_summary()
+
+    @staticmethod
+    def _mot_de_passe_principal_disponible():
+        """QGIS peut-il relire ses configurations sans rien demander ?"""
+        try:
+            from qgis.core import QgsApplication
+
+            manager = QgsApplication.authManager()
+            return bool(manager) and manager.masterPasswordIsSet()
+        except Exception:  # noqa: BLE001
+            return False
+
     def open_connection(self):
         dialog = ConnectionDialog(self.config, parent=self)
         if not dialog.exec():
@@ -1234,19 +1329,25 @@ class OccHabDockWidget(QDockWidget):
         dialog = ExportPicker(
             occhab, datasets=self._dataset_items(),
             id_dataset=self.combo_jdd.currentData() if self.combo_jdd.isEnabled() else None,
+            en_attente=self._stations_en_attente,
             parent=self,
         )
         if not dialog.exec():
             return
         self._charger_export(dialog.id_export(), dialog.libelle_export(),
-                             dialog.filtres())
+                             dialog.filtres(), dialog.mode(), dialog.libelle_mode())
 
-    def _charger_export(self, id_export, libelle, filtres):
+    def _charger_export(self, id_export, libelle, filtres, mode=None,
+                        libelle_mode=None):
         """Rapatrier toutes les pages d'un export et le poser en couche."""
         from qgis.PyQt.QtCore import Qt as _Qt
         from qgis.PyQt.QtWidgets import QApplication
 
+        # Le mode figure dans le nom : deux représentations des mêmes données
+        # doivent pouvoir cohabiter pour être comparées.
         nom_couche = self._nom_couche_export(libelle, filtres)
+        if libelle_mode:
+            nom_couche = "%s [%s]" % (nom_couche, libelle_mode.lower())
         QApplication.setOverrideCursor(_Qt.CursorShape.WaitCursor)
         try:
             features, total_filtre, total = self.client.iter_export_features(
@@ -1269,7 +1370,7 @@ class OccHabDockWidget(QDockWidget):
                 "et cette période." % libelle,
             )
             return
-        layer, count = self.export_layers.show(nom_couche, features)
+        layer, count = self.export_layers.show(nom_couche, features, mode=mode)
         if layer is None:
             QMessageBox.warning(
                 self, "OccHab",
@@ -2373,6 +2474,126 @@ class OccHabDockWidget(QDockWidget):
                         or value.get("mnemonique") or str(id_nom)
                     )
         return mapping
+
+    def create_print_layout(self):
+        """Composer une planche cartographique à partir d'un gabarit ANA.
+
+        La couche proposée est celle des exports OccHab : c'est elle qui porte la
+        symbologie par habitat et la légende à deux niveaux. À défaut, la couche
+        active fait l'affaire — on cartographie ce qu'on regarde.
+        """
+        from qgis.core import QgsProject
+        from qgis.PyQt.QtWidgets import QDialog
+
+        from .layout_dialog import CLE_DOSSIER, LayoutPicker
+        from .print_layout import GabaritIllisible, GabaritIntrouvable, creer
+
+        dialogue = LayoutPicker(
+            self._couches_cartographiables(),
+            dossier=self.config.get(CLE_DOSSIER),
+            titre_propose=self._titre_de_planche(),
+            sous_titre_propose=self._sous_titre_de_planche(),
+            parent=self,
+        )
+        if dialogue.exec() != QDialog.DialogCode.Accepted:
+            return
+        if dialogue.dossier():
+            self.config.set(CLE_DOSSIER, dialogue.dossier())
+
+        choix = dialogue.parametres()
+        canevas = self.iface.mapCanvas()
+        emprise = canevas.extent() if choix.pop("emprise_vue") else None
+        try:
+            mise, avertissements = creer(
+                choix.pop("chemin_gabarit"),
+                choix.pop("titre"),
+                # Les couches TELLES QU'À L'ÉCRAN : c'est ce qui garde l'ortho
+                # sous les polygones d'habitats.
+                couches_carte=canevas.layers(),
+                emprise=emprise,
+                crs=canevas.mapSettings().destinationCrs(),
+                pied=self._pied_de_planche(),
+                logger=self.logger,
+                **choix
+            )
+        except (GabaritIntrouvable, GabaritIllisible) as exc:
+            QMessageBox.warning(
+                self, "Mise en page",
+                "Ce gabarit n'a pas pu être ouvert : %s" % exc
+            )
+            return
+
+        jdd = self.combo_jdd.currentData() if self.combo_jdd.isEnabled() else None
+        en_attente = self._stations_en_attente(jdd)
+        if en_attente:
+            avertissements.insert(0,
+                "%d station(s) locale(s) ne sont pas synchronisées : cette carte "
+                "est faite sur les données de GeoNature et ne les montre pas."
+                % en_attente
+            )
+        for message in avertissements:
+            self.iface.messageBar().pushWarning("OccHab — mise en page", message)
+        self.iface.openLayoutDesigner(mise)
+
+    def _stations_en_attente(self, id_dataset=None):
+        """Stations locales pas encore parties, dans ce jeu de données.
+
+        La cartographie se fait sur les données de GeoNature, jamais sur la base
+        locale : un export est une vue du serveur. Tant qu'une saisie n'est pas
+        synchronisée, elle n'existe pas pour la carte — et rien ne le montre.
+
+        Compter TOUS les JDD serait du bruit : les stations d'un autre jeu de
+        données n'ont rien à faire dans cet export, et leur absence n'est pas un
+        oubli.
+        """
+        try:
+            return len(self.db.get_pending_stations(id_dataset=id_dataset) or [])
+        except Exception as exc:  # noqa: BLE001 - un compteur ne doit rien bloquer
+            self.logger.debug("Comptage des stations en attente impossible : %s", exc)
+            return 0
+
+    def _couches_cartographiables(self):
+        """(nom, couche) : les exports OccHab d'abord, puis la couche active."""
+        from qgis.core import QgsProject
+
+        from .export_layers import GROUP_NAME
+
+        couches, vues = [], set()
+        groupe = QgsProject.instance().layerTreeRoot().findGroup(GROUP_NAME)
+        for noeud in (groupe.findLayers() if groupe is not None else []):
+            couche = noeud.layer()
+            if couche is not None:
+                couches.append((couche.name(), couche))
+                vues.add(couche.id())
+        active = self.iface.activeLayer()
+        if active is not None and active.id() not in vues:
+            couches.append(("%s (couche active)" % active.name(), active))
+        return couches
+
+    def _titre_de_planche(self):
+        """Titre proposé : le nom du jeu de données, et rien de plus.
+
+        Le bandeau des gabarits est d'une hauteur fixe. Un titre composé
+        (« Cartographie des habitats — 242026 - Révision PDG… ») passe à la ligne
+        et déborde du bandeau vert. Le nom du JDD dit déjà de quoi il s'agit ;
+        « Cartographie des habitats » part en sous-titre, où la place ne manque
+        pas.
+        """
+        combo = getattr(self, "combo_jdd", None)
+        nom = combo.currentText().strip() if combo is not None else ""
+        return nom or "Cartographie des habitats"
+
+    @staticmethod
+    def _sous_titre_de_planche():
+        from datetime import date
+
+        return "Cartographie des habitats — %s" % date.today().year
+
+    @staticmethod
+    def _pied_de_planche():
+        from datetime import date
+
+        return "ANA-CEN Ariège — %s" % date.today().strftime("%d/%m/%Y")
 
     def export_jdd_cartography(self):
         """Exporter la cartographie d'habitats du JDD (serveur) : 1 ligne / habitat."""

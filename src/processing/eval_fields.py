@@ -38,6 +38,7 @@ except ImportError:  # pragma: no cover - repli hors paquet
 # Ré-exports : les formulaires peuplent leurs menus depuis ces listes.
 NIVEAUX_ENJEU = ref.NIVEAUX_ENJEU
 ETATS_CONSERVATION = ref.ETATS_CONSERVATION
+ZONES_HUMIDES = ref.ZONES_HUMIDES
 
 # --- Description des clés du bloc. -------------------------------------------
 # Codes fermés : {clé: (codes valides, alias des codes hérités)}.
@@ -50,6 +51,7 @@ _CODE_FIELDS = {
     "typicite": (ref.codes(ref.TYPICITES), {}),
     "unite_vegetale": (ref.codes(ref.UNITES_VEGETALES), {}),
     "nature_observation": (ref.codes(ref.NATURES_OBSERVATION), {}),
+    "zone_humide": (ref.codes(ref.ZONES_HUMIDES), ref.ALIAS_ZONE_HUMIDE),
 }
 _TEXT_FIELDS = ("critere", "remarque")
 _LIST_FIELDS = {"pee": 3}  # plantes exotiques envahissantes : 3 taxons au plus
@@ -91,6 +93,10 @@ def _clean(key, value):
     Sert à l'encodage **et** au décodage : la validation et la conversion des
     codes hérités se font ainsi au même endroit, dans les deux sens.
     """
+    if key == "zone_humide" and isinstance(value, bool):
+        # Ancien format : le champ était une case à cocher. `True` vaut « oui » ;
+        # `False` ne disait pas « non », seulement « pas coché » — donc rien.
+        return "oui" if value else None
     if key in _CODE_FIELDS:
         valid, alias = _CODE_FIELDS[key]
         code = ref.normalize(value, alias)
@@ -106,10 +112,6 @@ def _clean(key, value):
         except (TypeError, ValueError):
             return None
         return number if mini <= number <= maxi else None
-    if key == "zone_humide":
-        if isinstance(value, str):  # ancien format : la valeur était textuelle
-            value = value.strip().lower() in ("true", "1", "oui")
-        return True if value else None
     if key in _TEXT_FIELDS:
         text = _without_markers(value).strip() if isinstance(value, str) else ""
         return text or None

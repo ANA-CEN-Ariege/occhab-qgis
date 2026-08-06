@@ -50,6 +50,21 @@ NIVEAUX_ENJEU = [
 ]
 ALIAS_ENJEU = {"majeur": "tres_fort"}  # référentiel ANA antérieur
 
+# --- ANA : zone humide (hors cahier des charges N2000). ---------------------
+# Le terrain distingue trois cas, pas deux : une station manifestement humide,
+# une qui ne l'est pas, et celle dont on ne peut trancher sans y retourner — un
+# bas-fond en fin d'été, une prairie vue par photo-interprétation. Une case à
+# cocher forçait ce troisième cas dans « non », c'est-à-dire dans l'oubli.
+ZONES_HUMIDES = [
+    ("oui", "Oui"),
+    ("non", "Non"),
+    ("a_verifier", "À vérifier"),
+]
+#: Le champ était un booléen : `True` valait « oui », et l'absence de valeur ne
+#: voulait rien dire de plus qu'une case décochée. Les données déjà saisies se
+#: relisent donc sans conversion (cf. `eval_fields._normalize`).
+ALIAS_ZONE_HUMIDE = {"true": "oui", "vrai": "oui", "false": "non", "faux": "non"}
+
 # --- Annexe 2, table HABITAT : id_et_cons (état de conservation). ------------
 ETATS_CONSERVATION = [
     ("inconnu", "Inconnu"),

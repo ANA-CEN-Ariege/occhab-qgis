@@ -3,7 +3,7 @@ name=OccHab GeoNature
 qgisMinimumVersion=3.28
 qgisMaximumVersion=3.99
 description=Offline-first data entry for GeoNature's OccHab module (habitat stations) from QGIS, with local SQLite storage and synchronisation to the GeoNature REST API.
-version=0.6.0
+version=0.7.0
 author=Cédric Roy
 email=it@ariegenature.fr
 license=GPL-3.0-or-later
@@ -32,7 +32,45 @@ icon=resources/icons/occhab.svg
 experimental=True
 deprecated=False
 
-changelog=0.6.0 - Saisie en serie : recopier un polygone deja renseigne.
+changelog=0.7.0 - Cartographier : mise en page, damier, et des habitats mieux
+    ranges.
+    « Cartographier… », au pied du panneau, reunit les deux temps d'une carte :
+    charger une couche d'habitats du serveur, puis en tirer une planche a partir
+    des gabarits .qpt de l'ANA — bandeau, logo, adresse et mentions y sont deja.
+    Le titre, le cadrage, le fond de plan cite et la couche a legender sont les
+    seules choses a renseigner ; rien n'est deplace dans le gabarit. Quand la
+    legende ne tient pas dans sa colonne — quarante syntaxons n'y rentrent a
+    aucune taille lisible — elle passe sur une DEUXIEME PAGE, en colonnes, qui
+    reprend le bandeau et le logo de la premiere : rien n'est coupe. Les QGIS
+    construits sans WebKit voient leurs cadres HTML convertis en etiquettes, au
+    lieu des paves rouges « WebKit not available ».
+    Les mosaiques se representent au choix en bandes proportionnelles ou en
+    DAMIER de mailles carrees, chaque maille revenant en entier a un habitat.
+    Bandes comme mailles sont calculees par dichotomie sur la surface reelle : un
+    50/30/20 se mesure a la regle, meme sur un polygone concave.
+    Le rattachement des habitats aux grands milieux est repris en profondeur. Une
+    correspondance de l'annexe I ne suffit plus a ranger une vegetation en milieu
+    littoral : des bas-marais ariegeois se retrouvaient dans « Cotes, dunes et
+    plages », HABREF les reliant a l'habitat 2190 des pannes dunaires. Un habitat
+    de l'annexe I ne pese plus qu'une voix, ses declinaisons dedoublonnees — le
+    Prunetalia spinosae, un ordre de fourres, sortait en pelouse parce que
+    l'habitat 6210 compte 45 fiches. Les formes abregees de HABREF rejoignent les
+    formes completes, et un habitat sans correspondance reprend le milieu de son
+    homonyme ou, a defaut, de sa classe du Prodrome : 26 postes de legende la ou
+    il y en avait 42, et le Caricion gracilis avec les bas-marais.
+    Dans le tableau, une colonne « N° polygone » et un fond alterne par station
+    montrent enfin quelles lignes decrivent la meme mosaique ; « Copier » sort la
+    selection, une cellule ou tout le tableau en TSV, pret a coller dans un
+    tableur. « Zone humide » passe de la case a cocher a Oui / Non / A verifier.
+    Le plugin se reconnecte a GeoNature d'une session a l'autre, sans jamais
+    reclamer le mot de passe principal de QGIS de lui-meme. Un nouvel export se
+    place au-dessus des precedents, et le nombre de stations non synchronisees du
+    jeu de donnees est rappele avant de cartographier — la carte montre le
+    serveur, pas la base locale.
+    Le SQL de la vue d'export est desormais livre dans sql/v_occhab_complet.sql,
+    verifie sur PostgreSQL 15. ATTENTION : « zone humide » y devient du texte,
+    la vue doit etre rejouee (DROP puis CREATE) avant de saisir « a verifier ».
+    0.6.0 - Saisie en serie : recopier un polygone deja renseigne.
     Trois chemins pour la meme idee. « Copier les renseignements » (clic droit
     sur une station) met de cote JDD, dates, observateurs, attributs,
     commentaire et habitats ; « Coller les renseignements » les applique aux

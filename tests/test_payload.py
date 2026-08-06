@@ -128,7 +128,9 @@ def test_statut_n_ecrase_pas_les_autres_champs_du_bloc():
     )
 
     codes = eval_fields.decode_eval(feature["properties"]["comment"])
-    assert codes == {"enjeu": "fort", "zone_humide": True, "statut": "brouillon"}
+    # `True` est l'ANCIEN format du champ, encore présent dans les stations déjà
+    # synchronisées : il se relit en « oui ».
+    assert codes == {"enjeu": "fort", "zone_humide": "oui", "statut": "brouillon"}
 
 
 def test_statut_relu_du_serveur_et_retire_du_commentaire():

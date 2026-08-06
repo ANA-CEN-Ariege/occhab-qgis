@@ -4,7 +4,6 @@
 """Formulaire de saisie d'une station OccHab (aligné sur le formulaire GeoNature)."""
 from qgis.PyQt.QtCore import Qt, QDate
 from qgis.PyQt.QtWidgets import (
-    QCheckBox,
     QComboBox,
     QCompleter,
     QDateEdit,
@@ -24,6 +23,7 @@ from qgis.PyQt.QtWidgets import (
 from ..processing.eval_fields import (
     ETATS_CONSERVATION,
     NIVEAUX_ENJEU,
+    ZONES_HUMIDES,
     decode_eval,
     encode_eval,
     fill_eval_combo,
@@ -145,9 +145,16 @@ class StationForm(QWidget):
         fill_eval_combo(self.combo_etat, ETATS_CONSERVATION)
         form.addRow("État de conservation", self.combo_etat)
 
-        self.check_zone_humide = QCheckBox("Zone humide")
-        self.check_zone_humide.setToolTip("Cochez si la station est en zone humide")
-        form.addRow("", self.check_zone_humide)
+        # Trois états et non deux : « à vérifier » existe sur le terrain — un
+        # bas-fond en fin d'été, une prairie vue par photo-interprétation — et
+        # une case à cocher le rangeait forcément dans « non ».
+        self.combo_zone_humide = QComboBox()
+        fill_eval_combo(self.combo_zone_humide, ZONES_HUMIDES)
+        self.combo_zone_humide.setToolTip(
+            "« À vérifier » marque la station pour un retour sur le terrain, au "
+            "lieu de la ranger dans « non » faute de mieux."
+        )
+        form.addRow("Zone humide", self.combo_zone_humide)
 
         # État métier, distinct de l'état de synchronisation : il dit où en est le
         # travail du botaniste, pas où en est l'envoi au serveur.
@@ -462,7 +469,7 @@ class StationForm(QWidget):
             self.text_comment.toPlainText(),
             enjeu=self.combo_enjeu.currentData(),
             etat_conservation=self.combo_etat.currentData(),
-            zone_humide=self.check_zone_humide.isChecked(),
+            zone_humide=self.combo_zone_humide.currentData(),
             unite_vegetale=self.combo_unite_veg.currentData(),
             nature_observation=self.combo_nature_obs.currentData(),
             echelle=self.spin_echelle.value() or None,
@@ -546,11 +553,11 @@ class StationForm(QWidget):
         comment = station.get("comment") or ""
         self.text_comment.setPlainText(strip_eval(comment))
         codes = decode_eval(comment)
-        # `decode_eval` rend des valeurs déjà normalisées (codes hérités convertis,
-        # zone_humide en booléen) : rien à retraiter ici.
+        # `decode_eval` rend des valeurs déjà normalisées : codes hérités
+        # convertis, `zone_humide` déjà passé de l'ancien booléen à son code.
         select_combo_data(self.combo_enjeu, codes.get("enjeu"))
         select_combo_data(self.combo_etat, codes.get("etat_conservation"))
-        self.check_zone_humide.setChecked(bool(codes.get("zone_humide")))
+        select_combo_data(self.combo_zone_humide, codes.get("zone_humide"))
         select_combo_data(self.combo_unite_veg, codes.get("unite_vegetale"))
         select_combo_data(self.combo_nature_obs, codes.get("nature_observation"))
         if codes.get("echelle"):

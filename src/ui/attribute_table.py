@@ -25,9 +25,10 @@ from qgis.PyQt.QtCore import (
     QTimer,
     pyqtSignal,
 )
-from qgis.PyQt.QtGui import QBrush, QColor
+from qgis.PyQt.QtGui import QBrush, QColor, QKeySequence
 from qgis.PyQt.QtWidgets import (
     QAbstractItemView,
+    QApplication,
     QCheckBox,
     QComboBox,
     QDateEdit,
@@ -42,12 +43,15 @@ from qgis.PyQt.QtWidgets import (
     QLineEdit,
     QListWidget,
     QListWidgetItem,
+    QMenu,
     QMessageBox,
     QPushButton,
     QScrollArea,
+    QShortcut,
     QSpinBox,
     QStyledItemDelegate,
     QTableView,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
@@ -57,6 +61,7 @@ from ..database.sqlite_local import BROUILLON, VALIDE
 from ..processing import champs as ch
 from ..processing.grille import Grille
 from ..processing.referentiels import label_for
+from ..processing.tableur import tsv
 from .dialog_size import ajuster_a_l_ecran, borner_largeur_combos
 from .habref_widget import HabrefLineEdit, HabrefSearchEdit
 from .no_wheel import FiltreMolette, proteger_du_defilement
@@ -68,8 +73,16 @@ JEUX_COLONNES = {
     "Natura 2000": (ch.G_IDENTITE, ch.G_STATION, ch.G_N2000, ch.G_HABITAT),
     "Tout": None,  # tous les groupes
 }
-_TEINTE_STATION = QBrush(QColor(120, 144, 156, 30))   # colonnes partagées
 _TEINTE_MODIFIE = QBrush(QColor(230, 145, 0, 70))     # même orangé que « à synchroniser »
+# Fonds de cellule. Deux informations se superposent : la colonne est-elle
+# partagée par toute la station, et à quel polygone appartient la ligne. La
+# seconde compte davantage — trois lignes d'affilée peuvent décrire une seule
+# mosaïque — d'où un aplat qui court sur toute la LARGEUR de la ligne, un
+# polygone sur deux. Il remplace l'alternance ligne à ligne de Qt, qui coupait
+# les mosaïques en tranches et faisait exactement croire le contraire.
+_ARDOISE = (120, 144, 156)
+_TEINTE_STATION = (QBrush(QColor(*_ARDOISE, 30)), QBrush(QColor(*_ARDOISE, 52)))
+_TEINTE_LIGNE = (None, QBrush(QColor(*_ARDOISE, 22)))
 _SEPARATEUR_LISTE = " ; "
 
 # Édition en lot : le libellé annonce l'action *et* son ampleur, pour qu'on sache
@@ -194,21 +207,45 @@ class GrilleModel(QAbstractTableModel):
         champ = self.colonnes[index.column()]
 
         if role == Qt.ItemDataRole.DisplayRole:
+            if champ.cle == ch.POLYGONE:
+                # Rendu en NOMBRE et non en texte : la table se trie alors par
+                # ordre numérique, où « 9 » précède « 10 ».
+                return self.grille.valeur(ligne, champ)
             return self.contexte.libelle(champ, self.grille.valeur(ligne, champ))
         if role == Qt.ItemDataRole.EditRole:
             return self.grille.valeur(ligne, champ)
         if role == Qt.ItemDataRole.BackgroundRole:
             if self.grille.modifie(ligne, champ):
                 return _TEINTE_MODIFIE
-            if champ.niveau == ch.STATION:
-                return _TEINTE_STATION
-            return None
+            bande = int(ligne.station.get(ch.POLYGONE) or 0) % 2
+            teintes = (_TEINTE_STATION if champ.niveau == ch.STATION
+                       else _TEINTE_LIGNE)
+            return teintes[bande]
         if role == Qt.ItemDataRole.ToolTipRole:
+            if champ.cle == ch.POLYGONE:
+                return self._infobulle_polygone(index.row())
             if champ.niveau == ch.STATION and len(self.grille.lignes_de(ligne)) > 1:
                 return ("Champ de la station : le modifier ici le modifie pour "
                         "ses %d habitats." % len(self.grille.lignes_de(ligne)))
             return self.contexte.libelle(champ, self.grille.valeur(ligne, champ)) or None
         return None
+
+    def _infobulle_polygone(self, row):
+        """Situer la ligne dans sa mosaïque, ce qu'un numéro seul ne dit pas.
+
+        Sur la ligne (`row`) et non sur la `Ligne` : deux habitats aux mêmes
+        valeurs sont des tuples ÉGAUX, donc introuvables l'un sans l'autre.
+        """
+        ligne = self.grille.lignes[row]
+        soeurs = self.grille.lignes_de(ligne)
+        numero = ligne.station.get(ch.POLYGONE)
+        if ligne.habitat is None:
+            return "Polygone %s — aucun habitat saisi" % numero
+        rang = soeurs.index(row) + 1
+        if len(soeurs) == 1:
+            return "Polygone %s — un seul habitat" % numero
+        return ("Polygone %s — habitat %d sur %d ; les %d lignes décrivent la "
+                "même mosaïque." % (numero, rang, len(soeurs), len(soeurs)))
 
     def flags(self, index):
         if not index.isValid():
@@ -807,16 +844,48 @@ class AttributeTableDialog(QDialog):
         self.edit_recherche.setPlaceholderText("Filtrer (nom de station, habitat, cd_hab)…")
         self.edit_recherche.textChanged.connect(self._on_filtre_change)
         barre.addWidget(self.edit_recherche, 1)
+
+        # Sortir la table vers un tableur est le seul moyen de la RELIRE
+        # confortablement : trier sur trois colonnes, surligner, imprimer. Le
+        # bouton porte les trois portées plutôt qu'un raccourci à deviner.
+        self.btn_copier = QToolButton()
+        self.btn_copier.setText("Copier")
+        self.btn_copier.setToolTip(
+            "Copier dans le presse-papiers, prêt à coller dans un tableur."
+        )
+        self.btn_copier.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        menu = QMenu(self.btn_copier)
+        self.act_copier_selection = menu.addAction("Copier les lignes sélectionnées")
+        self.act_copier_selection.setShortcut(QKeySequence.StandardKey.Copy)
+        self.act_copier_selection.triggered.connect(self.copier_selection)
+        self.act_copier_cellule = menu.addAction("Copier la cellule")
+        self.act_copier_cellule.triggered.connect(self.copier_cellule)
+        menu.addSeparator()
+        act_tout = menu.addAction("Copier tout le tableau (avec en-têtes)")
+        act_tout.triggered.connect(self.copier_tout)
+        self.btn_copier.setMenu(menu)
+        barre.addWidget(self.btn_copier)
         layout.addLayout(barre)
 
         self.table = QTableView()
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self.table.setSortingEnabled(True)
-        self.table.setAlternatingRowColors(True)
+        # Pas d'alternance ligne à ligne : c'est le POLYGONE qui est teinté un
+        # sur deux (cf. `_TEINTE_LIGNE`), sans quoi les deux rythmes se
+        # contrarient et une mosaïque de trois habitats paraît en compter six.
+        self.table.setAlternatingRowColors(False)
         self.table.horizontalHeader().setSectionResizeMode(
             QHeaderView.ResizeMode.Interactive
         )
+        self.table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.table.customContextMenuRequested.connect(self._menu_contextuel)
+        # Le raccourci vit sur la TABLE : posé sur le dialogue, il aurait volé
+        # le Ctrl+C d'une cellule en cours d'édition, où il doit copier le texte
+        # sélectionné et rien d'autre.
+        copier = QShortcut(QKeySequence.StandardKey.Copy, self.table)
+        copier.setContext(Qt.ShortcutContext.WidgetShortcut)
+        copier.activated.connect(self.copier_selection)
         layout.addWidget(self.table, 1)
 
         self.label_etat = QLabel("")
@@ -917,6 +986,12 @@ class AttributeTableDialog(QDialog):
             self.btn_appliquer.setText(LIBELLE_MODIFIER_N % nb)
         self.btn_appliquer.setEnabled(bool(nb))
         self.btn_valider.setEnabled(bool(nb))
+        self.act_copier_selection.setEnabled(bool(nb))
+        self.act_copier_selection.setText(
+            "Copier la ligne sélectionnée" if nb == 1
+            else "Copier les %d lignes sélectionnées" % nb if nb
+            else "Copier les lignes sélectionnées"
+        )
 
     # ------------------------------------------------------------- sélection
     def _lignes_selectionnees(self):
@@ -935,6 +1010,106 @@ class AttributeTableDialog(QDialog):
         return lignes
 
     # ------------------------------------------------------------- rechargement
+    # ------------------------------------------------------------- copie
+    def copier_selection(self):
+        """Les lignes sélectionnées dans le presse-papiers, sans en-têtes.
+
+        Sans en-têtes : c'est le geste attendu d'un Ctrl+C, et on colle le plus
+        souvent sous un tableau qui en a déjà. « Copier tout » les ajoute.
+        """
+        rangs = self._rangs_selectionnes()
+        if not rangs:
+            self._prevenir("Sélectionnez au moins une ligne à copier.")
+            return
+        self._copier(tsv([self._valeurs(rang) for rang in rangs]),
+                     "%d ligne(s) copiée(s). Collez dans votre tableur (Ctrl+V)."
+                     % len(rangs))
+
+    def copier_cellule(self):
+        """La seule cellule courante, TELLE QUELLE.
+
+        Sans échappement, contrairement aux copies de lignes : une cellule
+        seule se recolle le plus souvent dans un champ de saisie — un nom cité
+        à reprendre, un cd_hab à vérifier — où des guillemets de convention
+        seraient à effacer à la main.
+        """
+        index = self.table.currentIndex()
+        if not index.isValid():
+            self._prevenir("Cliquez d'abord dans une cellule.")
+            return
+        self._copier(self._texte(index), "Cellule copiée.")
+
+    def copier_tout(self):
+        """Tout ce que la table AFFICHE, en-têtes comprises.
+
+        Ce que la table affiche, donc filtré et trié comme à l'écran : copier
+        les 400 lignes du jeu de données quand l'écran n'en montre que douze
+        serait une surprise désagréable.
+        """
+        lignes = [self._entetes()]
+        lignes += [self._valeurs(rang) for rang in range(self.proxy.rowCount())]
+        if len(lignes) == 1:
+            self._prevenir("Le tableau est vide (filtres en cours ?).")
+            return
+        self._copier(tsv(lignes),
+                     "Tableau copié : %d ligne(s) et %d colonne(s). Collez dans "
+                     "votre tableur (Ctrl+V)." % (len(lignes) - 1, len(lignes[0])))
+
+    def _copier(self, texte, message):
+        QApplication.clipboard().setText(texte)
+        self.label_etat.setText(message)
+
+    def _prevenir(self, message):
+        self.label_etat.setText(message)
+
+    def _colonnes_visibles(self):
+        """Colonnes affichées, dans leur ordre à l'écran."""
+        entete = self.table.horizontalHeader()
+        return [
+            entete.logicalIndex(position)
+            for position in range(entete.count())
+            if not entete.isSectionHidden(entete.logicalIndex(position))
+        ]
+
+    def _entetes(self):
+        return [self.colonnes[colonne].libelle
+                for colonne in self._colonnes_visibles()]
+
+    def _valeurs(self, rang):
+        """Textes affichés d'une ligne du proxy, colonnes dans l'ordre écran."""
+        return [self._texte(self.proxy.index(rang, colonne))
+                for colonne in self._colonnes_visibles()]
+
+    @staticmethod
+    def _texte(index):
+        valeur = index.data(Qt.ItemDataRole.DisplayRole)
+        return "" if valeur is None else str(valeur)
+
+    def _rangs_selectionnes(self):
+        """Rangs proxy des lignes sélectionnées, dans l'ordre de l'écran."""
+        return sorted({i.row() for i in self.table.selectionModel().selectedIndexes()})
+
+    def _menu_contextuel(self, position):
+        index = self.table.indexAt(position)
+        if index.isValid():
+            self.table.setCurrentIndex(index)
+        menu = QMenu(self.table)
+        action_cellule = menu.addAction("Copier la cellule")
+        action_cellule.setEnabled(index.isValid())
+        action_cellule.triggered.connect(self.copier_cellule)
+        nb = len(self._rangs_selectionnes())
+        action_lignes = menu.addAction(
+            "Copier la ligne sélectionnée" if nb == 1
+            else "Copier les %d lignes sélectionnées" % nb
+        )
+        action_lignes.setEnabled(bool(nb))
+        action_lignes.triggered.connect(self.copier_selection)
+        menu.addSeparator()
+        menu.addAction("Copier tout le tableau (avec en-têtes)").triggered.connect(
+            self.copier_tout
+        )
+        menu.exec(self.table.viewport().mapToGlobal(position))
+
     def a_des_modifications(self):
         return self.grille.a_des_modifications()
 

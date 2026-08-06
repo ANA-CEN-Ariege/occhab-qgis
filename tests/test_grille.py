@@ -358,3 +358,20 @@ def test_valider_puis_retrograder_laisse_le_statut_valide():
 
     assert grille.retrograder_statuts() == []
     assert grille.stations[0]["validation_status"] == "valide"
+
+
+# --- Numéro de polygone ------------------------------------------------------
+def test_numero_de_polygone_partage_par_la_mosaique():
+    """Les lignes d'une même station portent le MÊME numéro : c'est tout l'objet."""
+    grille = gr.Grille(_stations())
+    numeros = [ligne.station[ch.POLYGONE] for ligne in grille.lignes]
+    assert numeros == [1, 1, 2]  # deux habitats pour la station 1, aucun pour la 2
+
+
+def test_numero_de_polygone_non_editable():
+    """Ni modifiable, ni enregistrable : il ne vit que le temps de la session."""
+    grille = gr.Grille(_stations())
+    champ = ch.par_cle(ch.STATION, ch.POLYGONE)
+    assert not grille.editable(grille.lignes[0], champ)
+    assert not grille.definir(grille.lignes[0], champ, 99)
+    assert grille.colonnes_modifiees(grille.stations[0]) == set()

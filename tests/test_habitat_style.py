@@ -112,6 +112,33 @@ def test_rangs_absents_ancienne_vue():
     assert hs.classe_habitat({"habitat_code_eunis": "G1.6 ; G1.7"})[0] == "G"
 
 
+def test_racine_habref_fait_autorite():
+    """Quand la vue donne la racine HABREF, elle prime sur nos tables maison."""
+    props = {"grand_type_code": "G",
+             "grand_type_nom": "Woodland, forest and other wooded land",
+             "habitat_code_corine": "38.2"}   # nos tables diraient « prairies »
+    assert hs.classe_habitat(props) == ("G", hs.SOURCE_HABREF)
+
+
+def test_racine_hors_eunis_est_ignoree():
+    """Une racine d'une autre typologie n'a pas de couleur : on revient au vote.
+
+    Sans ce garde-fou, un grand type sans couleur attribuée sortirait en gris.
+    """
+    props = {"grand_type_code": "4", "habitat_code_corine": "41.1"}
+    classe, source = hs.classe_habitat(props)
+    assert (classe, source) == ("G", hs.SOURCE_CORINE)
+
+
+def test_libelle_habref_remplace_le_notre():
+    features = [_f(1, "Hêtraie", None, 100, cd_hab=1)]
+    features[0]["properties"].update(
+        grand_type_code="G", grand_type_nom="Forêts (HABREF)")
+    hs.enrichir(features)
+
+    assert features[0]["properties"][hs.CHAMP_LIBELLE] == "Forêts (HABREF)"
+
+
 def test_cascade_sauve_une_carto_pvf1():
     """Cas réel : en PVF1, HABREF ne mène qu'aux habitats d'intérêt communautaire.
 
@@ -209,15 +236,33 @@ def test_gammes_de_milieux_differents_ne_se_confondent_pas():
 
 
 # --------------------------------------------------------------------- entités
-def test_cle_habitat_prefere_le_cd_hab():
-    """Deux stations nommant différemment le MÊME habitat : une seule couleur."""
-    a = _f(1, "Hêtraie", "G1.6", cd_hab=5130)
-    b = _f(2, "Hêtraie à houx", "G1.6", cd_hab=5130)
+def test_cle_habitat_regroupe_les_cd_hab_d_un_meme_syntaxon():
+    """HABREF porte plusieurs cd_hab pour une même végétation.
+
+    Cas réel : « Tetragonolobo maritimi-Mesobromenion erecti (26.0.2.0.3.3) »
+    sortait DEUX fois dans la légende, libellé et code identiques, en deux
+    couleurs — parce que la clé était le cd_hab. Le nom HABREF les regroupe.
+    """
+    a = _f(1, None, "E1.2", cd_hab=101, habitat="Tetragonolobo-Mesobromenion")
+    b = _f(2, None, "E1.2", cd_hab=202, habitat="Tetragonolobo-Mesobromenion")
     assert hs.cle_habitat(a) == hs.cle_habitat(b)
 
+    # Une entrée sans code se regroupe avec son homonyme codé.
+    code = _f(3, None, "C3.2", cd_hab=303, habitat="Phragmition communis",
+              code_habref="51.0.1.0.1")
+    sans = _f(4, None, "C3.2", cd_hab=404, habitat="Phragmition communis")
+    assert hs.cle_habitat(code) == hs.cle_habitat(sans)
 
-def test_cle_habitat_repli_sur_le_nom():
-    assert hs.cle_habitat(_f(1, "Hêtraie")) == "nom:Hêtraie"
+
+def test_cle_habitat_insensible_a_la_casse_et_aux_espaces():
+    assert hs.cle_habitat(_f(1, habitat="Hêtraie  acidiphile")) == \
+           hs.cle_habitat(_f(2, habitat="hêtraie acidiphile"))
+
+
+def test_cle_habitat_replis_successifs():
+    """Sans nom HABREF : le nom cité, puis le cd_hab, puis rien."""
+    assert hs.cle_habitat(_f(1, "Hêtraie")) == "nom:hêtraie"
+    assert hs.cle_habitat(_f(1, cd_hab=5130)) == "cd:5130"
     assert hs.cle_habitat(_f(1)) is None
 
 
@@ -320,8 +365,11 @@ def test_palette_couvre_aussi_les_habitats_secondaires():
     assert [classe for classe, _l, _h in hs.palette(features)] == ["F", "G"]
 
 
-def test_bandes_proportionnelles_au_recouvrement():
-    """Chaque habitat occupe sa part du polygone, bout à bout et sans trou."""
+def test_parts_cumulees_du_plus_au_moins_couvrant():
+    """Chaque habitat occupe sa bande, bout à bout et sans trou.
+
+    Le dominant vient en premier, donc en bas du polygone.
+    """
     features = [
         _f(1, "Lande", "F3.16", 25, cd_hab=2),
         _f(1, "Hêtraie", "G1.6", 60, cd_hab=1),
@@ -336,26 +384,28 @@ def test_bandes_proportionnelles_au_recouvrement():
                       "Prairie": (85.0, 100.0)}
 
 
-def test_bandes_renormalisees_si_le_total_n_est_pas_cent():
-    """Un polygone dont les recouvrements ne totalisent pas 100 reste rempli."""
+def test_parts_renormalisees_si_le_total_n_est_pas_cent():
+    """Recouvrements ne totalisant pas 100 : le polygone reste entièrement rempli."""
     features = [_f(1, "A", "G1.6", 30, cd_hab=1), _f(1, "B", "G1.7", 30, cd_hab=2)]
     hs.enrichir(features)
 
-    assert features[0]["properties"][hs.CHAMP_DEBUT] == 0.0
-    assert features[-1]["properties"][hs.CHAMP_FIN] == 100.0
+    parts = [(f["properties"][hs.CHAMP_DEBUT], f["properties"][hs.CHAMP_FIN])
+             for f in features]
+    assert min(d for d, _f in parts) == 0.0
+    assert max(f for _d, f in parts) == 100.0
 
 
-def test_bandes_sans_recouvrement_renseigne():
+def test_parts_sans_recouvrement_renseigne():
     """Sans recouvrement, des parts égales : mieux qu'un habitat réduit à rien."""
     features = [_f(1, "A", "G1.6", None, cd_hab=1), _f(1, "B", "G1.7", None, cd_hab=2)]
     hs.enrichir(features)
 
-    bandes = [(f["properties"][hs.CHAMP_DEBUT], f["properties"][hs.CHAMP_FIN])
-              for f in features]
-    assert bandes == [(0.0, 50.0), (50.0, 100.0)]
+    parts = sorted((f["properties"][hs.CHAMP_DEBUT], f["properties"][hs.CHAMP_FIN])
+                   for f in features)
+    assert parts == [(0.0, 50.0), (50.0, 100.0)]
 
 
-def test_bande_unique_couvre_tout_le_polygone():
+def test_habitat_unique_couvre_tout_le_polygone():
     features = [_f(2, "Seul", "G1.6", 40, cd_hab=1)]
     hs.enrichir(features)
 
@@ -409,3 +459,220 @@ def test_entrees_vides_ou_mal_formees():
     assert hs.enrichir([None, "texte", 3]) == []
     assert hs.palette([]) == []
     assert hs.palette(None) == []
+
+
+# --- Le piège de l'annexe I : des bas-marais rangés dans les dunes -----------
+# Cas relevé sur une carto ariégeoise. HABREF relie plusieurs alliances de
+# prairies humides et de cariçaies à l'habitat 2190 « Dépressions humides
+# intradunales », parce qu'elles décrivent AUSSI la végétation des pannes
+# dunaires. Prises au mot, elles peuplaient un poste « Côtes, dunes et plages »
+# sur une carte à 600 m d'altitude, à 150 km de la mer.
+_N2000_DUNAIRE = {
+    "habitat_code_n2000": "2190",
+    "habitat_n2000_rang": 10,
+    "habitat_code_cahiers": "2190 ; 2190-1 ; 2190-2",
+    "habitat_cahiers_rang": 20,
+}
+
+
+def test_l_annexe_i_seule_ne_range_pas_dans_les_dunes():
+    classe, _source = hs.classe_habitat(dict(_N2000_DUNAIRE))
+    assert classe != "B"
+    assert classe == hs.CLASSE_INCONNUE
+
+
+def test_une_vraie_dune_reste_une_dune():
+    """EUNIS et CORINE, eux, font foi : un habitat littoral le reste."""
+    classe, source = hs.classe_habitat({
+        "habitat_code_eunis": "B1.3", "habitat_eunis_rang": 10,
+    })
+    assert classe == "B"
+    assert source == hs.SOURCE_EUNIS
+
+
+def test_le_littoral_corrobore_par_corine_tient():
+    classe, _source = hs.classe_habitat({
+        "habitat_code_corine": "16.29", "habitat_corine_rang": 10,
+    })
+    assert classe in ("A", "B")
+
+
+def test_le_tiret_espace_ne_separe_pas_deux_fois_la_meme_alliance():
+    """HABREF écrit « a-b » ici et « a - b » là : une seule végétation."""
+    serre = hs.cle_habitat({"properties": {"habitat": "Mentho longifoliae-Juncion inflexi"}})
+    espace = hs.cle_habitat({"properties": {"habitat": "Mentho longifoliae - Juncion inflexi"}})
+    assert serre == espace
+
+
+def test_un_habitat_muet_reprend_le_milieu_de_son_homonyme():
+    """Deux entrées HABREF, une seule végétation : un seul grand milieu."""
+    features = [
+        {"properties": {"id_station": 1, "cd_hab": 16747, "recouvrement_pct": 60,
+                        "habitat": "Mentho longifoliae - Juncion inflexi",
+                        "habitat_code_eunis": "E3.1", "habitat_eunis_rang": 10}},
+        {"properties": dict(_N2000_DUNAIRE, id_station=2, cd_hab=16573,
+                            recouvrement_pct=100,
+                            habitat="Mentho longifoliae-Juncion inflexi")},
+    ]
+    hs.enrichir(features)
+    classes = {f["properties"][hs.CHAMP_CLASSE] for f in features}
+    assert classes == {"E"}
+    assert features[1]["properties"][hs.CHAMP_SOURCE] == hs.SOURCE_HOMONYME
+    # Un seul poste de légende, donc un seul groupe.
+    assert len(hs.palette(features)) == 1
+
+
+def test_le_silence_ne_deteint_pas_sur_une_classe_etablie():
+    """La propagation ne va que dans un sens."""
+    features = [
+        {"properties": {"id_station": 1, "cd_hab": 1, "recouvrement_pct": 100,
+                        "habitat": "Alliance X",
+                        "habitat_code_eunis": "G1", "habitat_eunis_rang": 10}},
+        {"properties": {"id_station": 2, "cd_hab": 2, "recouvrement_pct": 100,
+                        "habitat": "Alliance X"}},
+    ]
+    hs.enrichir(features)
+    assert features[0]["properties"][hs.CHAMP_CLASSE] == "G"
+    assert features[1]["properties"][hs.CHAMP_CLASSE] == "G"
+
+
+# --- Formes abrégées de HABREF ----------------------------------------------
+# HABREF donne la même alliance sous sa forme complète et sous sa forme abrégée.
+# Trois paires relevées sur une seule carto ariégeoise, chacune sortie en deux
+# postes de légende de deux couleurs différentes.
+_ABREGES = [
+    ("Brachypodio rupestris-Centaureion nemoralis", "Brachypodio-Centaureion nemoralis"),
+    ("Tetragonolobo maritimi-Mesobromenion erecti", "Tetragonolobo-Mesobromenion"),
+    ("Mentho longifoliae-Juncion inflexi", "Mentho-Juncion inflexi"),
+    ("Mentho longifoliae - Juncion inflexi", "Mentho-Juncion inflexi"),
+]
+
+
+def test_la_forme_abregee_rejoint_la_forme_complete():
+    for complet, abrege in _ABREGES:
+        assert hs.cle_habitat({"properties": {"habitat": complet}}) == \
+            hs.cle_habitat({"properties": {"habitat": abrege}}), complet
+
+
+def test_un_nom_qui_n_est_pas_un_syntaxon_reste_entier():
+    """Sans garde-fou, « Lacs, étangs… » tomberait à « Lacs, »."""
+    for nom in ("Lacs, étangs et mares temporaires (C1.6)",
+                "Réseaux de transport et autres zones de construction (J4)",
+                "Autres plantations d'arbres feuillus caducifoliés (G1.C4)"):
+        assert hs._squelette(nom) == hs._normaliser(nom), nom
+
+
+def test_deux_syntaxons_differents_ne_fusionnent_pas():
+    assert hs._squelette("Molinion caeruleae") != hs._squelette("Trifolion medii")
+    assert hs._squelette("Galio aparines-Alliarietalia petiolatae") != \
+        hs._squelette("Loto pedunculati - Filipenduletalia ulmariae")
+
+
+def test_la_legende_garde_le_libelle_le_plus_renseigne():
+    """Entre la forme complète et l'abrégée, on affiche celle qui apprend le plus."""
+    features = [
+        {"properties": {"id_station": 1, "cd_hab": 1, "recouvrement_pct": 100,
+                        "habitat": "Brachypodio-Centaureion nemoralis",
+                        "habitat_code_eunis": "E1.2", "habitat_eunis_rang": 10}},
+        {"properties": {"id_station": 2, "cd_hab": 2, "recouvrement_pct": 100,
+                        "habitat": "Brachypodio rupestris-Centaureion nemoralis",
+                        "code_habref": "6.0.1.0.2",
+                        "habitat_code_eunis": "E1.2", "habitat_eunis_rang": 10}},
+    ]
+    hs.enrichir(features)
+    postes = [poste for _c, _l, habitats in hs.palette(features) for poste in habitats]
+    assert len(postes) == 1  # une seule végétation, un seul poste
+    assert "rupestris" in postes[0][1]
+
+
+# --- Un habitat, une voix ----------------------------------------------------
+# Cahiers d'habitats du Prunetalia spinosae, tels que la vue les rend : 81 fiches
+# pour 8 habitats de l'annexe I. À elle seule, la pelouse calcicole 6210 en
+# aligne 45, contre 11 pour la lande 4060.
+_CAHIERS_PRUNETALIA = (
+    "4060 ; 4060-1 ; 4060-2 ; 4060-3 ; 4060-4 ; 4060-5 ; 4060-6 ; 4060-7 ; "
+    "4060-8 ; 4060-9 ; 4060-10 ; 4070 et 4060 ; (4070 et 4060)-1 ; "
+    "5110 ; 5110-1 ; 5110-2 ; 5110-3 ; 5130 ; 5130-1 ; 5130-2 ; "
+    "5210-1 ; 5210 (2250 inclus) ; (5210 et 2250)-2 ; "
+    + " ; ".join("6210-%d" % i for i in range(1, 40))
+    + " ; 9560 et 5210 ; (9560 et 5210)-1"
+)
+
+
+def test_les_declinaisons_des_cahiers_ne_votent_qu_une_fois():
+    codes = hs.habitats_annexe_i(_CAHIERS_PRUNETALIA)
+    assert codes == ["4060", "4070", "5110", "5130", "5210", "2250", "6210", "9560"]
+
+
+def test_un_ordre_de_fourres_n_est_pas_une_pelouse():
+    """Prunetalia spinosae : cinq habitats de landes contre une pelouse."""
+    classe, _source = hs.classe_habitat({
+        "habitat_code_n2000": "8240", "habitat_n2000_rang": 10,
+        "habitat_code_cahiers": _CAHIERS_PRUNETALIA, "habitat_cahiers_rang": 21,
+    })
+    assert classe == "F"  # Landes et fruticées
+
+
+def test_le_nombre_de_fiches_ne_fait_pas_le_milieu():
+    """Le même habitat, décliné une fois ou quarante, pèse pareil."""
+    peu = {"habitat_code_cahiers": "6210 ; 4060", "habitat_cahiers_rang": 20}
+    beaucoup = {"habitat_code_cahiers":
+                " ; ".join(["6210"] + ["6210-%d" % i for i in range(40)] + ["4060"]),
+                "habitat_cahiers_rang": 20}
+    assert hs.classe_habitat(peu)[0] == hs.classe_habitat(beaucoup)[0]
+
+
+def test_un_seul_habitat_annexe_i_reste_lisible():
+    assert hs.habitats_annexe_i("6410") == ["6410"]
+    assert hs.habitats_annexe_i(None) == []
+    assert hs.habitats_annexe_i("") == []
+
+
+# --- La classe du Prodrome, dernier recours ----------------------------------
+def test_classe_pvf_ne_retient_que_les_codes_numeriques():
+    assert hs.classe_pvf({"code_habref": "51.0.2.0.2"}) == "51"
+    assert hs.classe_pvf({"code_habref": "6.0.1.0.2"}) == "6"
+    # « C1.6 », « E2.12 » sont des codes EUNIS : leur milieu se lit directement.
+    assert hs.classe_pvf({"code_habref": "C1.6"}) is None
+    assert hs.classe_pvf({"code_habref": None}) is None
+    assert hs.classe_pvf({}) is None
+
+
+def test_une_alliance_sans_correspondance_suit_sa_classe():
+    """Caricion gracilis rejoint le Phragmition : même classe, mêmes bas-marais."""
+    features = [
+        {"properties": {"id_station": 1, "cd_hab": 1, "recouvrement_pct": 100,
+                        "habitat": "Phragmition communis", "code_habref": "51.0.1.0.1",
+                        "habitat_code_n2000": "7210", "habitat_n2000_rang": 10}},
+        {"properties": {"id_station": 2, "cd_hab": 2, "recouvrement_pct": 100,
+                        "habitat": "Caricion gracilis", "code_habref": "51.0.2.0.2"}},
+    ]
+    hs.enrichir(features)
+    assert features[0]["properties"][hs.CHAMP_CLASSE] == "D"
+    assert features[1]["properties"][hs.CHAMP_CLASSE] == "D"
+    assert features[1]["properties"][hs.CHAMP_SOURCE] == hs.SOURCE_PVF
+
+
+def test_une_classe_sans_voisin_reste_non_rattachee():
+    """On ne rattache qu'à partir de ce qui est SUR LA CARTE."""
+    features = [
+        {"properties": {"id_station": 1, "cd_hab": 1, "recouvrement_pct": 100,
+                        "habitat": "Sisymbrion officinalis",
+                        "code_habref": "66.0.2.0.1"}},
+    ]
+    hs.enrichir(features)
+    assert features[0]["properties"][hs.CHAMP_CLASSE] == hs.CLASSE_INCONNUE
+
+
+def test_la_classe_pvf_ne_deteint_pas_sur_un_habitat_deja_rattache():
+    features = [
+        {"properties": {"id_station": 1, "cd_hab": 1, "recouvrement_pct": 100,
+                        "habitat": "Alliance A", "code_habref": "20.0.1",
+                        "habitat_code_eunis": "F3", "habitat_eunis_rang": 10}},
+        {"properties": {"id_station": 2, "cd_hab": 2, "recouvrement_pct": 100,
+                        "habitat": "Alliance B", "code_habref": "20.0.2",
+                        "habitat_code_eunis": "G1", "habitat_eunis_rang": 10}},
+    ]
+    hs.enrichir(features)
+    assert features[0]["properties"][hs.CHAMP_CLASSE] == "F"
+    assert features[1]["properties"][hs.CHAMP_CLASSE] == "G"

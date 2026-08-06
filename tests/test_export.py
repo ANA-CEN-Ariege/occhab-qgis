@@ -91,7 +91,7 @@ def test_colonnes_n2000_exportees():
     assert row["unite_vegetale"] == "mosaique_temporelle"
     assert row["nature_obs"] == "directe_avec_releve"
     assert row["echelle"] == 5000
-    assert row["st_zone_humide"] is True
+    assert row["st_zone_humide"] == "oui"
     assert row["typicite"] == "bonne"
     assert row["dynamique"] == "regressive_lente"
     assert row["restauration"] == "possible_avec_efforts"

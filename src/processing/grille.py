@@ -43,7 +43,12 @@ class Grille:
         """`stations` : dicts tels que rendus par `OccHabDatabase.get_stations_full`."""
         self.stations = [dict(s) for s in stations or []]
         self.lignes = []
-        for station in self.stations:
+        for numero, station in enumerate(self.stations, start=1):
+            # Numéro de POLYGONE, pas de ligne : toutes les lignes d'une même
+            # station le partagent, c'est là tout son intérêt. Il vaut pour la
+            # session — rien ne le persiste, et `lecture_seule` interdit de
+            # l'éditer, donc il ne peut pas partir en base ni vers GeoNature.
+            station[ch.POLYGONE] = numero
             habitats = [dict(h) for h in station.get("habitats") or []]
             station["habitats"] = habitats
             if habitats:

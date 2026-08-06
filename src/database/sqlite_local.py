@@ -274,16 +274,22 @@ class OccHabDatabase:
         self.disconnect()
         return dict(row) if row else None
 
-    def get_all_stations(self, sync_status=None):
+    def get_all_stations(self, sync_status=None, id_dataset=None):
         self.connect()
         cursor = self.connection.cursor()
+        conditions, valeurs = [], []
         if sync_status:
-            cursor.execute(
-                "SELECT * FROM t_stations WHERE sync_status = ? ORDER BY id DESC",
-                (sync_status,),
-            )
-        else:
-            cursor.execute("SELECT * FROM t_stations ORDER BY id DESC")
+            conditions.append("sync_status = ?")
+            valeurs.append(sync_status)
+        if id_dataset is not None:
+            conditions.append("id_dataset = ?")
+            valeurs.append(id_dataset)
+        # Colonnes issues d'une liste figée, valeurs paramétrées.
+        cursor.execute(
+            "SELECT * FROM t_stations%s ORDER BY id DESC"  # nosec B608
+            % (" WHERE " + " AND ".join(conditions) if conditions else ""),
+            valeurs,
+        )
         rows = [dict(r) for r in cursor.fetchall()]
         self.disconnect()
         return rows
@@ -481,8 +487,9 @@ class OccHabDatabase:
         self.disconnect()
 
     # ------------------------------------------------------- synchro
-    def get_pending_stations(self):
-        return self.get_all_stations(sync_status="pending")
+    def get_pending_stations(self, id_dataset=None):
+        """Stations en attente d'envoi, éventuellement d'un seul jeu de données."""
+        return self.get_all_stations(sync_status="pending", id_dataset=id_dataset)
 
     def set_server_snapshot(self, station_id, snapshot):
         """Mémoriser l'empreinte serveur connue d'une station (détection de conflit)."""
