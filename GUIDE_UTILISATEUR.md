@@ -46,8 +46,8 @@ Concrètement, vous pouvez :
 - **décrire un ou plusieurs habitats** par station, avec recherche assistée dans
   le référentiel **HABREF** (Corine Biotopes, EUNIS…) ;
 - renseigner des champs métier ANA — **niveau d'enjeu**, **état de conservation**,
-  **recouvrement** — et les champs **Natura 2000** (typicité, dynamique,
-  restauration, unité végétale…) ;
+  **zone humide** (oui / non / à vérifier), **recouvrement** — et les champs
+  **Natura 2000** (typicité, dynamique, restauration, unité végétale…) ;
 - **recopier** les renseignements d'un polygone déjà saisi sur d'autres, et
   reprendre automatiquement la saisie précédente d'un habitat au suivant ;
 - travailler **en brouillon** et **valider** vos stations quand elles sont
@@ -57,7 +57,10 @@ Concrètement, vous pouvez :
 - **synchroniser** vos saisies avec GeoNature (création, modification,
   suppression) ;
 - **consulter** les stations déjà présentes sur le serveur pour vous repérer et
-  éviter les doublons.
+  éviter les doublons ;
+- **cartographier** : charger une couche d'habitats du serveur, colorée par
+  habitat et regroupée par grand milieu, puis en tirer une **planche imprimable**
+  à partir des gabarits de l'ANA (voir §13 ter).
 
 ---
 
@@ -143,8 +146,9 @@ Utile hors ligne, en avant-première, ou si le dépôt n'est pas accessible :
 > ~~L'extension est aussi publiée sur le dépôt officiel des extensions QGIS,
 > présent d'origine dans le gestionnaire.~~
 > La version qui s'y trouve (**0.5.2**) est **plus ancienne** que celle du dépôt
-> de l'ANA (**0.6.0**) : ne l'installez pas depuis là, vous n'auriez ni le
-> copier-coller de polygone, ni les corrections de saisie. Utilisez la
+> de l'ANA (**0.7.0**) : ne l'installez pas depuis là, vous n'auriez ni la mise
+> en page cartographique, ni le copier-coller de polygone, ni les corrections de
+> saisie. Utilisez la
 > **méthode A**. Cette voie sera rouverte quand l'extension sortira de sa phase
 > d'expérimentation.
 
