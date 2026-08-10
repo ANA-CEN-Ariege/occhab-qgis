@@ -123,5 +123,10 @@ def habitat_reprise(habitat):
     reprise = {k: v for k, v in (habitat or {}).items() if k not in skip}
     precision = reprise.get("technical_precision")
     if precision:
-        reprise["technical_precision"] = merge_eval(precision, recouvrement=None) or None
+        # La détermination et les correspondances suivent le cd_hab, qui vient
+        # d'être écarté : reprises, elles décriraient l'habitat PRÉCÉDENT sous le
+        # code du suivant — une correspondance EUNIS fausse, et muette.
+        reprise["technical_precision"] = merge_eval(
+            precision, recouvrement=None, determination=None, corresp=None,
+        ) or None
     return reprise

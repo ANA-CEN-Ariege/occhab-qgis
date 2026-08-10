@@ -71,7 +71,7 @@ class StationDialog(QDialog):
     def __init__(self, config=None, geom_wkt=None, geom_type=None,
                  station=None, station_nomenclatures=None,
                  habitat_nomenclatures=None, habref_search=None,
-                 habref_typologies=None, observers=None, current_observer=None,
+                 habref_detail=None, habref_typologies=None, observers=None, current_observer=None,
                  user_names=None, default_determiner=None, datasets=None,
                  geo_metrics=None, station_defaults=None, habitat_defaults=None,
                  abundance_cover_map=None, batch_count=0, template=None,
@@ -108,6 +108,7 @@ class StationDialog(QDialog):
         self.station_nomenclatures = station_nomenclatures or {}
         self.habitat_nomenclatures = habitat_nomenclatures or {}
         self.habref_search = habref_search
+        self.habref_detail = habref_detail
         self.habref_typologies = habref_typologies or []
         self.observers = observers or []
         self.current_observer = current_observer
@@ -383,6 +384,7 @@ class StationDialog(QDialog):
         form = HabitatForm(
             self.habitat_nomenclatures,
             self.habref_search,
+            habref_detail=self.habref_detail,
             typologies=self.habref_typologies,
             user_names=self.user_names,
             default_determiner=self.default_determiner,

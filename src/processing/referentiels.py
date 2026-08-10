@@ -68,6 +68,29 @@ COULEURS_ENJEU = [
 #: Niveaux que la dernière entrée ramasse, en plus des valeurs absentes.
 ENJEUX_SANS_COULEUR = ("aucun", "inconnu")
 
+# --- Correspondances entre typologies d'habitats. ----------------------------
+# Les botanistes déterminent à l'alliance, dans le catalogue des végétations de
+# l'Ariège ; la restitution réclame du CORINE, de l'EUNIS ou du Natura 2000. La
+# correspondance calculée depuis HABREF n'est pas toujours juste, d'où la
+# possibilité de l'ARBITRER et de l'inscrire dans la donnée (cf.
+# `processing.correspondances` et le bloc ANA-EVAL).
+#
+# La clé est celle de HABREF (`lb_nom_typo`), pas un code à nous : la donnée
+# saisie se raccorde ainsi sans traduction à la vue d'export, qui interroge
+# HABREF avec ces mêmes libellés.
+TYPOLOGIES_CORRESPONDANCE = [
+    ("CORINE_biotopes", "CORINE biotopes"),
+    ("EUNIS", "EUNIS"),
+    ("Habitats_d'intérêt_communautaire", "Natura 2000"),
+    ("Cahiers_d'habitats", "Cahiers d'habitats"),
+]
+#: D'où vient une correspondance enregistrée. `catalogue` : reprise du catalogue
+#: ANA telle quelle. `habref` : proposée par HABREF, qui publie ses propres
+#: correspondances. `manuel` : le botaniste l'a choisie ou corrigée lui-même —
+#: c'est la SEULE qui atteste d'un arbitrage humain, et l'export doit pouvoir
+#: l'isoler pour dire ce qui a été vérifié et ce qui ne l'a pas été.
+SOURCES_CORRESPONDANCE = ("catalogue", "habref", "manuel")
+
 # --- ANA : zone humide (hors cahier des charges N2000). ---------------------
 # Le terrain distingue trois cas, pas deux : une station manifestement humide,
 # une qui ne l'est pas, et celle dont on ne peut trancher sans y retourner — un

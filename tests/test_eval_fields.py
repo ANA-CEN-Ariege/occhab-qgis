@@ -299,3 +299,75 @@ def test_zone_humide_dans_le_referentiel():
     # L'ordre d'AFFICHAGE compte : « À vérifier » se choisit après avoir hésité
     # entre les deux autres, pas avant.
     assert [code for code, _ in ref.ZONES_HUMIDES] == ["oui", "non", "a_verifier"]
+
+
+# ------------------------- détermination hors HABREF et correspondances
+def test_correspondance_arbitree_survit_a_l_aller_retour():
+    """Le cœur de la fonctionnalité : ce que le botaniste tranche est conservé."""
+    texte = ef.encode_eval(
+        "", corresp={"EUNIS": {"cd_hab": 5678, "code": "F9.12", "src": "manuel"}}
+    )
+    assert ef.decode_eval(texte)["corresp"] == {
+        "EUNIS": {"cd_hab": 5678, "code": "F9.12", "src": "manuel"}
+    }
+
+
+def test_determination_hors_habref_dit_son_ancre():
+    texte = ef.encode_eval(
+        "", determination={"nom": "Salicion pyrenaicae", "ancre": "CORINE_biotopes"}
+    )
+    assert ef.decode_eval(texte)["determination"] == {
+        "nom": "Salicion pyrenaicae", "ancre": "CORINE_biotopes",
+    }
+
+
+def test_determination_sans_nom_ecartee():
+    """Un `cd_hab` d'ancre sans nom d'alliance ne dit rien de plus qu'un cd_hab."""
+    assert ef.decode_eval(ef.encode_eval("", determination={"ancre": "EUNIS"})) == {}
+
+
+def test_ancre_hors_referentiel_ecartee_mais_nom_garde():
+    codes = ef.decode_eval(
+        ef.encode_eval("", determination={"nom": "Salicion pyrenaicae",
+                                          "ancre": "TYPOLOGIE_INVENTEE"})
+    )
+    assert codes["determination"] == {"nom": "Salicion pyrenaicae"}
+
+
+def test_typologie_inconnue_ecartee_des_correspondances():
+    codes = ef.decode_eval(ef.encode_eval("", corresp={
+        "EUNIS": {"cd_hab": 5678}, "PIFOMETRE": {"cd_hab": 1},
+    }))
+    assert set(codes["corresp"]) == {"EUNIS"}
+
+
+def test_correspondance_sans_cd_hab_ecartee():
+    """C'est le cd_hab qui fait la correspondance : un code seul ne se raccorde à rien."""
+    assert ef.decode_eval(
+        ef.encode_eval("", corresp={"EUNIS": {"code": "F9.12"}})
+    ) == {}
+
+
+def test_source_hors_referentiel_ecartee_sans_inventer():
+    """Écrire « manuel » d'office ferait croire à une vérification jamais faite."""
+    codes = ef.decode_eval(ef.encode_eval("", corresp={
+        "EUNIS": {"cd_hab": 5678, "src": "au_pif"},
+    }))
+    assert codes["corresp"]["EUNIS"] == {"cd_hab": 5678}
+
+
+def test_bloc_reste_lisible_avec_le_texte_humain():
+    texte = ef.encode_eval(
+        "Relevé du 12 mai.", enjeu="fort",
+        corresp={"EUNIS": {"cd_hab": 5678, "src": "catalogue"}},
+    )
+    assert ef.strip_eval(texte) == "Relevé du 12 mai."
+    assert ef.decode_eval(texte)["enjeu"] == "fort"
+
+
+def test_merge_efface_les_correspondances_sans_toucher_au_reste():
+    """Ce dont dépend la reprise de l'habitat précédent (cf. duplicate)."""
+    texte = ef.encode_eval("", enjeu="fort", determination={"nom": "Salicion"},
+                           corresp={"EUNIS": {"cd_hab": 5678}})
+    apres = ef.decode_eval(ef.merge_eval(texte, determination=None, corresp=None))
+    assert apres == {"enjeu": "fort"}

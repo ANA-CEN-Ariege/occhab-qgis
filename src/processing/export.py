@@ -34,6 +34,22 @@ HABITAT_FIELDS = [
     "sensibilite", "interet_com", "hab_enjeu", "hab_etat_cons",
     # Natura 2000 (annexe 2 : id_typi, id_dynam, id_restaur) + extensions ANA
     "typicite", "dynamique", "restauration", "critere", "pee", "remarque",
+    # Détermination du catalogue ANA et correspondances INSCRITES dans la donnée.
+    # `alliance` n'est renseignée que si `cd_hab` est une ANCRE — un code CORINE
+    # ou EUNIS emprunté faute d'entrée HABREF. La lire vide ne veut donc pas dire
+    # « pas d'alliance », mais « le cd_hab est lui-même la détermination ».
+    # Le champ ne s'appelle pas « determination » : la colonne existe déjà plus
+    # haut, pour le type de détermination.
+    "alliance", "ancre_typo",
+    "corine_cite", "eunis_cite", "n2000_cite", "cahiers_cite", "corresp_manu",
+]
+#: Colonnes de correspondance, par typologie HABREF. Ces codes-là priment sur
+#: ceux que la vue d'export recalcule : ils ont été retenus par un botaniste.
+_COLONNES_CORRESP = [
+    ("CORINE_biotopes", "corine_cite"),
+    ("EUNIS", "eunis_cite"),
+    ("Habitats_d'intérêt_communautaire", "n2000_cite"),
+    ("Cahiers_d'habitats", "cahiers_cite"),
 ]
 FIELDS = STATION_FIELDS + HABITAT_FIELDS
 NUMERIC_FIELDS = {
@@ -47,6 +63,28 @@ def _to_float(value):
         return float(value)
     except (TypeError, ValueError):
         return None
+
+
+def _colonnes_catalogue(hab_eval):
+    """Détermination hors HABREF et correspondances inscrites, à plat.
+
+    `corresp_manu` liste les seules typologies **arbitrées à la main**. C'est la
+    colonne qui compte à la relecture : tout le reste peut venir du catalogue
+    repris tel quel, et n'atteste alors d'aucune vérification.
+    """
+    determination = hab_eval.get("determination") or {}
+    corresp = hab_eval.get("corresp") or {}
+    colonnes = {
+        "alliance": determination.get("nom"),
+        "ancre_typo": determination.get("ancre"),
+        "corresp_manu": " ; ".join(sorted(
+            typologie for typologie, valeurs in corresp.items()
+            if valeurs.get("src") == "manuel"
+        )) or None,
+    }
+    for typologie, colonne in _COLONNES_CORRESP:
+        colonnes[colonne] = (corresp.get(typologie) or {}).get("code")
+    return colonnes
 
 
 def flatten_cartography(stations, nomenclature_label=None, jdd_name=None,
@@ -141,6 +179,7 @@ def flatten_cartography(stations, nomenclature_label=None, jdd_name=None,
                     "pee": " ; ".join(hab_eval.get("pee") or []) or None,
                     "remarque": hab_eval.get("remarque"),
                 })
+                row.update(_colonnes_catalogue(hab_eval))
             row["_geom"] = station.get("geom")
             row["_geom_type"] = station.get("geom_type")
             rows.append(row)

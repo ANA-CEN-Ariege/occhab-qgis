@@ -37,9 +37,14 @@ from qgis.PyQt.QtWidgets import (
     QWidget,
 )
 
+from ..processing import correspondances as corresp
 from .dialog_size import ecran_de
 
 MIN_RECHERCHE = 3  # en deçà, la recherche serveur ne discrimine rien
+#: Marque des propositions venant du catalogue ANA. Elles précèdent celles de
+#: HABREF : ce sont les déterminations que les botanistes emploient réellement,
+#: et une partie d'entre elles n'existe nulle part ailleurs.
+PREFIXE_CATALOGUE = "★ Catalogue ANA"
 _DELAI_MS = 300  # laisser finir de taper avant d'interroger le serveur
 #: Largeur maximale du menu de propositions. Un libellé HABREF préfixé de sa
 #: typologie (« Habitats_naturels_et_semi-naturels_de_La_Réunion_(2017) 1.4.1.4 -
@@ -62,25 +67,44 @@ class HabrefLineEdit(QLineEdit):
     """
 
     habitat_choisi = pyqtSignal(int, str)
+    #: Émis EN PLUS de `habitat_choisi` quand la proposition retenue vient du
+    #: catalogue ANA : elle apporte une détermination et ses correspondances, que
+    #: `habitat_choisi` (cd_hab + nom) ne sait pas transporter. Les appelants qui
+    #: n'ont besoin que du code — une cellule de tableau — l'ignorent.
+    alliance_choisie = pyqtSignal(object)
     etat_change = pyqtSignal(str, str)
 
     def __init__(self, habref_search=None, typo_names=None, cd_typo=None,
-                 parent=None):
+                 catalogue=None, parent=None):
         super().__init__(parent)
         self._habref_search = habref_search
         self._typo_names = dict(typo_names or {})
         self._cd_typo = cd_typo
+        # Le catalogue est local : il répond même hors connexion, et c'est le
+        # seul endroit où se trouvent les 43 alliances absentes de HABREF.
+        self._catalogue = catalogue if catalogue is not None else corresp.catalogue()
         self._pending = ""
         self.nom_choisi = None
         self.cd_choisi = None
-        if habref_search is None:
+        #: Proposition HABREF retenue, telle que l'API l'a rendue. Le signal ne
+        #: transporte que le code et le nom ; `lb_code` n'y tient pas, et c'est
+        #: lui qu'une correspondance doit afficher (« G1.62 », pas un cd_hab).
+        self.item_choisi = None
+        self.alliance_choisie_valeur = None
+        if habref_search is None and not len(self._catalogue):
             self.setPlaceholderText("Nom de l'habitat (saisie libre)")
             self._etat(
                 "Recherche HABREF indisponible hors connexion — saisissez le nom "
                 "et le code à la main."
             )
             return
-        self.setPlaceholderText("Tapez le nom (ou code) de l'habitat…")
+        if habref_search is None:
+            # Hors connexion, le catalogue ANA reste interrogeable : il est sur
+            # le disque. C'est même là qu'il rend le plus de services — sur le
+            # terrain, sans réseau.
+            self.setPlaceholderText("Tapez le nom de l'alliance (catalogue ANA)…")
+        else:
+            self.setPlaceholderText("Tapez le nom (ou code) de l'habitat…")
         self._modele = QStandardItemModel(0, 1, self)
         completer = QCompleter(self._modele, self)
         completer.setCompletionMode(QCompleter.CompletionMode.UnfilteredPopupCompletion)
@@ -93,6 +117,11 @@ class HabrefLineEdit(QLineEdit):
         self._timer.setSingleShot(True)
         self._timer.setInterval(_DELAI_MS)
         self._timer.timeout.connect(self._rechercher)
+
+    @property
+    def catalogue(self):
+        """Catalogue ANA effectivement interrogé (jamais None, parfois vide)."""
+        return self._catalogue
 
     def definir_typologie(self, cd_typo):
         """Restreindre la recherche à une typologie (None = toutes)."""
@@ -112,24 +141,44 @@ class HabrefLineEdit(QLineEdit):
 
     def _rechercher(self):
         query = self._pending
-        if len(query) < MIN_RECHERCHE or self._habref_search is None:
+        if len(query) < MIN_RECHERCHE:
             return
-        try:
-            resultats = self._habref_search(query, cd_typo=self._cd_typo) or []
-        except Exception as exc:  # noqa: BLE001 - la saisie doit rester possible
-            self._etat("Recherche HABREF en échec — saisie manuelle possible.", str(exc))
-            return
+
+        # Le catalogue d'abord : il est local (donc instantané et disponible hors
+        # connexion) et porte les déterminations que les botanistes emploient
+        # réellement. Une recherche HABREF en échec ne doit pas l'emporter avec
+        # elle — d'où sa constitution AVANT l'appel réseau.
+        alliances = [
+            alliance for alliance in self._catalogue.chercher(query)
+            if alliance.est_saisissable
+        ]
+
+        echec = None
+        resultats = []
+        if self._habref_search is not None:
+            try:
+                resultats = self._habref_search(query, cd_typo=self._cd_typo) or []
+            except Exception as exc:  # noqa: BLE001 - la saisie doit rester possible
+                echec = str(exc)
 
         # Vider les LIGNES sans réinitialiser le modèle : `clear()` remettrait
         # aussi les colonnes à zéro et déstabiliserait le QCompleter.
         if self._modele.rowCount():
             self._modele.removeRows(0, self._modele.rowCount())
+        for alliance in alliances:
+            self._modele.appendRow(self._ligne_alliance(alliance))
         for item in resultats:
             self._modele.appendRow(self._ligne(item))
 
         if self._modele.rowCount():
-            self._etat("")
+            self._etat(
+                "Recherche HABREF en échec — propositions du catalogue seulement."
+                if echec else "",
+                echec,
+            )
             self._afficher_propositions()
+        elif echec:
+            self._etat("Recherche HABREF en échec — saisie manuelle possible.", echec)
         else:
             self._etat("Aucun habitat trouvé pour « %s »." % query)
 
@@ -171,12 +220,30 @@ class HabrefLineEdit(QLineEdit):
         ligne.setData(item, Qt.ItemDataRole.UserRole)
         return ligne
 
+    def _ligne_alliance(self, alliance):
+        """Proposition venant du catalogue ANA, marquée comme telle."""
+        texte = "%s · %s" % (PREFIXE_CATALOGUE, alliance.libelle())
+        ligne = QStandardItem(texte)
+        ligne.setToolTip(
+            "%s\nClasse : %s%s" % (
+                texte, alliance.classe or "—",
+                "\nCode emprunté : ce nom d'alliance est absent de HABREF."
+                if alliance.est_ancree else "",
+            )
+        )
+        ligne.setData(alliance, Qt.ItemDataRole.UserRole)
+        return ligne
+
     def _on_choisi(self, index):
         data = index.data(Qt.ItemDataRole.UserRole)
+        if isinstance(data, corresp.Alliance):
+            self._retenir_alliance(data)
+            return
         if not isinstance(data, dict):
             return
         nom = data.get("search_name") or ""
         self.nom_choisi = nom
+        self.item_choisi = data
         self._etat("")
         # Le complèteur va écrire le libellé affiché (préfixé de la typologie) :
         # on repasse derrière lui pour ne garder que le nom HABREF. En cellule,
@@ -197,21 +264,52 @@ class HabrefLineEdit(QLineEdit):
                 return
             self.habitat_choisi.emit(self.cd_choisi, nom)
 
+    def _retenir_alliance(self, alliance):
+        """Retenir une proposition du catalogue : nom d'alliance et cd_hab à poser.
+
+        Le nom cité devient le **nom d'alliance**, pas le libellé du code : c'est
+        la détermination du botaniste. Quand le code n'est qu'une ancre, cette
+        distinction est tout ce qui reste pour dire ce qui a réellement été
+        déterminé.
+
+        `habitat_choisi` est émis comme pour HABREF — une cellule de tableau n'a
+        rien à savoir du catalogue — et `alliance_choisie` en plus, pour qui sait
+        enregistrer la détermination et ses correspondances.
+        """
+        self.nom_choisi = alliance.nom
+        self.alliance_choisie_valeur = alliance
+        self.item_choisi = None
+        self._etat("")
+
+        def _poser():
+            try:
+                self.setText(alliance.nom)
+            except RuntimeError:  # pragma: no cover - éditeur déjà refermé
+                pass
+
+        QTimer.singleShot(0, _poser)
+        self.cd_choisi = alliance.cd_hab_a_poser
+        self.habitat_choisi.emit(self.cd_choisi, alliance.nom)
+        self.alliance_choisie.emit(alliance)
+
 
 class HabrefSearchEdit(QWidget):
     """Saisie du nom cité, assistée par HABREF, avec filtre de typologie.
 
-    `habitat_choisi(cd_hab, nom)` est émis quand une proposition est retenue.
+    `habitat_choisi(cd_hab, nom)` est émis quand une proposition est retenue, et
+    `alliance_choisie(alliance)` en plus quand elle vient du catalogue ANA.
     """
 
     habitat_choisi = pyqtSignal(int, str)
+    alliance_choisie = pyqtSignal(object)
 
     def __init__(self, habref_search=None, typologies=None, libelle="Nom cité *",
-                 cd_typo=None, parent=None):
+                 cd_typo=None, catalogue=None, parent=None):
         super().__init__(parent)
         self._habref_search = habref_search
         self._typologies = typologies or []  # [(cd_typo, nom)]
         self._typo_names = dict(self._typologies)
+        self._catalogue = catalogue
         self._build(libelle)
         self.definir_typologie(cd_typo)
 
@@ -244,9 +342,11 @@ class HabrefSearchEdit(QWidget):
 
         self.edit = HabrefLineEdit(
             habref_search=self._habref_search, typo_names=self._typo_names,
+            catalogue=self._catalogue,
         )
         self.edit.etat_change.connect(self._etat)
         self.edit.habitat_choisi.connect(self.habitat_choisi)
+        self.edit.alliance_choisie.connect(self.alliance_choisie)
         form.addRow(libelle, self.edit)
 
         self.label_etat = QLabel()
@@ -258,9 +358,15 @@ class HabrefSearchEdit(QWidget):
         if self._habref_search is None:
             # La ligne de saisie a signalé son état hors connexion avant que le
             # label existe : on le repose ici, sans quoi le champ resterait muet
-            # — le défaut même que ce composant a été écrit pour corriger.
+            # — le défaut même que ce composant a été écrit pour corriger. Le
+            # filtre par typologie ne concerne que HABREF ; le catalogue, lui,
+            # reste interrogeable, et il faut le dire plutôt que de laisser
+            # croire que la saisie assistée est perdue.
             self.combo_typo.setEnabled(False)
             self._etat(
+                "Recherche HABREF indisponible hors connexion — le catalogue ANA "
+                "reste proposé."
+                if len(self.edit.catalogue) else
                 "Recherche HABREF indisponible hors connexion — saisissez le nom "
                 "et le code à la main."
             )

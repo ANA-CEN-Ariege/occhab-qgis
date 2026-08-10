@@ -59,12 +59,18 @@ from qgis.PyQt.QtWidgets import (
 from ..api.payload import mesures_incoherentes
 from ..database.sqlite_local import BROUILLON, VALIDE
 from ..processing import champs as ch
+from ..processing.correspondances import Catalogue
 from ..processing.grille import Grille
 from ..processing.referentiels import label_for
 from ..processing.tableur import tsv
 from .dialog_size import ajuster_a_l_ecran, borner_largeur_combos
 from .habref_widget import HabrefLineEdit, HabrefSearchEdit
 from .no_wheel import FiltreMolette, proteger_du_defilement
+
+#: Catalogue vide, passé explicitement aux champs qui n'écrivent que le nom cité
+#: et le cd_hab (cf. `_creer_editeur`). Le nommer vaut mieux qu'un `Catalogue([])`
+#: anonyme répété : c'est une décision, pas un détail d'appel.
+SANS_CATALOGUE = Catalogue([])
 
 # Jeux de colonnes : 25 colonnes ne tiennent pas à l'écran, et un botaniste qui
 # saisit du N2000 n'a pas besoin de l'exposition ni de la profondeur.
@@ -396,6 +402,13 @@ class ChampDelegate(QStyledItemDelegate):
                 habref_search=self.contexte.habref_search,
                 typo_names=dict(self.contexte.typologies),
                 cd_typo=self.contexte.cd_typo,
+                # Pas de catalogue ANA ici : une cellule n'écrit que le nom cité
+                # et le cd_hab. Une alliance ancrée y poserait un code CORINE
+                # d'emprunt SANS la détermination qui dit que c'en est un —
+                # exactement l'ambiguïté que cette détermination existe pour
+                # lever. Le catalogue se choisit au formulaire, qui sait écrire
+                # le bloc complet.
+                catalogue=SANS_CATALOGUE,
                 parent=parent,
             )
             # Valider dès qu'une proposition est retenue : sans cela il faudrait
@@ -670,6 +683,7 @@ class AppliquerDialog(QDialog):
                 habref_search=self.contexte.habref_search,
                 typo_names=dict(self.contexte.typologies),
                 cd_typo=self.contexte.cd_typo,
+                catalogue=SANS_CATALOGUE,  # cf. `_creer_editeur`
             )
         if champ.type in (ch.CODE, ch.NOMENCLATURE, ch.JDD):
             widget = QComboBox()

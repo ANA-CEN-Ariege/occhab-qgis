@@ -55,6 +55,28 @@ _CODE_FIELDS = {
 }
 _TEXT_FIELDS = ("critere", "remarque")
 _LIST_FIELDS = {"pee": 3}  # plantes exotiques envahissantes : 3 taxons au plus
+
+# --- Détermination hors HABREF et correspondances arbitrées. -----------------
+# Deux clés STRUCTURÉES, seules de leur espèce dans le bloc :
+#
+#   "determination": {"nom": "Salicion pyrenaicae", "ancre": "CORINE_biotopes"}
+#   "corresp": {"EUNIS": {"cd_hab": 5678, "code": "F9.12", "src": "manuel"}}
+#
+# `determination` n'apparaît que lorsque le `cd_hab` de l'habitat est une ANCRE
+# — un code emprunté à CORINE ou EUNIS parce que HABREF ne connaît pas
+# l'alliance déterminée. Sans elle, personne ne saurait relire la donnée : rien
+# ne distinguerait un code CORINE choisi comme détermination d'un code CORINE
+# posé faute de mieux.
+#
+# `corresp` porte les correspondances INSCRITES dans la donnée, qui priment sur
+# celles que la vue d'export recalcule depuis HABREF — c'est tout l'objet de la
+# fonctionnalité : le calcul automatique n'est pas toujours juste, et le
+# botaniste doit pouvoir trancher.
+#
+# `src` atteste d'un arbitrage humain (« manuel ») ou d'une reprise du catalogue
+# (« catalogue »). Une valeur hors référentiel est ÉCARTÉE plutôt que corrigée :
+# inventer « manuel » ferait croire à une vérification qui n'a pas eu lieu.
+_TYPOLOGIES_CORRESP = ref.codes(ref.TYPOLOGIES_CORRESPONDANCE)
 # Entiers bornés : {clé: (mini, maxi)}. `echelle` = échelle de numérisation,
 # obligatoire au cahier des charges N2000 (ex. 5000 pour du 1:5 000).
 _INT_FIELDS = {"echelle": (1, 1_000_000)}
@@ -121,7 +143,65 @@ def _clean(key, value):
         items = [_without_markers(str(v)).strip() for v in (value or [])]
         items = [item for item in items if item]
         return items[: _LIST_FIELDS[key]] or None
+    if key == "determination":
+        return _clean_determination(value)
+    if key == "corresp":
+        return _clean_corresp(value)
     return None  # clé inconnue : ignorée, le bloc reste normalisé
+
+
+def _texte(valeur):
+    """Texte propre pour le bloc, ou None. Les balises sont retirées."""
+    if not isinstance(valeur, str):
+        return None
+    return _without_markers(valeur).strip() or None
+
+
+def _clean_determination(value):
+    """{'nom': …, 'ancre': …} — le nom fait foi, l'ancre est facultative."""
+    if not isinstance(value, dict):
+        return None
+    nom = _texte(value.get("nom"))
+    if not nom:
+        return None  # une détermination sans nom ne dit rien
+    propre = {"nom": nom}
+    ancre = value.get("ancre")
+    if ancre in _TYPOLOGIES_CORRESP:
+        propre["ancre"] = ancre
+    return propre
+
+
+def _clean_corresp(value):
+    """{typologie: {'cd_hab': int, 'code': str, 'src': str}} — validé typologie
+    par typologie.
+
+    Une typologie inconnue est écartée (le bloc reste normalisé) ; une entrée
+    sans `cd_hab` exploitable aussi, car c'est le `cd_hab` qui fait la
+    correspondance — le code seul ne se raccorde à rien.
+    """
+    if not isinstance(value, dict):
+        return None
+    propre = {}
+    for typologie, detail in value.items():
+        if typologie not in _TYPOLOGIES_CORRESP or not isinstance(detail, dict):
+            continue
+        cd_hab = detail.get("cd_hab")
+        if isinstance(cd_hab, bool):
+            continue
+        try:
+            cd_hab = int(cd_hab)
+        except (TypeError, ValueError):
+            continue
+        if cd_hab <= 0:
+            continue
+        entree = {"cd_hab": cd_hab}
+        code = _texte(detail.get("code"))
+        if code:
+            entree["code"] = code
+        if detail.get("src") in ref.SOURCES_CORRESPONDANCE:
+            entree["src"] = detail["src"]
+        propre[typologie] = entree
+    return propre or None
 
 
 def _raw_block(text):

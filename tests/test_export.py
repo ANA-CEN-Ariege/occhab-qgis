@@ -2,12 +2,12 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 
 """Tests de l'aplatissement cartographie (module pur `export`)."""
-import eval_fields
+import eval_fields as ef
 import export as ex
 
 
 def test_flatten_one_row_per_habitat():
-    comment = eval_fields.encode_eval("texte libre", enjeu="fort", etat_conservation="moyen")
+    comment = ef.encode_eval("texte libre", enjeu="fort", etat_conservation="moyen")
     station = {
         "id_station": 1, "station_name": "S",
         "geom": "POLYGON ((0 0, 1 0, 1 1, 0 0))", "geom_type": "polygon",
@@ -69,11 +69,11 @@ def test_flatten_station_without_habitat():
 
 def test_colonnes_n2000_exportees():
     """Les champs de l'annexe 2 doivent ressortir dans la cartographie exportée."""
-    comment = eval_fields.encode_eval(
+    comment = ef.encode_eval(
         "Note.", enjeu="fort", unite_vegetale="mosaique_temporelle",
         nature_observation="directe_avec_releve", echelle=5000, zone_humide=True,
     )
-    precision = eval_fields.encode_eval(
+    precision = ef.encode_eval(
         "", typicite="bonne", dynamique="regressive_lente",
         restauration="possible_avec_efforts", critere="Présence de PEE",
         pee=["Reynoutria japonica", "Buddleja davidii"], remarque="À revoir",
@@ -107,3 +107,45 @@ def test_toutes_les_colonnes_declarees_sont_presentes():
     )[0]
     for champ in ex.FIELDS:
         assert champ in row, champ
+
+
+# ---------------- détermination du catalogue et correspondances inscrites
+def _station_avec_bloc(bloc):
+    return [({"id_station": 1, "geom": "POINT(0 0)", "geom_type": "Point"},
+             [{"id_habitat": 9, "cd_hab": 1204, "nom_cite": "Subularion aquaticae",
+               "technical_precision": bloc}], [])]
+
+
+def test_export_sort_l_alliance_et_son_ancre():
+    """Une ancre doit se lire comme telle : sinon elle passe pour une détermination."""
+    bloc = ef.encode_eval("", determination={
+        "nom": "Subularion aquaticae", "ancre": "CORINE_biotopes"})
+    row = ex.flatten_cartography(_station_avec_bloc(bloc))[0]
+    assert row["alliance"] == "Subularion aquaticae"
+    assert row["ancre_typo"] == "CORINE_biotopes"
+
+
+def test_export_sort_les_correspondances_inscrites():
+    bloc = ef.encode_eval("", corresp={
+        "EUNIS": {"cd_hab": 1672, "code": "C3.4", "src": "manuel"},
+        "CORINE_biotopes": {"cd_hab": 1204, "code": "22.3", "src": "catalogue"},
+    })
+    row = ex.flatten_cartography(_station_avec_bloc(bloc))[0]
+    assert row["eunis_cite"] == "C3.4"
+    assert row["corine_cite"] == "22.3"
+    # Seul l'arbitrage humain est signalé : le reste n'atteste de rien.
+    assert row["corresp_manu"] == "EUNIS"
+
+
+def test_export_sans_catalogue_laisse_les_colonnes_vides():
+    row = ex.flatten_cartography(_station_avec_bloc(""))[0]
+    for colonne in ("alliance", "ancre_typo", "eunis_cite", "corresp_manu"):
+        assert row[colonne] is None
+
+
+def test_toutes_les_colonnes_sont_declarees():
+    """Une colonne produite mais absente de FIELDS ne serait jamais écrite."""
+    bloc = ef.encode_eval("", determination={"nom": "X"},
+                          corresp={"EUNIS": {"cd_hab": 1, "src": "manuel"}})
+    row = ex.flatten_cartography(_station_avec_bloc(bloc))[0]
+    assert set(row) - {"_geom", "_geom_type"} == set(ex.FIELDS)

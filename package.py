@@ -24,6 +24,9 @@ TOP = "occhab"  # dossier racine dans le ZIP
 # (chemins du poste, préférences d'éditeur), sans objet dans un paquet distribué.
 EXCLUDE_DIRS = {
     "__pycache__", "htmlcov", "venv", "env", "dist", "memory", "tests",
+    # Outils hors QGIS, lancés à la main par le mainteneur (import du catalogue
+    # de typologie) : sans objet dans un paquet installé.
+    "scripts",
 }
 # Motifs de fichiers exclus.
 EXCLUDE_GLOBS = [

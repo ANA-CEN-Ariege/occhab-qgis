@@ -1193,6 +1193,18 @@ class OccHabDockWidget(QDockWidget):
             return None
         return lambda text, cd_typo=None: self.client.search_habref(text, cd_typo=cd_typo)
 
+    def _habref_detail_fn(self):
+        """Callable rendant la fiche HABREF complète d'un cd_hab, sinon None.
+
+        La fiche porte les **correspondances** que HABREF connaît pour cet
+        habitat, avec leurs libellés. C'est ce qui permet de proposer un code
+        CORINE ou EUNIS à un botaniste qui a déterminé dans une autre typologie
+        et ne connaît pas le code d'arrivée.
+        """
+        if self.client is None or not self.client.is_authenticated:
+            return None
+        return self.client.get_habref
+
     def _dataset_items(self):
         """Liste (id_dataset, nom) des JDD (depuis la combo, hors « Tous »)."""
         items = []
@@ -2224,6 +2236,7 @@ class OccHabDockWidget(QDockWidget):
             habitat_defaults=self._habitat_defaults(),
             abundance_cover_map=self._abundance_cover_map(),
             habref_search=self._habref_search_fn(),
+            habref_detail=self._habref_detail_fn(),
             habref_typologies=self._habref_typologies(),
             observers=self._observers_items(),
             current_observer=self._current_user_observer(),
