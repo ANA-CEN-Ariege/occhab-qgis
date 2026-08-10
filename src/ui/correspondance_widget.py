@@ -235,7 +235,7 @@ class CorrespondancesEdit(QWidget):
         self._valeurs[cle] = {
             "cd_hab": int(cd_hab),
             "code": (item.get("lb_code") or "").strip(),
-            "nom": _nom_habref(item),
+            "nom": corresp.nom_habref(item.get("search_name")),
             "src": "manuel",
         }
         self._rafraichir(cle)
@@ -261,6 +261,20 @@ class CorrespondancesEdit(QWidget):
             TYPOLOGIES_CORRESPONDANCE) else None
         if self._propre:
             self._valeurs.pop(self._propre[0], None)
+        for cle in self._lignes:
+            self._rafraichir(cle)
+
+    def garnir(self, candidats):
+        """Poser les propositions SANS toucher aux valeurs déjà retenues.
+
+        Sert à la relecture d'un habitat enregistré : les mises en garde
+        (« n propositions — à choisir ») doivent réapparaître, mais ce qui a été
+        retenu ne se rejoue pas.
+        """
+        self._candidats = {
+            cle: list((candidats or {}).get(cle) or [])
+            for cle, _libelle in TYPOLOGIES_CORRESPONDANCE
+        }
         for cle in self._lignes:
             self._rafraichir(cle)
 
@@ -336,12 +350,3 @@ class CorrespondancesEdit(QWidget):
             for cle, libelle in TYPOLOGIES_CORRESPONDANCE if cle in self._valeurs
         )
 
-
-def _nom_habref(item):
-    """Libellé lisible d'une proposition HABREF (« G1.62 - Hêtraies… » → le nom)."""
-    texte = (item.get("search_name") or "").split(" - ", 1)[-1].strip()
-    mots = texte.split()
-    for taille in range(len(mots) // 2, 0, -1):
-        if mots[:taille] == mots[taille:2 * taille]:
-            return " ".join(mots[:taille])
-    return texte

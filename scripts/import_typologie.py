@@ -21,7 +21,7 @@ Il produit deux fichiers :
 
 Trois règles portent l'essentiel de la logique métier :
 
-1. **Ancrage.** 39 alliances du catalogue sont absentes de HABREF — le catalogue
+1. **Ancrage.** 43 alliances du catalogue sont absentes de HABREF — le catalogue
    diverge délibérément du Prodrome (cf. la légende du fichier, « différences
    d'interprétation entre Gilles Corriol et le PVF II »). Leur détermination ne
    peut donc pas tenir dans `cd_hab`. On y met alors le code CORINE de la ligne
@@ -92,7 +92,11 @@ TYPOS_ALLIANCE = ("PVF1", "PVF2")
 #: est du texte non codifiable (« pp », « uniquement si… »), conservé à part.
 MOTIF_CODE = {
     "corine": re.compile(r"\d+(?:\.\d+)*[A-Za-z]?"),
-    "eunis": re.compile(r"[A-Z]\d*(?:\.\d+)*"),
+    # EUNIS a de vrais codes d'une seule lettre (A = habitats marins…), mais
+    # « Aucune correspondance » commence aussi par une majuscule : sans la
+    # sentinelle, la prose du tableur ressortirait en correspondance EUNIS
+    # parfaitement résoluble, donc invisible.
+    "eunis": re.compile(r"[A-Z]\d*(?:\.\d+)*(?![A-Za-z])"),
     "n2000": re.compile(r"\d{4}(?:-\d+)?"),
 }
 #: Cellule vide au sens du catalogue (pas de correspondance connue).
@@ -155,9 +159,14 @@ def extraire_codes(cellule, typologie):
         if not morceau:
             continue
         trouve = MOTIF_CODE[typologie].match(morceau)
-        if trouve:
+        suite = morceau[trouve.end():].strip(" .") if trouve else ""
+        # Un code EUNIS d'une seule lettre suivi de texte est presque sûrement une
+        # phrase (« A définir ») et non le niveau 1 de la typologie : la lettre
+        # seule existe, mais jamais accompagnée d'un commentaire.
+        prose = trouve is not None and typologie == "eunis" and \
+            len(trouve.group(0)) == 1 and bool(suite)
+        if trouve is not None and not prose:
             codes.append(trouve.group(0))
-            suite = morceau[trouve.end():].strip(" .")
             if suite:
                 reste.append(suite)
         else:
@@ -199,7 +208,7 @@ def est_ligne_catalogue(cellules):
 def choisir_ancre(codes_corine, codes_eunis):
     """Code servant de `cd_hab` quand l'alliance est absente de HABREF.
 
-    CORINE d'abord : 35 des 36 alliances concernées en ont un, et il est
+    CORINE d'abord : 42 des 43 alliances concernées en ont un, et il est
     généralement plus fin qu'EUNIS sur la végétation. EUNIS en repli. `None`
     quand la ligne n'offre ni l'un ni l'autre — cas bloquant, à compléter dans le
     tableur.
@@ -361,9 +370,13 @@ class Habref:
                 )
                 if reponse.status_code == 200:
                     resultat = reponse.json() if reponse.text else []
-                    resultat = resultat if isinstance(resultat, list) else []
-                    self.cache[cle] = resultat
-                    return resultat
+                    # Un 200 qui ne rend pas une liste (page d'erreur, objet
+                    # d'erreur) n'est PAS un « aucun résultat » : le mettre en
+                    # cache figerait pour toujours une panne passagère en
+                    # « absent de HABREF », indiscernable d'une vraie absence.
+                    if isinstance(resultat, list):
+                        self.cache[cle] = resultat
+                        return resultat
             except self._requests.RequestException:
                 pass
             time.sleep(1 + essai)
@@ -403,7 +416,7 @@ CHAMPS_DICO = [
     # pas à choisir ; « 41.112 — Hêtraies acidiphiles » si.
     "corine_cd_hab", "corine_code", "corine_nom", "corine_autres",
     "eunis_cd_hab", "eunis_code", "eunis_nom", "eunis_autres",
-    "hic_cd_hab", "hic_code", "hic_nom",
+    "n2000_cd_hab", "n2000_code", "n2000_nom",
     "cahiers_cd_hab", "cahiers_code", "cahiers_nom",
     "condition_n2000",
 ]
@@ -411,7 +424,12 @@ CHAMPS_ANOMALIES = ["ligne_xlsx", "alliance", "gravite", "type", "detail"]
 
 
 def _resoudre_codes(habref, cellule, typologie_cellule, anomalies, ligne, alliance):
-    """[(code, entrée HABREF ou None)] pour une cellule de correspondance."""
+    """([(code, typologie, entrée HABREF ou None)], texte non codifié).
+
+    Le texte non codifié est RENDU plutôt que recalculé par l'appelant : deux
+    analyses de la même cellule finiraient par diverger, et l'une d'elles décide
+    si un code Natura 2000 s'applique.
+    """
     codes, reste = extraire_codes(cellule, typologie_cellule)
     if reste:
         anomalies.append({
@@ -433,7 +451,7 @@ def _resoudre_codes(habref, cellule, typologie_cellule, anomalies, ligne, allian
                     typologie_cellule.upper(), code, cible),
             })
         resolus.append((code, cible, entree))
-    return resolus
+    return resolus, reste
 
 
 def _premier(resolus, typologies=None):
@@ -460,7 +478,7 @@ def construire(chemin_xlsx, habref, complements=None, journal=print):
     verifier_entetes(lignes)
     complements = complements or {}
 
-    dico, anomalies = [], []
+    dico, anomalies, appliques = [], [], set()
     for numero, cellules in lignes:
         if numero <= LIGNE_ENTETE:
             continue
@@ -477,6 +495,7 @@ def construire(chemin_xlsx, habref, complements=None, journal=print):
             continue
 
         alliance = nom_alliance(brut)
+        appliques.add(numero)
         for colonne, valeur in complements.get(numero, {}).items():
             anomalies.append({
                 "ligne_xlsx": numero, "alliance": alliance, "gravite": "avertissement",
@@ -487,13 +506,12 @@ def construire(chemin_xlsx, habref, complements=None, journal=print):
                              cellules.get(COL[colonne]) or ""),
             })
             cellules[COL[colonne]] = valeur
-        corine = _resoudre_codes(habref, cellules.get(COL["corine"]), "corine",
-                                 anomalies, numero, alliance)
-        eunis = _resoudre_codes(habref, cellules.get(COL["eunis"]), "eunis",
-                                anomalies, numero, alliance)
-        n2000 = _resoudre_codes(habref, cellules.get(COL["n2000"]), "n2000",
-                                anomalies, numero, alliance)
-        _codes_n2000, condition = extraire_codes(cellules.get(COL["n2000"]), "n2000")
+        corine, _ = _resoudre_codes(habref, cellules.get(COL["corine"]), "corine",
+                                    anomalies, numero, alliance)
+        eunis, _ = _resoudre_codes(habref, cellules.get(COL["eunis"]), "eunis",
+                                   anomalies, numero, alliance)
+        n2000, condition = _resoudre_codes(habref, cellules.get(COL["n2000"]), "n2000",
+                                           anomalies, numero, alliance)
 
         ligne = dict.fromkeys(CHAMPS_DICO, "")
         ligne.update({
@@ -506,7 +524,8 @@ def construire(chemin_xlsx, habref, complements=None, journal=print):
          ligne["corine_autres"]) = _premier(corine)
         (ligne["eunis_code"], ligne["eunis_cd_hab"], ligne["eunis_nom"],
          ligne["eunis_autres"]) = _premier(eunis)
-        ligne["hic_code"], ligne["hic_cd_hab"], ligne["hic_nom"], _ = _premier(
+        (ligne["n2000_code"], ligne["n2000_cd_hab"], ligne["n2000_nom"],
+         _) = _premier(
             n2000, {"Habitats_d'intérêt_communautaire"})
         (ligne["cahiers_code"], ligne["cahiers_cd_hab"], ligne["cahiers_nom"],
          _) = _premier(n2000, {"Cahiers_d'habitats"})
@@ -556,6 +575,18 @@ def construire(chemin_xlsx, habref, complements=None, journal=print):
         dico.append(ligne)
         if len(dico) % 25 == 0:
             journal("  %d alliances traitées…" % len(dico))
+
+    # Un complément qui ne rencontre aucune ligne de catalogue ne s'applique
+    # pas — et sans cette anomalie, le compte rendu annoncerait pourtant une
+    # correction « appliquée » : le numéro de ligne a bougé, ou la ligne visée
+    # est écartée du catalogue.
+    for numero in sorted(set(complements) - appliques):
+        anomalies.append({
+            "ligne_xlsx": numero, "alliance": "", "gravite": "bloquant",
+            "type": "complement_sans_cible",
+            "detail": "aucune ligne de catalogue à cette ligne : le complément "
+                      "%s n'a PAS été appliqué" % complements[numero],
+        })
     return dico, anomalies
 
 
@@ -581,7 +612,7 @@ def resumer(dico, anomalies, journal=print):
     journal("  ancrées sur CORINE/EUNIS  : %d" % len(ancrees))
     journal("  ni l'un ni l'autre        : %d"
             % len(par_type.get("alliance_sans_ancre", [])))
-    for typologie in ("corine", "eunis", "hic", "cahiers"):
+    for typologie in ("corine", "eunis", "n2000", "cahiers"):
         journal("Correspondances %-9s : %d"
                 % (typologie, sum(1 for l in dico if l["%s_cd_hab" % typologie])))
     journal("")
@@ -626,7 +657,8 @@ def main(argv=None):
     habref = Habref(args.api, cache=cache)
     complements = lire_complement(args.complement)
     if complements:
-        print("Complément : %d lignes corrigées hors tableur" % len(complements))
+        print("Complément : %d lignes lues (l'application est vérifiée plus bas)"
+              % len(complements))
 
     print("Lecture de %s" % args.xlsx)
     try:

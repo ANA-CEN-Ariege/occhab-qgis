@@ -118,7 +118,7 @@ def test_classe_vide_ne_disqualifie_pas():
 
 # ------------------------------------------------------------------ ancrage
 def test_ancre_corine_prioritaire():
-    """35 des 36 alliances ancrées ont un CORINE, plus fin qu'EUNIS ici."""
+    """42 des 43 alliances ancrées ont un CORINE, plus fin qu'EUNIS ici."""
     assert it.choisir_ancre(["31.8"], ["F3.1"]) == ("CORINE_biotopes", "31.8")
 
 
@@ -129,3 +129,39 @@ def test_ancre_eunis_en_repli():
 def test_aucune_ancre_possible():
     """Cas bloquant : la ligne n'est pas saisissable tant qu'elle n'a pas de code."""
     assert it.choisir_ancre([], []) is None
+
+
+# --------------------------- la prose du tableur n'est pas un code de typologie
+def test_un_mot_ne_passe_pas_pour_un_code_eunis():
+    """EUNIS a de vrais codes d'une lettre : « A » en est un, « A définir » non.
+
+    Sans cette distinction, « Aucune correspondance » ressortait en code EUNIS
+    « A » — parfaitement résoluble dans HABREF, donc invisible à la relecture.
+    """
+    for prose in ("Aucune correspondance", "A définir", "Non concerné"):
+        assert it.extraire_codes(prose, "eunis") == ([], prose)
+    assert it.extraire_codes("A", "eunis") == (["A"], "")
+    assert it.extraire_codes("A3.112", "eunis") == (["A3.112"], "")
+
+
+def test_le_texte_non_codifie_est_rendu_une_seule_fois():
+    """`_resoudre_codes` rend la condition qu'il a déjà calculée.
+
+    Elle était recalculée par un second appel à `extraire_codes` : deux analyses
+    de la même cellule, dont l'une décide si le code Natura 2000 s'applique.
+    """
+    codes, reste = it.extraire_codes("6430 (pp si habitat linéaire)", "n2000")
+    assert codes == ["6430"]
+    assert reste == "(pp si habitat linéaire)"
+
+
+def test_complement_lu_par_numero_de_ligne():
+    """Un complément se rattache à une ligne du tableur, et à elle seule."""
+    import os
+    import tempfile
+    with tempfile.TemporaryDirectory() as dossier:
+        chemin = os.path.join(dossier, "complement.csv")
+        with open(chemin, "w", encoding="utf-8-sig", newline="") as f:
+            f.write("ligne_xlsx;corine;eunis\n251;44.1;F9.1\nabc;1;2\n")
+        assert it.lire_complement(chemin) == {251: {"corine": "44.1", "eunis": "F9.1"}}
+    assert it.lire_complement(None) == {}

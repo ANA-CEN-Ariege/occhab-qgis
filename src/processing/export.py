@@ -14,8 +14,10 @@ décomposées par `payload.parse_server_station` et renvoie des dicts d'attribut
 (+ `_geom` WKT et `_geom_type`), prêts à écrire. Testable hors QGIS.
 """
 try:  # importable dans le paquet (plugin) comme en isolation (tests)
+    from . import referentiels as ref
     from .eval_fields import decode_eval
 except ImportError:  # pragma: no cover - repli hors paquet
+    import referentiels as ref
     from eval_fields import decode_eval
 
 # Ordre des colonnes de sortie (le driver Shapefile tronquera les noms à 10 car.).
@@ -43,13 +45,12 @@ HABITAT_FIELDS = [
     "alliance", "ancre_typo",
     "corine_cite", "eunis_cite", "n2000_cite", "cahiers_cite", "corresp_manu",
 ]
-#: Colonnes de correspondance, par typologie HABREF. Ces codes-là priment sur
-#: ceux que la vue d'export recalcule : ils ont été retenus par un botaniste.
+#: Colonnes de correspondance, DÉRIVÉES du référentiel des typologies : une
+#: cinquième typologie ne se déclare qu'à un endroit. Ces codes-là priment sur
+#: ceux que la vue recalcule — ils ont été retenus par un botaniste.
 _COLONNES_CORRESP = [
-    ("CORINE_biotopes", "corine_cite"),
-    ("EUNIS", "eunis_cite"),
-    ("Habitats_d'intérêt_communautaire", "n2000_cite"),
-    ("Cahiers_d'habitats", "cahiers_cite"),
+    (cle, "%s_cite" % ref.NOM_COURT_TYPOLOGIE[cle])
+    for cle, _libelle in ref.TYPOLOGIES_CORRESPONDANCE
 ]
 FIELDS = STATION_FIELDS + HABITAT_FIELDS
 NUMERIC_FIELDS = {

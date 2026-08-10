@@ -69,7 +69,7 @@ def test_correspondances_lues_par_typologie_habref():
     alliance = _alliance(
         corine_cd_hab="9403", corine_code="22.442",
         eunis_cd_hab="10829", eunis_code="C1.142",
-        hic_cd_hab="2757", hic_code="3140",
+        n2000_cd_hab="2757", n2000_code="3140",
     )
     corresp = alliance.correspondances()
     assert corresp["CORINE_biotopes"]["cd_hab"] == 9403
@@ -173,10 +173,16 @@ def _quatre_variantes():
 
 def test_une_seule_proposition_pour_une_alliance_a_variantes():
     """Quatre lignes de même nom ne font qu'une proposition : elles sont
-    indiscernables à l'écran, et c'est la correspondance qui se choisit ensuite."""
+    indiscernables à l'écran, et c'est la correspondance qui se choisit ensuite.
+
+    Sans NOMBRE dans le libellé : deux des quatre variantes partagent leur code
+    CORINE, la liste n'en proposera donc que trois. Annoncer « 4 » ferait
+    chercher une option qui n'existe pas.
+    """
     trouves = _quatre_variantes().chercher("luzulo")
     assert len(trouves) == 1
-    assert "4 correspondances au choix" in trouves[0].libelle()
+    assert "correspondances à choisir" in trouves[0].libelle()
+    assert "4" not in trouves[0].libelle_correspondances()
 
 
 def test_candidats_dedoublonnes_sur_le_cd_hab():
@@ -236,3 +242,23 @@ def test_candidats_habref_sans_noms_de_typologie():
 def test_candidats_habref_fiche_vide():
     assert co.candidats_habref(None, _NOMS) == {}
     assert co.candidats_habref({}, _NOMS) == {}
+
+
+# ---------------------------------------- une ancre n'attribue rien à personne
+def test_par_determination_ignore_les_ancres():
+    """Déterminer directement un code d'ancre ne détermine pas l'alliance.
+
+    Une ancre est un code CORINE emprunté, partagé avec bien d'autres habitats.
+    Lui rendre l'alliance qui l'emprunte ferait affirmer à l'habitat un syntaxon
+    que personne n'a déterminé — avec ses correspondances, marquées « reprises
+    du catalogue ».
+    """
+    catalogue = co.Catalogue([
+        _alliance(alliance="Salicion pyrenaicae", cd_hab="",
+                  ancre_cd_hab="1204", ancre_typologie="CORINE_biotopes",
+                  ancre_code="22.3", eunis_cd_hab="1672", eunis_code="C3.4"),
+        _alliance(alliance="Nitellion flexilis", cd_hab="16480", typologie="PVF1"),
+    ])
+    assert catalogue.par_cd_hab(1204).nom == "Salicion pyrenaicae"   # affichage
+    assert catalogue.par_determination(1204) is None                 # attribution
+    assert catalogue.par_determination(16480).nom == "Nitellion flexilis"

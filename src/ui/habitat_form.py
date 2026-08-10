@@ -77,7 +77,13 @@ class HabitatForm(QWidget):
         # HABREF connaît, avec leurs libellés. Sans elle, une détermination hors
         # catalogue n'aurait aucune proposition de code CORINE ou EUNIS.
         self._habref_detail = habref_detail
-        self._fiches = {}  # cd_hab -> candidats, pour ne pas réinterroger
+        self._fiches = {}  # cd_hab -> contexte, pour ne pas réinterroger
+        #: Ce qui a servi à garnir les propositions : ("catalogue", n° de ligne)
+        #: ou ("habref", cd_hab). Re-choisir la MÊME chose ne doit rien
+        #: réinitialiser — un arbitrage déjà rendu redeviendrait « repris » sans
+        #: que rien ne le dise. Le n° de ligne plutôt que le cd_hab côté
+        #: catalogue : deux alliances peuvent partager une ancre.
+        self._contexte_propose = None
         self._typologies = typologies or []  # [(cd_typo, nom)]
         self._user_names = user_names or []  # noms proposés pour le déterminateur
         self._default_determiner = default_determiner  # utilisateur connecté par défaut
@@ -351,6 +357,16 @@ class HabitatForm(QWidget):
     def _on_habitat_chosen(self, cd_hab, nom):
         """Une proposition HABREF retenue renseigne le code ET le nom cité."""
         self.spin_cdhab.setValue(int(cd_hab))
+        if self.edit_nom_cite.alliance_choisie_valeur is not None:
+            # La proposition vient du catalogue : `_on_alliance_choisie` suit
+            # immédiatement et fera tout. Repasser ici garnirait les lignes deux
+            # fois, dont une avec le mauvais jeu de candidats.
+            return
+        if ("habref", int(cd_hab)) == self._contexte_propose:
+            # Le MÊME habitat re-sélectionné (une faute de frappe corrigée dans
+            # le nom cité, par exemple) : ne rien réinitialiser. Sinon un
+            # arbitrage déjà rendu redeviendrait « repris », en silence.
+            return
         # Un choix HABREF direct n'est plus une détermination du catalogue : on
         # efface ce qu'un choix précédent aurait posé, sans quoi l'habitat
         # garderait une alliance et des correspondances qui ne le décrivent plus.
@@ -358,7 +374,7 @@ class HabitatForm(QWidget):
         self._proposer_pour(int(cd_hab))
         self._afficher_catalogue()
 
-    def _proposer_pour(self, cd_hab):
+    def _proposer_pour(self, cd_hab, garder_valeurs=False):
         """Garnir les correspondances de CET habitat, quelle qu'en soit l'origine.
 
         Deux sources, dans cet ordre : le catalogue ANA s'il connaît ce `cd_hab`,
@@ -367,35 +383,52 @@ class HabitatForm(QWidget):
         recherche libre. La section est TOUJOURS proposée : la bonne
         correspondance dépend de la station, donc elle doit rester ajustable même
         sur une détermination que personne n'a documentée.
-        """
-        item = self.edit_nom_cite.item_choisi or {}
-        self.corresp_edit.definir_determination(
-            item.get("lb_nom_typo"), item.get("lb_code")
-        )
 
+        `garder_valeurs` sert à la RELECTURE d'un habitat déjà saisi : on regarnit
+        les propositions (sans quoi la mise en garde « n propositions — à
+        choisir » ne réapparaîtrait jamais) mais on ne touche pas à ce qui a été
+        retenu.
+        """
+        self._contexte_propose = ("habref", cd_hab)
         if cd_hab not in self._fiches:
-            self._fiches[cd_hab] = self._chercher_candidats(cd_hab)
-        candidats, source = self._fiches[cd_hab]
-        self.corresp_edit.proposer(candidats, source=source)
+            self._fiches[cd_hab] = self._contexte(cd_hab)
+        candidats, source, propre = self._fiches[cd_hab]
+        self.corresp_edit.definir_determination(*propre)
+        if garder_valeurs:
+            self.corresp_edit.garnir(candidats)
+        else:
+            self.corresp_edit.proposer(candidats, source=source)
         self._set_corresp_visible(True)
 
-    def _chercher_candidats(self, cd_hab):
-        """({typologie: [candidats]}, origine) pour un cd_hab."""
-        alliance = catalogue().par_cd_hab(cd_hab)
+    def _contexte(self, cd_hab):
+        """({typologie: [candidats]}, origine, (typologie propre, code)).
+
+        La typologie « propre » est celle de l'habitat lui-même quand c'est une
+        typologie cible : la ligne correspondante n'a alors rien à demander.
+        Elle est lue dans la fiche HABREF plutôt que dans la proposition retenue,
+        pour valoir aussi à la relecture, où aucune proposition n'a été retenue.
+        """
+        # `par_determination`, jamais `par_cd_hab` : ce dernier indexe aussi les
+        # ANCRES, et un code CORINE d'ancre appartient à bien d'autres habitats
+        # que l'alliance qui l'emprunte. Lui attribuer les correspondances de
+        # cette alliance ferait affirmer un syntaxon que personne n'a déterminé.
+        alliance = catalogue().par_determination(cd_hab)
         if alliance is not None:
             return {
                 cle: alliance.candidats(cle)
                 for cle, _libelle in TYPOLOGIES_CORRESPONDANCE
-            }, "catalogue"
+            }, "catalogue", (None, None)
         if self._habref_detail is None:
-            return {}, "habref"
+            return {}, "habref", (None, None)
         try:
             fiche = self._habref_detail(cd_hab)
         except Exception:  # noqa: BLE001 - la saisie ne doit jamais être bloquée
             # Sans réseau on ne propose rien, et c'est tout : les lignes passent
             # en recherche libre, le botaniste garde la main.
-            return {}, "habref"
-        return candidats_habref(fiche, dict(self._typologies)), "habref"
+            return {}, "habref", (None, None)
+        noms = dict(self._typologies)
+        propre = (noms.get((fiche or {}).get("cd_typo")), (fiche or {}).get("lb_code"))
+        return candidats_habref(fiche, noms), "habref", propre
 
     def _on_alliance_choisie(self, alliance):
         """Une alliance du catalogue ANA : détermination et correspondances.
@@ -404,6 +437,12 @@ class HabitatForm(QWidget):
         remettre les deux clés à zéro — l'ordre est celui des connexions, et il
         compte.
         """
+        if ("catalogue", alliance.ligne) == self._contexte_propose:
+            # La même alliance re-choisie : cf. `_on_habitat_chosen`. Le garde-fou
+            # doit couvrir les DEUX chemins, sans quoi corriger une faute de
+            # frappe après un arbitrage l'annule sur le chemin du catalogue.
+            return
+        self._contexte_propose = ("catalogue", alliance.ligne)
         self._determination = (
             {"nom": alliance.nom, "ancre": alliance.ancre_typologie}
             if alliance.est_ancree else None
@@ -537,6 +576,12 @@ class HabitatForm(QWidget):
         codes = decode_eval(precision)
         self._determination = codes.get("determination")
         self.corresp_edit.set_data(codes.get("corresp"))
+        # Regarnir les propositions SANS toucher aux valeurs retenues : sinon un
+        # habitat enregistré avec une correspondance encore à trancher ne le
+        # dirait plus jamais, et la ligne de la typologie déterminée
+        # redemanderait un code que l'habitat porte déjà.
+        if habitat.get("cd_hab"):
+            self._proposer_pour(int(habitat["cd_hab"]), garder_valeurs=True)
         self._set_corresp_visible(bool(codes.get("corresp")))
         self._afficher_catalogue()
         # `decode_eval` rend des valeurs déjà normalisées (codes hérités convertis).

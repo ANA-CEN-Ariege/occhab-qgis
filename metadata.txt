@@ -3,7 +3,7 @@ name=OccHab GeoNature
 qgisMinimumVersion=3.28
 qgisMaximumVersion=3.99
 description=Offline-first data entry for GeoNature's OccHab module (habitat stations) from QGIS, with local SQLite storage and synchronisation to the GeoNature REST API.
-version=0.7.1
+version=0.8.0
 author=Cédric Roy
 email=it@ariegenature.fr
 license=GPL-3.0-or-later
@@ -32,7 +32,26 @@ icon=resources/icons/occhab.svg
 experimental=True
 deprecated=False
 
-changelog=0.7.1 - Correction : charger un export echouait sur les QGIS
+changelog=0.8.0 - Determiner dans le catalogue des vegetations de l'Ariege,
+    et arbitrer les correspondances entre typologies.
+    Les correspondances calculees depuis HABREF ne sont pas toujours justes, et
+    la bonne depend de la station : une meme alliance ne se traduit pas pareil
+    d'un polygone a l'autre. Le catalogue des botanistes de l'ANA (225
+    alliances) est desormais livre avec l'extension et propose en tete de la
+    recherche d'habitat, marque « Catalogue ANA ».
+    Une section « Correspondances » permet de choisir, pour CHAQUE habitat, son
+    code CORINE, EUNIS, Natura 2000 et Cahiers d'habitats — dans des listes qui
+    affichent les LIBELLES et pas seulement les codes, garnies par le catalogue
+    ou par les correspondances que HABREF publie lui-meme. Rien n'est retenu
+    d'office des qu'il y a plusieurs candidats : la ligne dit « a choisir ».
+    43 alliances du catalogue sont absentes de HABREF. Le code pose est alors
+    une ANCRE, pas la determination : l'extension le dit a l'ecran, l'enregistre
+    et le sort a l'export (colonne « alliance »).
+    Trois provenances sont distinguees — repris du catalogue, propose par
+    HABREF, arbitre a la main — et seule la derniere atteste d'un controle.
+    La vue d'export rend desormais la correspondance SAISIE avant la calculee,
+    avec une colonne de provenance par typologie.
+    0.7.1 - Correction : charger un export echouait sur les QGIS
     anterieurs a la 3.36.
     « QgsJsonUtils has no attribute geometryFromGeoJson » : cette fonction
     n'existe que depuis QGIS 3.36, alors que l'extension annonce prendre en

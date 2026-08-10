@@ -244,6 +244,9 @@ class HabrefLineEdit(QLineEdit):
         nom = data.get("search_name") or ""
         self.nom_choisi = nom
         self.item_choisi = data
+        # Ce choix-ci ne vient PAS du catalogue : oublier l'alliance retenue
+        # précédemment, sinon l'appelant croirait qu'une alliance suit encore.
+        self.alliance_choisie_valeur = None
         self._etat("")
         # Le complèteur va écrire le libellé affiché (préfixé de la typologie) :
         # on repasse derrière lui pour ne garder que le nom HABREF. En cellule,

@@ -84,6 +84,18 @@ TYPOLOGIES_CORRESPONDANCE = [
     ("Habitats_d'intérêt_communautaire", "Natura 2000"),
     ("Cahiers_d'habitats", "Cahiers d'habitats"),
 ]
+#: Nom court de chaque typologie, pour tout ce qui en dérive : colonnes du CSV
+#: du catalogue et colonnes d'export. Une seule table — sinon « hic » et
+#: « n2000 » désignent la même chose à deux endroits, et on cherche la mauvaise.
+#: « n2000 » plutôt que « hic » : c'est le nom que porte déjà la vue d'export, et
+#: celui que les botanistes emploient.
+NOM_COURT_TYPOLOGIE = {
+    "CORINE_biotopes": "corine",
+    "EUNIS": "eunis",
+    "Habitats_d'intérêt_communautaire": "n2000",
+    "Cahiers_d'habitats": "cahiers",
+}
+
 #: D'où vient une correspondance enregistrée. `catalogue` : reprise du catalogue
 #: ANA telle quelle. `habref` : proposée par HABREF, qui publie ses propres
 #: correspondances. `manuel` : le botaniste l'a choisie ou corrigée lui-même —

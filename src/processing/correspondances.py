@@ -50,17 +50,12 @@ try:  # importable dans le paquet (plugin) comme en isolation (tests)
 except ImportError:  # pragma: no cover - repli hors paquet
     import referentiels as ref
 
-#: Préfixe des colonnes du CSV, par typologie HABREF. La liste des typologies
-#: elle-même vit dans `referentiels` : c'est un référentiel fermé, partagé avec
-#: la validation du bloc ANA-EVAL, et il n'en faut qu'une définition.
-_PREFIXE_CSV = {
-    "CORINE_biotopes": "corine",
-    "EUNIS": "eunis",
-    "Habitats_d'intérêt_communautaire": "hic",
-    "Cahiers_d'habitats": "cahiers",
-}
+#: (clé HABREF, libellé, préfixe des colonnes du CSV). Les trois viennent de
+#: `referentiels` : la liste des typologies et leurs noms courts y sont définis
+#: une fois, et tout ce qui en dérive — colonnes du catalogue, colonnes d'export,
+#: validation du bloc ANA-EVAL — s'y raccorde sans table parallèle.
 TYPOLOGIES = tuple(
-    (cle, libelle, _PREFIXE_CSV[cle])
+    (cle, libelle, ref.NOM_COURT_TYPOLOGIE[cle])
     for cle, libelle in ref.TYPOLOGIES_CORRESPONDANCE
 )
 
@@ -174,7 +169,7 @@ class Alliance:
         return candidats
 
     def libelle_correspondances(self):
-        """« CORINE 41.112 · EUNIS G1.62 », ou le nombre de choix s'il y en a plusieurs.
+        """« CORINE 41.112 · EUNIS G1.62 », ou la mention d'un choix à faire.
 
         Le catalogue porte parfois **plusieurs lignes pour une même alliance**,
         qui ne diffèrent que par leurs correspondances (`Luzulo luzuloidis –
@@ -183,7 +178,11 @@ class Alliance:
         lignes de correspondance où les libellés sont lisibles.
         """
         if len(self.variantes) > 1:
-            return "%d correspondances au choix" % len(self.variantes)
+            # Pas de nombre ici : le catalogue peut porter quatre lignes dont
+            # deux partagent leur code CORINE, et les listes de correspondance
+            # en proposeraient alors trois. Annoncer « 4 » puis en montrer 3
+            # ferait chercher une option qui n'existe pas.
+            return "correspondances à choisir"
         return " · ".join(
             "%s %s" % (libelle, self._corresp[cle].get("code") or "?")
             for cle, libelle, _prefixe in TYPOLOGIES if cle in self._corresp
@@ -236,8 +235,25 @@ class Catalogue:
         return len(self.alliances)
 
     def par_cd_hab(self, cd_hab):
-        """Alliance portant ce `cd_hab` (détermination d'abord, ancre ensuite)."""
+        """Alliance portant ce `cd_hab` (détermination d'abord, ancre ensuite).
+
+        Commodité d'AFFICHAGE : l'index contient aussi les ancres, et une ancre
+        est un code CORINE partagé avec d'autres habitats. Ne jamais s'en servir
+        pour attribuer des correspondances — voir `par_determination`.
+        """
         return self._par_cd_hab.get(_entier(cd_hab))
+
+    def par_determination(self, cd_hab):
+        """Alliance dont le `cd_hab` EST la détermination (jamais une ancre).
+
+        Une ancre est un code CORINE emprunté : déterminer directement ce code
+        dans HABREF ne veut pas dire qu'on a déterminé l'alliance qui l'emprunte.
+        Lui attribuer les correspondances de cette alliance ferait affirmer à
+        l'habitat un syntaxon que personne n'a déterminé.
+        """
+        cd_hab = _entier(cd_hab)
+        alliance = self._par_cd_hab.get(cd_hab)
+        return alliance if alliance is not None and alliance.cd_hab == cd_hab else None
 
     def chercher(self, texte, limite=20):
         """Alliances dont le nom ou la classe contient `texte`.
@@ -304,6 +320,20 @@ def candidats_habref(fiche, noms_typologies=None):
             "nom": (habitat.get("lb_hab_fr") or "").strip(),
         })
     return candidats
+
+
+def nom_habref(search_name):
+    """Libellé lisible d'une proposition HABREF (« G1.62 - Hêtraies… » → le nom).
+
+    `search_name` vaut « code - nom nom auteurs » : le nom y figure deux fois,
+    une fois seul puis une fois suivi des auteurs. On coupe au doublon.
+    """
+    texte = (search_name or "").split(" - ", 1)[-1].strip()
+    mots = texte.split()
+    for taille in range(len(mots) // 2, 0, -1):
+        if mots[:taille] == mots[taille:2 * taille]:
+            return " ".join(mots[:taille])
+    return texte
 
 
 _PARTAGE = None

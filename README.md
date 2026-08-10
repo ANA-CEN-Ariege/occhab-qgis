@@ -722,40 +722,36 @@ SELECT
     --   determination l'habitat est DÉJÀ dans cette typologie : son code fait foi
     --   (vide)        rien de saisi : c'est `habref_equivalents` qui a parlé, et
     --                 `habitat_*_rang` dit ce que vaut sa déduction
-    coalesce(
-        corresp_saisi.j -> 'CORINE_biotopes' ->> 'code',
-        CASE WHEN t_hab.lb_nom_typo = 'CORINE_biotopes' THEN hab.lb_code END,
-        corine.codes
-    )                                                           AS habitat_code_corine,
-    coalesce(
-        corresp_saisi.j -> 'CORINE_biotopes' ->> 'nom',
-        CASE WHEN t_hab.lb_nom_typo = 'CORINE_biotopes' THEN hab.lb_hab_fr END,
-        corine.noms
-    )                                                           AS habitat_nom_corine,
-    CASE WHEN corresp_saisi.j -> 'CORINE_biotopes' ->> 'code' IS NOT NULL
-              THEN coalesce(corresp_saisi.j -> 'CORINE_biotopes' ->> 'src', 'saisi')
+    -- `habitat_*_rang` ne vaut QUE pour une valeur calculée : dès qu'une valeur
+    -- saisie l'emporte, il est mis à NULL. Le laisser rendre la distance de saut
+    -- d'un code écarté ferait noter la qualité d'une valeur qui n'est pas celle
+    -- de la colonne d'à côté.
+    CASE WHEN jsonb_exists(corresp_saisi.j, 'CORINE_biotopes') THEN corresp_saisi.j -> 'CORINE_biotopes' ->> 'code'
+         WHEN t_hab.lb_nom_typo = 'CORINE_biotopes' THEN hab.lb_code
+         ELSE corine.codes END                                    AS habitat_code_corine,
+    CASE WHEN jsonb_exists(corresp_saisi.j, 'CORINE_biotopes') THEN corresp_saisi.j -> 'CORINE_biotopes' ->> 'nom'
+         WHEN t_hab.lb_nom_typo = 'CORINE_biotopes' THEN hab.lb_hab_fr
+         ELSE corine.noms END                                     AS habitat_nom_corine,
+    CASE WHEN jsonb_exists(corresp_saisi.j, 'CORINE_biotopes') THEN coalesce(corresp_saisi.j -> 'CORINE_biotopes' ->> 'src', 'saisi')
          WHEN t_hab.lb_nom_typo = 'CORINE_biotopes' THEN 'determination'
          WHEN corine.codes IS NOT NULL THEN 'habref'
     END                                                         AS habitat_corine_source,
-    CASE WHEN t_hab.lb_nom_typo = 'CORINE_biotopes' THEN 0
-         ELSE corine.rang END                                    AS habitat_corine_rang,
-    coalesce(
-        corresp_saisi.j -> 'EUNIS' ->> 'code',
-        CASE WHEN t_hab.lb_nom_typo = 'EUNIS' THEN hab.lb_code END,
-        eunis.codes
-    )                                                           AS habitat_code_eunis,
-    coalesce(
-        corresp_saisi.j -> 'EUNIS' ->> 'nom',
-        CASE WHEN t_hab.lb_nom_typo = 'EUNIS' THEN hab.lb_hab_fr END,
-        eunis.noms
-    )                                                           AS habitat_nom_eunis,
-    CASE WHEN corresp_saisi.j -> 'EUNIS' ->> 'code' IS NOT NULL
-              THEN coalesce(corresp_saisi.j -> 'EUNIS' ->> 'src', 'saisi')
+    CASE WHEN jsonb_exists(corresp_saisi.j, 'CORINE_biotopes') THEN NULL
+         WHEN t_hab.lb_nom_typo = 'CORINE_biotopes' THEN 0
+         ELSE corine.rang END                                     AS habitat_corine_rang,
+    CASE WHEN jsonb_exists(corresp_saisi.j, 'EUNIS') THEN corresp_saisi.j -> 'EUNIS' ->> 'code'
+         WHEN t_hab.lb_nom_typo = 'EUNIS' THEN hab.lb_code
+         ELSE eunis.codes END                                    AS habitat_code_eunis,
+    CASE WHEN jsonb_exists(corresp_saisi.j, 'EUNIS') THEN corresp_saisi.j -> 'EUNIS' ->> 'nom'
+         WHEN t_hab.lb_nom_typo = 'EUNIS' THEN hab.lb_hab_fr
+         ELSE eunis.noms END                                     AS habitat_nom_eunis,
+    CASE WHEN jsonb_exists(corresp_saisi.j, 'EUNIS') THEN coalesce(corresp_saisi.j -> 'EUNIS' ->> 'src', 'saisi')
          WHEN t_hab.lb_nom_typo = 'EUNIS' THEN 'determination'
          WHEN eunis.codes IS NOT NULL THEN 'habref'
     END                                                         AS habitat_eunis_source,
-    CASE WHEN t_hab.lb_nom_typo = 'EUNIS' THEN 0
-         ELSE eunis.rang END                                    AS habitat_eunis_rang,
+    CASE WHEN jsonb_exists(corresp_saisi.j, 'EUNIS') THEN NULL
+         WHEN t_hab.lb_nom_typo = 'EUNIS' THEN 0
+         ELSE eunis.rang END                                     AS habitat_eunis_rang,
     -- Natura 2000. Deux typologies, que « N2000 » confond souvent : le code de
     -- l'annexe I (`6510`) et sa déclinaison en Cahiers d'habitats (`6510-1`).
     -- ⚠ Ce sont des CANDIDATS À ARBITRER, pas une détermination : un code CORINE
@@ -765,40 +761,32 @@ SELECT
     -- deux codes N2000 ? » en fin de section correspondances. À croiser avec
     -- `interet_communautaire` plus bas, qui est la nomenclature SAISIE : un
     -- désaccord entre les deux signale une erreur ou un cas à regarder.
-    coalesce(
-        corresp_saisi.j -> 'Habitats_d''intérêt_communautaire' ->> 'code',
-        CASE WHEN t_hab.lb_nom_typo = 'Habitats_d''intérêt_communautaire' THEN hab.lb_code END,
-        n2000.codes
-    )                                                           AS habitat_code_n2000,
-    coalesce(
-        corresp_saisi.j -> 'Habitats_d''intérêt_communautaire' ->> 'nom',
-        CASE WHEN t_hab.lb_nom_typo = 'Habitats_d''intérêt_communautaire' THEN hab.lb_hab_fr END,
-        n2000.noms
-    )                                                           AS habitat_nom_n2000,
-    CASE WHEN corresp_saisi.j -> 'Habitats_d''intérêt_communautaire' ->> 'code' IS NOT NULL
-              THEN coalesce(corresp_saisi.j -> 'Habitats_d''intérêt_communautaire' ->> 'src', 'saisi')
+    CASE WHEN jsonb_exists(corresp_saisi.j, 'Habitats_d''intérêt_communautaire') THEN corresp_saisi.j -> 'Habitats_d''intérêt_communautaire' ->> 'code'
+         WHEN t_hab.lb_nom_typo = 'Habitats_d''intérêt_communautaire' THEN hab.lb_code
+         ELSE n2000.codes END                                    AS habitat_code_n2000,
+    CASE WHEN jsonb_exists(corresp_saisi.j, 'Habitats_d''intérêt_communautaire') THEN corresp_saisi.j -> 'Habitats_d''intérêt_communautaire' ->> 'nom'
+         WHEN t_hab.lb_nom_typo = 'Habitats_d''intérêt_communautaire' THEN hab.lb_hab_fr
+         ELSE n2000.noms END                                     AS habitat_nom_n2000,
+    CASE WHEN jsonb_exists(corresp_saisi.j, 'Habitats_d''intérêt_communautaire') THEN coalesce(corresp_saisi.j -> 'Habitats_d''intérêt_communautaire' ->> 'src', 'saisi')
          WHEN t_hab.lb_nom_typo = 'Habitats_d''intérêt_communautaire' THEN 'determination'
          WHEN n2000.codes IS NOT NULL THEN 'habref'
     END                                                         AS habitat_n2000_source,
-    CASE WHEN t_hab.lb_nom_typo = 'Habitats_d''intérêt_communautaire' THEN 0
-         ELSE n2000.rang END                                    AS habitat_n2000_rang,
-    coalesce(
-        corresp_saisi.j -> 'Cahiers_d''habitats' ->> 'code',
-        CASE WHEN t_hab.lb_nom_typo = 'Cahiers_d''habitats' THEN hab.lb_code END,
-        cahiers.codes
-    )                                                           AS habitat_code_cahiers,
-    coalesce(
-        corresp_saisi.j -> 'Cahiers_d''habitats' ->> 'nom',
-        CASE WHEN t_hab.lb_nom_typo = 'Cahiers_d''habitats' THEN hab.lb_hab_fr END,
-        cahiers.noms
-    )                                                           AS habitat_nom_cahiers,
-    CASE WHEN corresp_saisi.j -> 'Cahiers_d''habitats' ->> 'code' IS NOT NULL
-              THEN coalesce(corresp_saisi.j -> 'Cahiers_d''habitats' ->> 'src', 'saisi')
+    CASE WHEN jsonb_exists(corresp_saisi.j, 'Habitats_d''intérêt_communautaire') THEN NULL
+         WHEN t_hab.lb_nom_typo = 'Habitats_d''intérêt_communautaire' THEN 0
+         ELSE n2000.rang END                                     AS habitat_n2000_rang,
+    CASE WHEN jsonb_exists(corresp_saisi.j, 'Cahiers_d''habitats') THEN corresp_saisi.j -> 'Cahiers_d''habitats' ->> 'code'
+         WHEN t_hab.lb_nom_typo = 'Cahiers_d''habitats' THEN hab.lb_code
+         ELSE cahiers.codes END                                    AS habitat_code_cahiers,
+    CASE WHEN jsonb_exists(corresp_saisi.j, 'Cahiers_d''habitats') THEN corresp_saisi.j -> 'Cahiers_d''habitats' ->> 'nom'
+         WHEN t_hab.lb_nom_typo = 'Cahiers_d''habitats' THEN hab.lb_hab_fr
+         ELSE cahiers.noms END                                     AS habitat_nom_cahiers,
+    CASE WHEN jsonb_exists(corresp_saisi.j, 'Cahiers_d''habitats') THEN coalesce(corresp_saisi.j -> 'Cahiers_d''habitats' ->> 'src', 'saisi')
          WHEN t_hab.lb_nom_typo = 'Cahiers_d''habitats' THEN 'determination'
          WHEN cahiers.codes IS NOT NULL THEN 'habref'
     END                                                         AS habitat_cahiers_source,
-    CASE WHEN t_hab.lb_nom_typo = 'Cahiers_d''habitats' THEN 0
-         ELSE cahiers.rang END                                    AS habitat_cahiers_rang,
+    CASE WHEN jsonb_exists(corresp_saisi.j, 'Cahiers_d''habitats') THEN NULL
+         WHEN t_hab.lb_nom_typo = 'Cahiers_d''habitats' THEN 0
+         ELSE cahiers.rang END                                     AS habitat_cahiers_rang,
     h.determiner                                                AS determinateur,
     n_tech.label_default                                        AS technique_collecte,
     n_det.label_default                                         AS type_determination,
