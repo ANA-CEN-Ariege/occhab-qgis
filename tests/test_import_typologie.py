@@ -165,3 +165,15 @@ def test_complement_lu_par_numero_de_ligne():
             f.write("ligne_xlsx;corine;eunis\n251;44.1;F9.1\nabc;1;2\n")
         assert it.lire_complement(chemin) == {251: {"corine": "44.1", "eunis": "F9.1"}}
     assert it.lire_complement(None) == {}
+
+
+def test_un_code_eunis_suivi_d_une_lettre_n_est_pas_tronque():
+    """« E1.26a » ne doit pas ressortir en « E1.2 » — code valide, donc invisible.
+
+    Une sentinelle `(?![A-Za-z])` dans le motif faisait rétro-agir le moteur
+    d'expressions régulières DANS les chiffres du dernier niveau. Le contrôle se
+    fait donc après la recherche, et ce qu'on ne sait pas lire part en anomalie
+    plutôt qu'en correspondance devinée.
+    """
+    assert it.extraire_codes("E1.26a", "eunis") == ([], "E1.26a")
+    assert it.extraire_codes("E1.26", "eunis") == (["E1.26"], "")

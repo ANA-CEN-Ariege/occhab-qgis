@@ -98,7 +98,7 @@ class CorrespondancesEdit(QWidget):
         grille.setContentsMargins(12, 0, 0, 0)
         grille.setColumnStretch(1, 1)
 
-        for rang, (cle, libelle) in enumerate(TYPOLOGIES_CORRESPONDANCE):
+        for rang, (cle, libelle, _court) in enumerate(TYPOLOGIES_CORRESPONDANCE):
             grille.addWidget(QLabel(libelle), rang, 0)
 
             # Deux visages pour la même ligne : la liste de choix (le cas
@@ -257,8 +257,8 @@ class CorrespondancesEdit(QWidget):
         `typologie=None` remet toutes les lignes en jeu (détermination dans une
         typologie qui n'est pas une cible : PVF1, PVF2, Cahiers d'unités…).
         """
-        self._propre = (typologie, code) if typologie in dict(
-            TYPOLOGIES_CORRESPONDANCE) else None
+        cibles = {cle for cle, _libelle, _court in TYPOLOGIES_CORRESPONDANCE}
+        self._propre = (typologie, code) if typologie in cibles else None
         if self._propre:
             self._valeurs.pop(self._propre[0], None)
         for cle in self._lignes:
@@ -273,7 +273,7 @@ class CorrespondancesEdit(QWidget):
         """
         self._candidats = {
             cle: list((candidats or {}).get(cle) or [])
-            for cle, _libelle in TYPOLOGIES_CORRESPONDANCE
+            for cle, _libelle, _court in TYPOLOGIES_CORRESPONDANCE
         }
         for cle in self._lignes:
             self._rafraichir(cle)
@@ -292,7 +292,7 @@ class CorrespondancesEdit(QWidget):
         propre = self._propre[0] if self._propre else None
         self._candidats = {
             cle: list((candidats or {}).get(cle) or [])
-            for cle, _libelle in TYPOLOGIES_CORRESPONDANCE
+            for cle, _libelle, _court in TYPOLOGIES_CORRESPONDANCE
         }
         self._valeurs = {
             cle: dict(liste[0], src=source)
@@ -334,7 +334,7 @@ class CorrespondancesEdit(QWidget):
         """Typologies où plusieurs codes sont proposés et où rien n'est retenu."""
         propre = self._propre[0] if self._propre else None
         return [
-            libelle for cle, libelle in TYPOLOGIES_CORRESPONDANCE
+            libelle for cle, libelle, _court in TYPOLOGIES_CORRESPONDANCE
             if cle not in self._valeurs and cle != propre
             and len(self._candidats.get(cle, [])) > 1
         ]
@@ -347,6 +347,6 @@ class CorrespondancesEdit(QWidget):
                 " (%s)" % _MENTION[self._valeurs[cle]["src"]]
                 if self._valeurs[cle].get("src") in _MENTION else "",
             )
-            for cle, libelle in TYPOLOGIES_CORRESPONDANCE if cle in self._valeurs
+            for cle, libelle, _court in TYPOLOGIES_CORRESPONDANCE if cle in self._valeurs
         )
 

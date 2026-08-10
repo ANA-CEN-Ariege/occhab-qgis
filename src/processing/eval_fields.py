@@ -76,7 +76,8 @@ _LIST_FIELDS = {"pee": 3}  # plantes exotiques envahissantes : 3 taxons au plus
 # `src` atteste d'un arbitrage humain (« manuel ») ou d'une reprise du catalogue
 # (« catalogue »). Une valeur hors référentiel est ÉCARTÉE plutôt que corrigée :
 # inventer « manuel » ferait croire à une vérification qui n'a pas eu lieu.
-_TYPOLOGIES_CORRESP = ref.codes(ref.TYPOLOGIES_CORRESPONDANCE)
+_TYPOLOGIES_CORRESP = {cle for cle, _libelle, _court in
+                       ref.TYPOLOGIES_CORRESPONDANCE}
 # Entiers bornés : {clé: (mini, maxi)}. `echelle` = échelle de numérisation,
 # obligatoire au cahier des charges N2000 (ex. 5000 pour du 1:5 000).
 _INT_FIELDS = {"echelle": (1, 1_000_000)}

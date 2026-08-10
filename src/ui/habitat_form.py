@@ -46,6 +46,21 @@ from .no_wheel import proteger_du_defilement
 
 _SEPARATEUR_PEE = " ; "
 
+#: Fiches HABREF déjà obtenues, PARTAGÉES entre formulaires : chaque édition
+#: d'habitat construit un `HabitatForm` neuf, et un cache d'instance ne servirait
+#: donc jamais deux fois. Borné par le nombre de cd_hab distincts d'une session.
+_FICHES = {}
+
+
+def _identite(alliance):
+    """Identité stable d'une alliance, pour le garde-fou anti-réinitialisation.
+
+    Le seul numéro de ligne ne suffit pas : il vaut `None` si la colonne
+    `ligne_xlsx` manque, et deux alliances deviendraient alors « la même » — la
+    seconde poserait son cd_hab en gardant la détermination de la première.
+    """
+    return ("catalogue", alliance.ligne, alliance.nom, alliance.cd_hab_a_poser)
+
 # Repli hors-ligne : id None (pas un faux id) → comblé par le défaut à la synchro.
 PLACEHOLDER_TECHNIQUES = [(None, "— à renseigner en ligne —")]
 
@@ -77,7 +92,6 @@ class HabitatForm(QWidget):
         # HABREF connaît, avec leurs libellés. Sans elle, une détermination hors
         # catalogue n'aurait aucune proposition de code CORINE ou EUNIS.
         self._habref_detail = habref_detail
-        self._fiches = {}  # cd_hab -> contexte, pour ne pas réinterroger
         #: Ce qui a servi à garnir les propositions : ("catalogue", n° de ligne)
         #: ou ("habref", cd_hab). Re-choisir la MÊME chose ne doit rien
         #: réinitialiser — un arbitrage déjà rendu redeviendrait « repris » sans
@@ -389,24 +403,41 @@ class HabitatForm(QWidget):
         choisir » ne réapparaîtrait jamais) mais on ne touche pas à ce qui a été
         retenu.
         """
-        self._contexte_propose = ("habref", cd_hab)
-        if cd_hab not in self._fiches:
-            self._fiches[cd_hab] = self._contexte(cd_hab)
-        candidats, source, propre = self._fiches[cd_hab]
+        contexte = _FICHES.get(cd_hab) or self._contexte(cd_hab)
+        candidats, source, propre, identite, alliance, sur = contexte
+        # Ne mettre en cache qu'un contexte OBTENU : sans réseau, `_contexte`
+        # rend un contexte vide, et le retenir laisserait l'habitat sans
+        # proposition pour le reste de la session, même une fois reconnecté.
+        if sur:
+            _FICHES[cd_hab] = contexte
+        self._contexte_propose = identite
+        # Une ANCRE n'est pas une détermination : le code posé appartient bien à
+        # CORINE, mais l'habitat n'est pas déterminé en CORINE. Verrouiller cette
+        # ligne effacerait la correspondance CORINE enregistrée, et afficherait
+        # « c'est la détermination elle-même » juste sous la mise en garde qui
+        # dit le contraire.
+        if self._determination:
+            propre = (None, None)
         self.corresp_edit.definir_determination(*propre)
         if garder_valeurs:
             self.corresp_edit.garnir(candidats)
         else:
             self.corresp_edit.proposer(candidats, source=source)
         self._set_corresp_visible(True)
+        return alliance
 
     def _contexte(self, cd_hab):
-        """({typologie: [candidats]}, origine, (typologie propre, code)).
+        """(candidats, origine, (typologie propre, code), identité, alliance, sûr).
 
         La typologie « propre » est celle de l'habitat lui-même quand c'est une
         typologie cible : la ligne correspondante n'a alors rien à demander.
         Elle est lue dans la fiche HABREF plutôt que dans la proposition retenue,
         pour valoir aussi à la relecture, où aucune proposition n'a été retenue.
+
+        L'« identité » sert au garde-fou anti-réinitialisation : elle doit
+        désigner la MÊME chose qu'on arrive par le catalogue ou par HABREF,
+        sinon re-choisir une alliance après l'avoir rouverte annule les
+        arbitrages.
         """
         # `par_determination`, jamais `par_cd_hab` : ce dernier indexe aussi les
         # ANCRES, et un code CORINE d'ancre appartient à bien d'autres habitats
@@ -414,21 +445,40 @@ class HabitatForm(QWidget):
         # cette alliance ferait affirmer un syntaxon que personne n'a déterminé.
         alliance = catalogue().par_determination(cd_hab)
         if alliance is not None:
-            return {
+            candidats = {
                 cle: alliance.candidats(cle)
-                for cle, _libelle in TYPOLOGIES_CORRESPONDANCE
-            }, "catalogue", (None, None)
+                for cle, _libelle, _court in TYPOLOGIES_CORRESPONDANCE
+            }
+            return (candidats, "catalogue", (None, None), _identite(alliance),
+                    alliance, True)
+        vide = ({}, "habref", (None, None), ("habref", cd_hab), None, False)
         if self._habref_detail is None:
-            return {}, "habref", (None, None)
+            return vide
         try:
             fiche = self._habref_detail(cd_hab)
         except Exception:  # noqa: BLE001 - la saisie ne doit jamais être bloquée
             # Sans réseau on ne propose rien, et c'est tout : les lignes passent
             # en recherche libre, le botaniste garde la main.
-            return {}, "habref", (None, None)
-        noms = dict(self._typologies)
-        propre = (noms.get((fiche or {}).get("cd_typo")), (fiche or {}).get("lb_code"))
-        return candidats_habref(fiche, noms), "habref", propre
+            return vide
+        return (candidats_habref(fiche, dict(self._typologies)), "habref",
+                self._typologie_propre(fiche), ("habref", cd_hab), None, True)
+
+    def _typologie_propre(self, fiche):
+        """(typologie, code) de l'habitat lui-même, s'il est dans une typologie cible.
+
+        Deux sources, parce qu'aucune n'est garantie : la liste des typologies du
+        serveur peut être vide, et la fiche peut ne pas porter `cd_typo`. Sans
+        repli, la ligne EUNIS d'un habitat EUNIS redemanderait son propre code.
+        """
+        fiche = fiche or {}
+        nom = dict(self._typologies).get(fiche.get("cd_typo"))
+        if not nom:
+            nom = (fiche.get("typo") or {}).get("lb_nom_typo")
+        if not nom:
+            item = self.edit_nom_cite.item_choisi or {}
+            nom = item.get("lb_nom_typo") if item.get("cd_hab") == fiche.get("cd_hab") \
+                else None
+        return (nom, fiche.get("lb_code"))
 
     def _on_alliance_choisie(self, alliance):
         """Une alliance du catalogue ANA : détermination et correspondances.
@@ -437,12 +487,12 @@ class HabitatForm(QWidget):
         remettre les deux clés à zéro — l'ordre est celui des connexions, et il
         compte.
         """
-        if ("catalogue", alliance.ligne) == self._contexte_propose:
+        if _identite(alliance) == self._contexte_propose:
             # La même alliance re-choisie : cf. `_on_habitat_chosen`. Le garde-fou
             # doit couvrir les DEUX chemins, sans quoi corriger une faute de
             # frappe après un arbitrage l'annule sur le chemin du catalogue.
             return
-        self._contexte_propose = ("catalogue", alliance.ligne)
+        self._contexte_propose = _identite(alliance)
         self._determination = (
             {"nom": alliance.nom, "ancre": alliance.ancre_typologie}
             if alliance.est_ancree else None
@@ -454,7 +504,7 @@ class HabitatForm(QWidget):
         # choix HABREF antérieur n'a plus lieu d'être.
         self.corresp_edit.definir_determination(None, None)
         self.corresp_edit.proposer({
-            cle: alliance.candidats(cle) for cle, _lib in TYPOLOGIES_CORRESPONDANCE
+            cle: alliance.candidats(cle) for cle, _lib, _court in TYPOLOGIES_CORRESPONDANCE
         })
         # Une correspondance reprise reste une affirmation sur l'habitat, et un
         # choix en suspens doit se voir : dans les deux cas la section s'ouvre.
@@ -580,10 +630,16 @@ class HabitatForm(QWidget):
         # habitat enregistré avec une correspondance encore à trancher ne le
         # dirait plus jamais, et la ligne de la typologie déterminée
         # redemanderait un code que l'habitat porte déjà.
+        alliance = None
         if habitat.get("cd_hab"):
-            self._proposer_pour(int(habitat["cd_hab"]), garder_valeurs=True)
-        self._set_corresp_visible(bool(codes.get("corresp")))
-        self._afficher_catalogue()
+            alliance = self._proposer_pour(int(habitat["cd_hab"]),
+                                           garder_valeurs=True)
+        # `_afficher_catalogue(alliance)` et non sans argument : la condition
+        # Natura 2000 (« pp si habitat linéaire ») n'est portée par aucune donnée
+        # enregistrée, et c'est elle qui dit si le code s'applique. La relecture
+        # doit la revoir. La section reste ouverte — `_proposer_pour` l'a ouverte,
+        # et la refermer cacherait un choix en suspens.
+        self._afficher_catalogue(alliance)
         # `decode_eval` rend des valeurs déjà normalisées (codes hérités convertis).
         select_combo_data(self.combo_enjeu, codes.get("enjeu"))
         select_combo_data(self.combo_etat, codes.get("etat_conservation"))

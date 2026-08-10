@@ -13,6 +13,13 @@ n'est donc importé que lorsque la synchronisation est réellement utilisée
 import requests
 
 
+#: Limite de temps de toute requête, en secondes. Sans elle, une connexion
+#: suspendue (portail captif, serveur qui n'achève pas sa réponse) fige QGIS
+#: indéfiniment : `requests` attend sans fin par défaut, et ces appels ont lieu
+#: dans le fil de l'interface.
+DELAI_MAX = 30
+
+
 class GeoNatureAPIError(Exception):
     """Erreur renvoyée par l'API GeoNature.
 
@@ -98,7 +105,8 @@ class GeoNatureAPIClient:
         url = "%s/%s" % (self.api_url, endpoint.lstrip("/"))
         try:
             response = self.session.request(
-                method, url, json=data, params=params, verify=self.verify_ssl
+                method, url, json=data, params=params, verify=self.verify_ssl,
+                timeout=DELAI_MAX,
             )
         except requests.exceptions.RequestException as exc:
             raise GeoNatureAPIError("Connexion impossible : %s" % exc)

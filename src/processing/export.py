@@ -49,8 +49,8 @@ HABITAT_FIELDS = [
 #: cinquième typologie ne se déclare qu'à un endroit. Ces codes-là priment sur
 #: ceux que la vue recalcule — ils ont été retenus par un botaniste.
 _COLONNES_CORRESP = [
-    (cle, "%s_cite" % ref.NOM_COURT_TYPOLOGIE[cle])
-    for cle, _libelle in ref.TYPOLOGIES_CORRESPONDANCE
+    (cle, "%s_cite" % court)
+    for cle, _libelle, court in ref.TYPOLOGIES_CORRESPONDANCE
 ]
 FIELDS = STATION_FIELDS + HABITAT_FIELDS
 NUMERIC_FIELDS = {

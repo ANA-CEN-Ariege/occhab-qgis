@@ -78,23 +78,18 @@ ENJEUX_SANS_COULEUR = ("aucun", "inconnu")
 # La clé est celle de HABREF (`lb_nom_typo`), pas un code à nous : la donnée
 # saisie se raccorde ainsi sans traduction à la vue d'export, qui interroge
 # HABREF avec ces mêmes libellés.
+# (clé HABREF, libellé affiché, nom court). Le nom court sert à tout ce qui en
+# dérive : colonnes du CSV du catalogue et colonnes d'export. Les TROIS sont dans
+# la même table — une seconde table indexée par la clé se paierait au premier
+# ajout par un KeyError au chargement de l'extension, et par deux noms (« hic »,
+# « n2000 ») pour une même chose. « n2000 » plutôt que « hic » : c'est le nom que
+# porte déjà la vue d'export, et celui que les botanistes emploient.
 TYPOLOGIES_CORRESPONDANCE = [
-    ("CORINE_biotopes", "CORINE biotopes"),
-    ("EUNIS", "EUNIS"),
-    ("Habitats_d'intérêt_communautaire", "Natura 2000"),
-    ("Cahiers_d'habitats", "Cahiers d'habitats"),
+    ("CORINE_biotopes", "CORINE biotopes", "corine"),
+    ("EUNIS", "EUNIS", "eunis"),
+    ("Habitats_d'intérêt_communautaire", "Natura 2000", "n2000"),
+    ("Cahiers_d'habitats", "Cahiers d'habitats", "cahiers"),
 ]
-#: Nom court de chaque typologie, pour tout ce qui en dérive : colonnes du CSV
-#: du catalogue et colonnes d'export. Une seule table — sinon « hic » et
-#: « n2000 » désignent la même chose à deux endroits, et on cherche la mauvaise.
-#: « n2000 » plutôt que « hic » : c'est le nom que porte déjà la vue d'export, et
-#: celui que les botanistes emploient.
-NOM_COURT_TYPOLOGIE = {
-    "CORINE_biotopes": "corine",
-    "EUNIS": "eunis",
-    "Habitats_d'intérêt_communautaire": "n2000",
-    "Cahiers_d'habitats": "cahiers",
-}
 
 #: D'où vient une correspondance enregistrée. `catalogue` : reprise du catalogue
 #: ANA telle quelle. `habref` : proposée par HABREF, qui publie ses propres

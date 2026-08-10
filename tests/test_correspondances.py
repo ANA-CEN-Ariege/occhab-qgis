@@ -117,11 +117,13 @@ def test_recherche_vide_ne_rend_rien():
     assert _catalogue().chercher("") == []
 
 
-def test_par_cd_hab_trouve_determination_et_ancre():
+def test_par_determination_ne_trouve_que_les_determinations():
     catalogue = _catalogue()
-    assert catalogue.par_cd_hab(16480).nom == "Nitellion flexilis"
-    assert catalogue.par_cd_hab("4289").nom == "Hyperico montani-Quercion petraeae"
-    assert catalogue.par_cd_hab(999999) is None
+    assert catalogue.par_determination(16480).nom == "Nitellion flexilis"
+    assert catalogue.par_determination("16480").nom == "Nitellion flexilis"
+    # 4289 est l'ANCRE de « Hyperico montani-Quercion petraeae » : pas elle.
+    assert catalogue.par_determination(4289) is None
+    assert catalogue.par_determination(999999) is None
 
 
 # -------------------------------------------------------------- chargement
@@ -259,6 +261,5 @@ def test_par_determination_ignore_les_ancres():
                   ancre_code="22.3", eunis_cd_hab="1672", eunis_code="C3.4"),
         _alliance(alliance="Nitellion flexilis", cd_hab="16480", typologie="PVF1"),
     ])
-    assert catalogue.par_cd_hab(1204).nom == "Salicion pyrenaicae"   # affichage
-    assert catalogue.par_determination(1204) is None                 # attribution
+    assert catalogue.par_determination(1204) is None
     assert catalogue.par_determination(16480).nom == "Nitellion flexilis"

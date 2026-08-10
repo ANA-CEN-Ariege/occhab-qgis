@@ -63,6 +63,14 @@ import unicodedata
 import zipfile
 from xml.etree import ElementTree as ET
 
+# Le découpage du `search_name` de HABREF est déjà écrit — et testé — dans le
+# module pur du plugin. Le redéfinir ici ferait diverger le libellé du
+# dictionnaire importé de celui affiché à la saisie. Le module ne dépend que de
+# la bibliothèque standard, il s'importe donc depuis un script autonome.
+sys.path.insert(0, os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src", "processing"))
+from correspondances import nom_habref  # noqa: E402
+
 NS = "{http://schemas.openxmlformats.org/spreadsheetml/2006/main}"
 
 #: Colonnes de la feuille « Classif », par lettre. Le fichier a des en-têtes
@@ -92,11 +100,7 @@ TYPOS_ALLIANCE = ("PVF1", "PVF2")
 #: est du texte non codifiable (« pp », « uniquement si… »), conservé à part.
 MOTIF_CODE = {
     "corine": re.compile(r"\d+(?:\.\d+)*[A-Za-z]?"),
-    # EUNIS a de vrais codes d'une seule lettre (A = habitats marins…), mais
-    # « Aucune correspondance » commence aussi par une majuscule : sans la
-    # sentinelle, la prose du tableur ressortirait en correspondance EUNIS
-    # parfaitement résoluble, donc invisible.
-    "eunis": re.compile(r"[A-Z]\d*(?:\.\d+)*(?![A-Za-z])"),
+    "eunis": re.compile(r"[A-Z]\d*(?:\.\d+)*"),
     "n2000": re.compile(r"\d{4}(?:-\d+)?"),
 }
 #: Cellule vide au sens du catalogue (pas de correspondance connue).
@@ -160,11 +164,18 @@ def extraire_codes(cellule, typologie):
             continue
         trouve = MOTIF_CODE[typologie].match(morceau)
         suite = morceau[trouve.end():].strip(" .") if trouve else ""
-        # Un code EUNIS d'une seule lettre suivi de texte est presque sûrement une
-        # phrase (« A définir ») et non le niveau 1 de la typologie : la lettre
-        # seule existe, mais jamais accompagnée d'un commentaire.
-        prose = trouve is not None and typologie == "eunis" and \
-            len(trouve.group(0)) == 1 and bool(suite)
+        # Un code EUNIS suivi d'une LETTRE n'est pas un code : c'est de la prose
+        # (« Aucune correspondance » → « A » + « ucune… ») ou un code qu'on ne
+        # sait pas lire (« E1.26a »). Le contrôle se fait APRÈS coup et non par
+        # une sentinelle dans le motif : `(?![A-Za-z])` ferait rétro-agir le
+        # moteur dans les chiffres et rendrait « E1.2 » pour « E1.26a » — une
+        # correspondance fausse, résoluble, donc invisible. Mieux vaut la
+        # signaler en anomalie que la deviner.
+        colle = trouve is not None and morceau[trouve.end():trouve.end() + 1].isalpha()
+        # Et une lettre SEULE suivie de texte (« A définir ») : la lettre est un
+        # vrai niveau 1 EUNIS, mais jamais accompagnée d'un commentaire.
+        seule = trouve is not None and len(trouve.group(0)) == 1 and bool(suite)
+        prose = trouve is not None and typologie == "eunis" and (colle or seule)
         if trouve is not None and not prose:
             codes.append(trouve.group(0))
             if suite:
@@ -218,22 +229,6 @@ def choisir_ancre(codes_corine, codes_eunis):
     if codes_eunis:
         return "EUNIS", codes_eunis[0]
     return None
-
-
-def nom_habref(search_name):
-    """Libellé lisible depuis le `search_name` de l'autocomplétion.
-
-    HABREF renvoie « code - nom nom auteurs » : le nom y figure deux fois, une
-    fois seul puis une fois suivi des auteurs. On coupe au doublon.
-    """
-    if not search_name:
-        return ""
-    partie = search_name.split(" - ", 1)[-1].strip()
-    mots = partie.split()
-    for taille in range(len(mots) // 2, 0, -1):
-        if mots[:taille] == mots[taille:2 * taille]:
-            return " ".join(mots[:taille])
-    return partie
 
 
 # ============================================================ lecture du xlsx
@@ -369,7 +364,13 @@ class Habref:
                     timeout=30,
                 )
                 if reponse.status_code == 200:
-                    resultat = reponse.json() if reponse.text else []
+                    # `.json()` lève sur une page HTML (portail captif, erreur de
+                    # reverse-proxy) : sans ce garde, l'exception traverserait la
+                    # boucle de reprise et interromprait tout l'import.
+                    try:
+                        resultat = reponse.json() if reponse.text else []
+                    except ValueError:
+                        resultat = None
                     # Un 200 qui ne rend pas une liste (page d'erreur, objet
                     # d'erreur) n'est PAS un « aucun résultat » : le mettre en
                     # cache figerait pour toujours une panne passagère en

@@ -54,10 +54,7 @@ except ImportError:  # pragma: no cover - repli hors paquet
 #: `referentiels` : la liste des typologies et leurs noms courts y sont définis
 #: une fois, et tout ce qui en dérive — colonnes du catalogue, colonnes d'export,
 #: validation du bloc ANA-EVAL — s'y raccorde sans table parallèle.
-TYPOLOGIES = tuple(
-    (cle, libelle, ref.NOM_COURT_TYPOLOGIE[cle])
-    for cle, libelle in ref.TYPOLOGIES_CORRESPONDANCE
-)
+TYPOLOGIES = tuple(ref.TYPOLOGIES_CORRESPONDANCE)
 
 
 def normaliser(texte):
@@ -219,41 +216,22 @@ class Catalogue:
             for alliance in groupe:
                 alliance.variantes = groupe
         self._groupes = groupes
-        self._par_cd_hab = {}
+        # Index des seules DÉTERMINATIONS. Les ancres n'y entrent pas : une ancre
+        # est un code CORINE emprunté, partagé avec bien d'autres habitats, et
+        # deux alliances peuvent emprunter le même. Retrouver « une » alliance
+        # depuis une ancre ferait attribuer à l'habitat un syntaxon que personne
+        # n'a déterminé, avec ses correspondances.
+        self._par_determination = {}
         for alliance in self.alliances:
-            # Une même ancre sert parfois deux alliances (deux syntaxons que
-            # CORINE ne distingue pas) : on garde la PREMIÈRE et on ne prétend
-            # pas trancher. Retrouver une alliance depuis un cd_hab d'ancre est
-            # une commodité d'affichage, jamais une détermination.
             if alliance.cd_hab is not None:
-                self._par_cd_hab.setdefault(alliance.cd_hab, alliance)
-        for alliance in self.alliances:
-            if alliance.est_ancree:
-                self._par_cd_hab.setdefault(alliance.ancre_cd_hab, alliance)
+                self._par_determination.setdefault(alliance.cd_hab, alliance)
 
     def __len__(self):
         return len(self.alliances)
 
-    def par_cd_hab(self, cd_hab):
-        """Alliance portant ce `cd_hab` (détermination d'abord, ancre ensuite).
-
-        Commodité d'AFFICHAGE : l'index contient aussi les ancres, et une ancre
-        est un code CORINE partagé avec d'autres habitats. Ne jamais s'en servir
-        pour attribuer des correspondances — voir `par_determination`.
-        """
-        return self._par_cd_hab.get(_entier(cd_hab))
-
     def par_determination(self, cd_hab):
-        """Alliance dont le `cd_hab` EST la détermination (jamais une ancre).
-
-        Une ancre est un code CORINE emprunté : déterminer directement ce code
-        dans HABREF ne veut pas dire qu'on a déterminé l'alliance qui l'emprunte.
-        Lui attribuer les correspondances de cette alliance ferait affirmer à
-        l'habitat un syntaxon que personne n'a déterminé.
-        """
-        cd_hab = _entier(cd_hab)
-        alliance = self._par_cd_hab.get(cd_hab)
-        return alliance if alliance is not None and alliance.cd_hab == cd_hab else None
+        """Alliance dont le `cd_hab` EST la détermination (jamais une ancre)."""
+        return self._par_determination.get(_entier(cd_hab))
 
     def chercher(self, texte, limite=20):
         """Alliances dont le nom ou la classe contient `texte`.
@@ -303,7 +281,7 @@ def candidats_habref(fiche, noms_typologies=None):
     typologie devinée.
     """
     noms = noms_typologies or {}
-    retenues = {cle for cle, _libelle in ref.TYPOLOGIES_CORRESPONDANCE}
+    retenues = {cle for cle, _libelle, _court in ref.TYPOLOGIES_CORRESPONDANCE}
     candidats = {}
     for correspondance in (fiche or {}).get("correspondances") or []:
         habitat = correspondance.get("habref") or {}
