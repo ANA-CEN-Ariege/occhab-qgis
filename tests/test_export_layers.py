@@ -104,3 +104,53 @@ def test_un_nouvel_export_se_place_au_dessus_des_precedents():
             ["Troisième", "Deuxième", "Premier"]
     finally:
         gestionnaire.cleanup()
+
+
+# --- Carte des enjeux --------------------------------------------------------
+def test_chaque_niveau_d_enjeu_a_sa_regle_et_une_seule():
+    """Une station doit tomber dans exactement un poste de légende.
+
+    Deux règles qui l'attrapent la dessineraient deux fois ; aucune la laisserait
+    invisible, sans que rien ne le signale — ni l'un ni l'autre ne se voit sur
+    une carte, seulement sur les surfaces.
+    """
+    from qgis.core import QgsExpression, QgsExpressionContext, QgsExpressionContextScope
+
+    from occhab.src.processing import referentiels as ref
+
+    filtres = [el._filtre_enjeu(code) for code, _l, _c in ref.COULEURS_ENJEU]
+    # Tous les niveaux du référentiel, plus l'absence de valeur.
+    valeurs = [code for code, _libelle in ref.NIVEAUX_ENJEU] + [None, "", "autre"]
+    for valeur in valeurs:
+        contexte = QgsExpressionContext()
+        portee = QgsExpressionContextScope()
+        portee.setVariable("x", 0)
+        contexte.appendScope(portee)
+        attrapee = 0
+        for filtre in filtres:
+            expression = QgsExpression(
+                filtre.replace('"%s"' % el.hs.CHAMP_DOMINANT, "1")
+                      .replace('"%s"' % el.CHAMP_ENJEU,
+                               "NULL" if valeur is None else "'%s'" % valeur)
+            )
+            assert not expression.hasParserError(), expression.parserErrorString()
+            if expression.evaluate(contexte):
+                attrapee += 1
+        assert attrapee == 1, "%r attrapée %d fois" % (valeur, attrapee)
+
+
+def test_seul_l_habitat_dominant_peint_le_fond():
+    """Sinon les lignes d'une mosaïque repeignent trois fois le même polygone."""
+    from occhab.src.processing import referentiels as ref
+
+    for code, _libelle, _couleur in ref.COULEURS_ENJEU:
+        assert '"%s" = 1' % el.hs.CHAMP_DOMINANT in el._filtre_enjeu(code)
+
+
+def test_la_palette_des_enjeux_est_complete_et_ordonnee():
+    from occhab.src.processing import referentiels as ref
+
+    codes = [code for code, _l, _c in ref.COULEURS_ENJEU]
+    assert codes == ["tres_fort", "fort", "moyen", "faible", None]
+    for _code, libelle, couleur in ref.COULEURS_ENJEU:
+        assert libelle and couleur.startswith("#") and len(couleur) == 7

@@ -43,12 +43,12 @@ class Grille:
         """`stations` : dicts tels que rendus par `OccHabDatabase.get_stations_full`."""
         self.stations = [dict(s) for s in stations or []]
         self.lignes = []
-        for numero, station in enumerate(self.stations, start=1):
-            # Numéro de POLYGONE, pas de ligne : toutes les lignes d'une même
-            # station le partagent, c'est là tout son intérêt. Il vaut pour la
-            # session — rien ne le persiste, et `lecture_seule` interdit de
-            # l'éditer, donc il ne peut pas partir en base ni vers GeoNature.
-            station[ch.POLYGONE] = numero
+        self._rangs = {}
+        for numero, station in enumerate(self.stations):
+            # Rang de la station dans la grille, gardé À PART et non écrit dans
+            # la station : il ne sert qu'à teinter une station sur deux, et une
+            # clé de plus dans le dict finirait par se retrouver quelque part.
+            self._rangs[id(station)] = numero
             habitats = [dict(h) for h in station.get("habitats") or []]
             station["habitats"] = habitats
             if habitats:
@@ -102,6 +102,15 @@ class Grille:
         ch.ecrire(objet, champ, valeur)
         self._modifies.add(self._cle(champ, objet))
         return True
+
+    def rang_station(self, ligne):
+        """Rang de la station de cette ligne dans la grille (0, 1, 2…).
+
+        Sert à alterner le fond d'une station à l'autre : trois habitats d'une
+        mosaïque partagent le même rang, donc la même teinte, et se lisent d'un
+        coup d'œil comme un seul polygone.
+        """
+        return self._rangs.get(id(ligne.station), 0)
 
     def lignes_de(self, ligne):
         """Indices des lignes partageant la station de `ligne` (elle comprise)."""

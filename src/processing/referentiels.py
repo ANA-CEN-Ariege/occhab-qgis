@@ -50,6 +50,24 @@ NIVEAUX_ENJEU = [
 ]
 ALIAS_ENJEU = {"majeur": "tres_fort"}  # référentiel ANA antérieur
 
+#: Carte des enjeux : couleur et libellé de légende par niveau, dans l'ordre de
+#: lecture d'une planche — du plus fort au plus faible, puis l'absence d'enjeu.
+#: Reprend la charte des cartes « Flore Ariège » de l'ANA, libellés compris.
+#:
+#: `None` en tête de la dernière entrée : elle ramasse aussi bien « aucun » que
+#: « inconnu » et l'absence de valeur. Les distinguer donnerait trois postes de
+#: légende là où la carte n'en montre qu'un, et le gris ne prétend rien de plus
+#: que « rien à signaler ici ».
+COULEURS_ENJEU = [
+    ("tres_fort", "Enjeux très forts", "#9c5bd1"),
+    ("fort", "Enjeux forts", "#ea6fc4"),
+    ("moyen", "Enjeux moyens", "#f2a65e"),
+    ("faible", "Enjeux faibles", "#f3ec5b"),
+    (None, "Aucun enjeux", "#d4d4d4"),
+]
+#: Niveaux que la dernière entrée ramasse, en plus des valeurs absentes.
+ENJEUX_SANS_COULEUR = ("aucun", "inconnu")
+
 # --- ANA : zone humide (hors cahier des charges N2000). ---------------------
 # Le terrain distingue trois cas, pas deux : une station manifestement humide,
 # une qui ne l'est pas, et celle dont on ne peut trancher sans y retourner — un

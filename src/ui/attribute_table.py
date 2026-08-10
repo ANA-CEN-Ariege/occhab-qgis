@@ -111,12 +111,17 @@ class Contexte:
     Rassemblés ici pour que le modèle n'ait pas à connaître le dock.
     """
 
-    def __init__(self, nomenclatures=None, datasets=None, habref_search=None,
+    def __init__(self, nomenclatures=None, datasets=None, habref_labels=None,
+                 habref_search=None,
                  typologies=None, observers=None, cd_typo=None):
         # {clé de champ: [(id_nomenclature, libellé)]}
         self.nomenclatures = nomenclatures or {}
         self.datasets = datasets or []  # [(id_dataset, nom)]
         self.habref_search = habref_search  # callable(texte, cd_typo) ou None
+        # {cd_hab: libellé HABREF}. Rempli par le dock, qui le garde d'une
+        # session à l'autre : interroger le référentiel pour chaque ligne à
+        # chaque ouverture de la table serait insupportable.
+        self.habref_labels = dict(habref_labels or {})
         self.typologies = typologies or []  # [(cd_typo, nom)]
         self.cd_typo = cd_typo  # typologie de la dernière saisie, présélectionnée
         self.observers = observers or []  # [(id_role, nom)]
@@ -124,6 +129,20 @@ class Contexte:
         self._nomenclature = {
             cle: dict(items) for cle, items in self.nomenclatures.items()
         }
+
+    def poser_libelles_habref(self, stations):
+        """Écrire le libellé HABREF sur chaque habitat, d'après le cache.
+
+        Sur les dicts d'habitat eux-mêmes plutôt que par un cas particulier dans
+        le modèle : la valeur circule alors comme toutes les autres — affichage,
+        infobulle, copie vers un tableur, tri.
+        """
+        for station in stations or []:
+            for habitat in station.get("habitats") or []:
+                cd_hab = habitat.get("cd_hab")
+                habitat[ch.HABREF] = self.habref_labels.get(cd_hab) or \
+                    self.habref_labels.get(str(cd_hab)) or ""
+        return stations
 
     def items(self, champ):
         """Couples (valeur, libellé) proposables pour un champ à liste."""
@@ -207,7 +226,7 @@ class GrilleModel(QAbstractTableModel):
         champ = self.colonnes[index.column()]
 
         if role == Qt.ItemDataRole.DisplayRole:
-            if champ.cle == ch.POLYGONE:
+            if champ.cle == ch.ID_STATION:
                 # Rendu en NOMBRE et non en texte : la table se trie alors par
                 # ordre numérique, où « 9 » précède « 10 ».
                 return self.grille.valeur(ligne, champ)
@@ -217,35 +236,50 @@ class GrilleModel(QAbstractTableModel):
         if role == Qt.ItemDataRole.BackgroundRole:
             if self.grille.modifie(ligne, champ):
                 return _TEINTE_MODIFIE
-            bande = int(ligne.station.get(ch.POLYGONE) or 0) % 2
+            bande = self.grille.rang_station(ligne) % 2
             teintes = (_TEINTE_STATION if champ.niveau == ch.STATION
                        else _TEINTE_LIGNE)
             return teintes[bande]
         if role == Qt.ItemDataRole.ToolTipRole:
-            if champ.cle == ch.POLYGONE:
-                return self._infobulle_polygone(index.row())
+            if champ.cle == ch.ID_STATION:
+                return self._infobulle_station(index.row())
+            if champ.cle == ch.HABREF and not self.grille.valeur(ligne, champ):
+                return self._infobulle_habref(ligne)
             if champ.niveau == ch.STATION and len(self.grille.lignes_de(ligne)) > 1:
                 return ("Champ de la station : le modifier ici le modifie pour "
                         "ses %d habitats." % len(self.grille.lignes_de(ligne)))
             return self.contexte.libelle(champ, self.grille.valeur(ligne, champ)) or None
         return None
 
-    def _infobulle_polygone(self, row):
-        """Situer la ligne dans sa mosaïque, ce qu'un numéro seul ne dit pas.
+    def _infobulle_habref(self, ligne):
+        """Dire pourquoi la case est vide : sans cela, on croit à une donnée perdue."""
+        if ligne.habitat is None:
+            return None
+        if not ligne.habitat.get("cd_hab"):
+            return "Aucun cd_hab : rien à demander au référentiel."
+        return ("Libellé pas encore obtenu du référentiel — hors ligne au moment "
+                "de l'ouverture, ou code absent de HABREF. Il sera redemandé à "
+                "la prochaine ouverture de cette table ; le journal du plugin "
+                "(Base locale… ▸ Ouvrir le dossier) en donne la raison exacte.")
+
+    def _infobulle_station(self, row):
+        """Situer la ligne dans sa mosaïque, ce qu'un identifiant seul ne dit pas.
 
         Sur la ligne (`row`) et non sur la `Ligne` : deux habitats aux mêmes
         valeurs sont des tuples ÉGAUX, donc introuvables l'un sans l'autre.
         """
         ligne = self.grille.lignes[row]
         soeurs = self.grille.lignes_de(ligne)
-        numero = ligne.station.get(ch.POLYGONE)
+        identifiant = ligne.station.get(ch.ID_STATION)
+        tete = ("Station %s" % identifiant if identifiant
+                else "Station pas encore synchronisée : elle n'a pas encore "
+                     "d'identifiant GeoNature")
         if ligne.habitat is None:
-            return "Polygone %s — aucun habitat saisi" % numero
-        rang = soeurs.index(row) + 1
+            return "%s — aucun habitat saisi" % tete
         if len(soeurs) == 1:
-            return "Polygone %s — un seul habitat" % numero
-        return ("Polygone %s — habitat %d sur %d ; les %d lignes décrivent la "
-                "même mosaïque." % (numero, rang, len(soeurs), len(soeurs)))
+            return "%s — un seul habitat" % tete
+        return ("%s — habitat %d sur %d ; les %d lignes décrivent la même "
+                "mosaïque." % (tete, soeurs.index(row) + 1, len(soeurs), len(soeurs)))
 
     def flags(self, index):
         if not index.isValid():
@@ -768,7 +802,7 @@ class AttributeTableDialog(QDialog):
         self.logger = logger
         self.contexte = contexte
         self.layers = layers  # StationLayerManager : sélection carte ↔ table
-        self.grille = Grille(stations)
+        self.grille = Grille(self.contexte.poser_libelles_habref(stations))
         self.jeu_courant = "Essentiel"
         self._build()
         self._appliquer_jeu_colonnes()
@@ -871,7 +905,7 @@ class AttributeTableDialog(QDialog):
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self.table.setSortingEnabled(True)
-        # Pas d'alternance ligne à ligne : c'est le POLYGONE qui est teinté un
+        # Pas d'alternance ligne à ligne : c'est la STATION qui est teintée une
         # sur deux (cf. `_TEINTE_LIGNE`), sans quoi les deux rythmes se
         # contrarient et une mosaïque de trois habitats paraît en compter six.
         self.table.setAlternatingRowColors(False)
@@ -1122,7 +1156,7 @@ class AttributeTableDialog(QDialog):
         """
         if self.grille.a_des_modifications():
             return False
-        self.grille = Grille(stations)
+        self.grille = Grille(self.contexte.poser_libelles_habref(stations))
         self._appliquer_jeu_colonnes()  # reconstruit modèle, proxy et connexions
         return True
 

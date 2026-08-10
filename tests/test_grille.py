@@ -360,18 +360,26 @@ def test_valider_puis_retrograder_laisse_le_statut_valide():
     assert grille.stations[0]["validation_status"] == "valide"
 
 
-# --- Numéro de polygone ------------------------------------------------------
-def test_numero_de_polygone_partage_par_la_mosaique():
-    """Les lignes d'une même station portent le MÊME numéro : c'est tout l'objet."""
+# --- Identité des stations ---------------------------------------------------
+def test_rang_partage_par_les_lignes_d_une_mosaique():
+    """Le fond alterné suit la STATION : ses habitats partagent donc son rang."""
     grille = gr.Grille(_stations())
-    numeros = [ligne.station[ch.POLYGONE] for ligne in grille.lignes]
-    assert numeros == [1, 1, 2]  # deux habitats pour la station 1, aucun pour la 2
+    assert [grille.rang_station(l) for l in grille.lignes] == [0, 0, 1]
 
 
-def test_numero_de_polygone_non_editable():
-    """Ni modifiable, ni enregistrable : il ne vit que le temps de la session."""
+def test_le_rang_ne_s_ecrit_pas_dans_la_station():
+    """Une clé de plus dans le dict finirait par se retrouver quelque part."""
+    stations = _stations()
+    gr.Grille(stations)
+    assert "rang" not in stations[0]
+    assert "polygone" not in stations[0]
+
+
+def test_id_station_non_editable():
+    """C'est GeoNature qui l'attribue : la table ne fait que le montrer."""
     grille = gr.Grille(_stations())
-    champ = ch.par_cle(ch.STATION, ch.POLYGONE)
+    champ = ch.par_cle(ch.STATION, ch.ID_STATION)
+    assert champ is not None
     assert not grille.editable(grille.lignes[0], champ)
     assert not grille.definir(grille.lignes[0], champ, 99)
     assert grille.colonnes_modifiees(grille.stations[0]) == set()

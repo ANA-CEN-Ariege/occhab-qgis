@@ -26,6 +26,7 @@ from qgis.core import (
     QgsProperty,
     QgsFillSymbol,
     QgsGeometryGeneratorSymbolLayer,
+    QgsMarkerSymbol,
     QgsProject,
     QgsRuleBasedRenderer,
     QgsSymbol,
@@ -35,6 +36,8 @@ from qgis.core import (
 )
 
 from ..processing import geojson_wkt as gw
+from ..processing import pee
+from ..processing import referentiels as ref
 from ..processing import habitat_style as hs
 
 GROUP_NAME = "OccHab (exports)"
@@ -50,6 +53,10 @@ if _MILLIMETRES is None:
 _SYMBOLE_SURFACIQUE = getattr(getattr(Qgis, "SymbolType", None), "Fill", None)
 if _SYMBOLE_SURFACIQUE is None:
     _SYMBOLE_SURFACIQUE = QgsSymbol.Fill
+_SYMBOLE_PONCTUEL = getattr(getattr(Qgis, "SymbolType", None), "Marker", None)
+if _SYMBOLE_PONCTUEL is None:
+    _SYMBOLE_PONCTUEL = QgsSymbol.Marker
+
 
 
 def nom_de_fichier(libelle):
@@ -74,6 +81,8 @@ def _litteral(valeur):
 #: comparées sur les mêmes données.
 MODE_BANDES = "bandes"
 MODE_DAMIER = "damier"
+MODE_ENJEUX = "enjeux"
+MODE_PEE = "pee"
 
 MODES = (
     (MODE_BANDES, "Bandes proportionnelles",
@@ -82,6 +91,12 @@ MODES = (
     (MODE_DAMIER, "Damier de mailles carrées",
      "Une grille régulière découpe la station ; chaque maille revient en "
      "entier à un habitat, en nombre proportionnel à son recouvrement."),
+    (MODE_ENJEUX, "Carte des enjeux",
+     "Une couleur par niveau d'enjeu de la STATION — très fort, fort, moyen, "
+     "faible — et les contours des habitats par-dessus."),
+    (MODE_PEE, "Carte des plantes exotiques envahissantes",
+     "Les habitats en bandes, et par-dessus un cercle par espèce exotique "
+     "relevée, une couleur par espèce."),
 )
 
 MODE_DEFAUT = MODE_BANDES
@@ -395,10 +410,18 @@ def _decoupe(couleur, expression, mosaique, flou=True):
     remplissage = QgsFillSymbol.createSimple(
         {"color": couleur, "outline_style": "no"}
     )
+    # `@symbol_color` et non la couleur en toutes lettres : l'expression ne sert
+    # qu'à ÉTEINDRE la couche quand elle ne s'applique pas, jamais à décider de
+    # la teinte. Écrite en dur, elle rendait la symbologie inmodifiable — on
+    # changeait la couleur d'un habitat dans le panneau, la pastille de légende
+    # suivait, la carte gardait l'ancienne.
+    # `coalesce` : si une version de QGIS ne connaissait pas `@symbol_color`,
+    # l'expression rendrait NULL — donc une couche invisible, et une carte
+    # blanche. Le repli garde la couleur d'origine, celle d'avant ce correctif.
     remplissage.symbolLayer(0).setDataDefinedProperty(
         QgsSymbolLayer.Property.FillColor,
         QgsProperty.fromExpression(
-            "if(\"%s\" %s 1, '%s', color_rgba(0,0,0,0))"
+            "if(\"%s\" %s 1, coalesce(@symbol_color, '%s'), color_rgba(0,0,0,0))"
             % (hs.CHAMP_MOSAIQUE, condition, couleur)
         ),
     )
@@ -431,34 +454,14 @@ def _adoucir(couche_symbole):
     couche_symbole.setPaintEffect(effet)
 
 
-def _symbole_contour(layer):
-    """Contour de la station, sans remplissage."""
+def _symbole_contour(layer, couleur="#37474f", epaisseur=0.26):
+    """Contour sans remplissage."""
     if not _est_polygone(layer):
         return None
     return QgsFillSymbol.createSimple({
-        "style": "no", "outline_color": "#37474f",
-        "outline_width": "0.26", "outline_width_unit": "MM",
+        "style": "no", "outline_color": couleur,
+        "outline_width": "%s" % epaisseur, "outline_width_unit": "MM",
     })
-
-
-def _retirer_couches(groupe, nom=None):
-    """Retirer du projet les couches d'un groupe (toutes, ou celles nommées `nom`).
-
-    Les identifiants sont relevés AVANT toute suppression : retirer une couche
-    détruit son nœud dans l'arbre, et poursuivre l'itération sur des nœuds
-    devenus morts faisait tomber QGIS par erreur de segmentation — au
-    déchargement du plugin, donc au pire moment.
-    """
-    identifiants = []
-    for node in groupe.findLayers():
-        layer = node.layer()
-        if layer is not None and (nom is None or layer.name() == nom):
-            identifiants.append(layer.id())
-    for identifiant in identifiants:
-        try:
-            QgsProject.instance().removeMapLayer(identifiant)
-        except (RuntimeError, KeyError):
-            pass
 
 
 class ExportLayerManager:
@@ -485,12 +488,24 @@ class ExportLayerManager:
         # couleur sur chaque entité, dont le rendu des mosaïques a besoin.
         hs.enrichir(features)
         palette = hs.palette(features)
+        especes = pee.palette(features) if mode == MODE_PEE else ()
         # Chaque mode a ses besoins : inutile de payer la dichotomie des bandes
         # pour un semis de points.
-        if mode == MODE_BANDES:
+        if mode in (MODE_BANDES, MODE_PEE):
             _poser_coupes(features)
+        if mode == MODE_PEE:
+            _poser_pee(features)
         elif mode == MODE_DAMIER:
             _poser_mailles(features)
+        elif mode == MODE_ENJEUX:
+            # Ni bandes ni mailles : la carte des enjeux colorie la STATION,
+            # dont tous les habitats partagent le niveau.
+            pass
+        # Nom LIBRE, et fichier qui va avec : une couche déjà chargée peut avoir
+        # été retouchée — couleurs, étiquettes, ordre — et enregistrée dans le
+        # projet. La remplacer effacerait ce travail sans le dire. Le rechargement
+        # d'un même export dépose donc une couche de plus, à côté.
+        libelle = self._nom_libre(libelle)
         chemin = os.path.join(self._directory, "%s.geojson" % nom_de_fichier(libelle))
         collection = {"type": "FeatureCollection", "features": features}
         try:
@@ -501,12 +516,10 @@ class ExportLayerManager:
                 self.logger.warning("Écriture de l'export impossible : %s", exc)
             return None, 0
 
-        # Une couche du même nom serait un doublon muet : on remplace.
-        self._retirer(libelle)
         layer = self._charger(chemin, libelle)
         if layer is None:
             return None, 0
-        self._styler(layer, palette, mode)
+        self._styler(layer, palette, mode, especes)
         QgsProject.instance().addMapLayer(layer, False)
         # EN TÊTE du groupe, pas à la suite : `addLayer` ajoute en dernier
         # enfant, c'est-à-dire SOUS les couches déjà là. Un deuxième export se
@@ -526,14 +539,14 @@ class ExportLayerManager:
         layer.setReadOnly(True)
         return layer
 
-    def _styler(self, layer, palette, mode=MODE_DEFAUT):
+    def _styler(self, layer, palette, mode=MODE_DEFAUT, especes=()):
         """Colorer chaque habitat, partager les mosaïques selon `mode`.
 
         Le style ne doit jamais empêcher l'affichage : en cas de pépin, la
         couche reste chargée avec le rendu par défaut de QGIS.
         """
         try:
-            layer.setRenderer(self._renderer(layer, palette, mode))
+            layer.setRenderer(self._renderer(layer, palette, mode, especes))
             self._infobulle(layer)
         except Exception as exc:  # noqa: BLE001
             if self.logger:
@@ -561,64 +574,271 @@ class ExportLayerManager:
         )
 
     @staticmethod
-    def _renderer(layer, palette, mode=MODE_DEFAUT):
-        """Rendu par règles : UNE COULEUR PAR HABITAT, groupées par grand milieu.
-
-        La légende a deux niveaux — le grand milieu porte le groupe, chaque
-        habitat sa nuance — ce qui permet de replier un milieu entier dans le
-        panneau des couches.
-
-        Une station en mosaïque occupe plusieurs entités superposées, et toutes
-        sont dessinées : chacune ne peint que SA part du polygone (bande, anneau
-        ou semis, selon le mode), si bien qu'aucune n'en masque une autre.
-        """
-        racine = QgsRuleBasedRenderer.Rule(None)
-        for classe, libelle_milieu, habitats in palette or []:
-            # Règle-groupe sans symbole : elle ne dessine rien, elle range.
-            groupe = QgsRuleBasedRenderer.Rule(None)
-            # EN CAPITALES, faute de pouvoir les mettre en gras : QGIS rend les
-            # règles-groupes d'un rendu par règles comme de simples entrées de
-            # légende (`QgsSymbolLegendNode`), au même style que les habitats.
-            # Elles se lisaient donc à la même hauteur qu'eux, sans qu'on voie
-            # que c'étaient des titres. La capitale est le procédé classique
-            # quand la graisse n'est pas disponible.
-            groupe.setLabel((libelle_milieu or "").upper())
-            racine.appendChild(groupe)
-            for cle, libelle, couleur in habitats:
-                regle = QgsRuleBasedRenderer.Rule(_symbole_habitat(layer, couleur, mode))
-                regle.setLabel(libelle)
-                regle.setFilterExpression(
-                    '"%s" = %s' % (hs.CHAMP_CLE, _litteral(cle))
-                )
-                groupe.appendChild(regle)
-
-        contour = _symbole_contour(layer)
-        if contour is not None:
-            # Un seul contour par station, porté par l'habitat dominant : le
-            # contour de chaque bande dessinerait de fausses limites d'habitat.
-            regle = QgsRuleBasedRenderer.Rule(contour)
-            regle.setLabel("limite de station")
-            regle.setFilterExpression('"%s" = 1' % hs.CHAMP_DOMINANT)
-            racine.appendChild(regle)
-        return QgsRuleBasedRenderer(racine)
+    def _renderer(layer, palette, mode=MODE_DEFAUT, especes=()):
+        if mode == MODE_ENJEUX:
+            return _renderer_enjeux(layer)
+        rendu = _renderer_habitats(layer, palette, mode)
+        if mode == MODE_PEE:
+            _ajouter_regles_pee(rendu, especes)
+        return rendu
 
     def cleanup(self):
-        """Retirer le groupe et ses couches (au déchargement du plugin)."""
+        """Ne retirer que le groupe s'il est VIDE, au déchargement du plugin.
+
+        Les couches d'export appartiennent au PROJET, pas à la session du
+        plugin : on les recolore, on les range, on enregistre le projet. Les
+        retirer au déchargement — c'est-à-dire à la fermeture de QGIS comme au
+        rechargement de l'extension — effaçait ce travail, et un projet
+        enregistré après coup en ressortait amputé.
+
+        Le groupe vide, lui, ne sert à rien : il ne resterait qu'un dossier sans
+        contenu dans le panneau des couches.
+        """
         root = QgsProject.instance().layerTreeRoot()
         group = root.findGroup(GROUP_NAME)
-        if group is None:
-            return
-        _retirer_couches(group)
-        root.removeChildNode(group)
+        if group is not None and not group.children():
+            root.removeChildNode(group)
+
+    def _nom_libre(self, souhaite):
+        """Nom de couche encore inutilisé dans le projet, en numérotant au besoin."""
+        pris = {c.name() for c in QgsProject.instance().mapLayers().values()}
+        if souhaite not in pris:
+            return souhaite
+        for numero in range(2, 100):
+            candidat = "%s (%d)" % (souhaite, numero)
+            if candidat not in pris:
+                return candidat
+        return "%s (%d)" % (souhaite, len(pris) + 1)
 
     # ------------------------------------------------------------- interne
-    def _retirer(self, nom):
-        group = QgsProject.instance().layerTreeRoot().findGroup(GROUP_NAME)
-        if group is not None:
-            _retirer_couches(group, nom)
-
     @staticmethod
     def _group():
         root = QgsProject.instance().layerTreeRoot()
         group = root.findGroup(GROUP_NAME)
         return group if group is not None else root.insertGroup(0, GROUP_NAME)
+
+
+#: Colonne des taxons exotiques dans la vue d'export, et champs posés au
+#: chargement pour les dessiner.
+CHAMP_PEE = "habitat_pee"
+CHAMP_PEE_POINTS = "pee_points"
+#: Cercles visés par station. Douze suffisent à faire alterner trois espèces sans
+#: couvrir le polygone : la carte dit une PRÉSENCE, pas une abondance, et un
+#: semis dense se lirait comme une densité que la donnée ne contient pas.
+_CERCLES_PAR_STATION = 8
+#: Mailles calculées, avant tri. Bien plus que de cercles voulus : les mailles de
+#: BORDURE sont écartées, et sur un polygone étroit ou découpé — une ripisylve,
+#: un ourlet — elles sont la majorité. Une grille au plus juste ne laissait alors
+#: que des échardes, et les cercles se posaient tous sur le contour.
+_MAILLES_PEE = 40
+#: Part de maille pleine en deçà de laquelle on n'y pose pas de cercle.
+_PART_MAILLE_PLEINE = 0.55
+#: Diamètre d'un cercle d'espèce, en millimètres.
+_CERCLE_MM = 2.6
+
+
+def _poser_pee(features, cle_station="id_station"):
+    """Répartir les cercles des espèces exotiques, station par station.
+
+    Les points sont posés sur une grille régulière et attribués aux espèces EN
+    ALTERNANCE (cf. `pee.repartir`), puis écrits en JSON sur la seule entité
+    dominante : les habitats d'une station partagent sa géométrie, et laisser
+    chaque ligne poser ses cercles les empilerait au même endroit.
+    """
+    import json as _json
+
+    stations = {}
+    for feature in features or []:
+        props = feature.get("properties") or {}
+        stations.setdefault(props.get(cle_station), []).append(feature)
+
+    for lot in stations.values():
+        noms = []
+        for feature in lot:
+            for nom in pee.especes(_proprietes(feature).get(CHAMP_PEE)):
+                if nom not in noms:
+                    noms.append(nom)
+        porteuse = next(
+            (f for f in lot if _proprietes(f).get(hs.CHAMP_DOMINANT) == 1), lot[0]
+        )
+        if not noms:
+            continue
+        geom = _geometrie(lot[0])
+        if geom is None or geom.isEmpty() or geom.area() <= 0:
+            continue
+        cote = (geom.area() / _MAILLES_PEE) ** 0.5
+        pleine = cote * cote * _PART_MAILLE_PLEINE
+        points = [maille.pointOnSurface()
+                  for _rang, aire, maille in _mailles(geom, cote)
+                  if aire >= pleine][:_CERCLES_PAR_STATION]
+        if not points:  # polygone trop étroit pour une seule maille pleine
+            points = [geom.pointOnSurface()]
+        parts = pee.repartir(noms, points)
+        if not parts:
+            continue
+        props = porteuse.setdefault("properties", {})
+        props[CHAMP_PEE_POINTS] = _json.dumps(
+            {nom: QgsGeometry.collectGeometry(pts).asWkt(_decimales(cote))
+             for nom, pts in parts.items()},
+            ensure_ascii=False,
+        )
+    return features
+
+
+def _ajouter_regles_pee(rendu, especes):
+    """Une règle par espèce, par-dessus les bandes d'habitats."""
+    racine = rendu.rootRule()
+    for nom, couleur in especes or []:
+        regle = QgsRuleBasedRenderer.Rule(_symbole_pee(couleur, nom))
+        regle.setLabel(nom)
+        # Seule l'entité qui PORTE les points dessine : c'est elle qui a reçu
+        # la répartition (cf. `_poser_pee`).
+        regle.setFilterExpression(
+            "map_get(from_json(\"%s\"), %s) is not null"
+            % (CHAMP_PEE_POINTS, _litteral(nom))
+        )
+        racine.appendChild(regle)
+
+
+def _symbole_pee(couleur, nom):
+    """Cercles d'une espèce, posés aux points que l'entité porte.
+
+    Le nom de l'espèce est écrit DANS l'expression, une règle par espèce :
+    `@symbol_label` semblait plus élégant, mais la variable n'est pas résolue
+    dans un générateur de géométrie — les cercles ne sortaient pas du tout,
+    sans le moindre message.
+    """
+    # Taille FIXE, en millimètres. Une taille définie par données en unités de
+    # carte semblait plus juste — le cercle aurait suivi la taille de la station
+    # — mais les bornes en millimètres d'un `QgsMapUnitScale` ne s'appliquent
+    # pas à une taille définie par données : sur des coordonnées en degrés, le
+    # cercle tombait à deux centièmes de millimètre, donc invisible, sans le
+    # moindre message. Un symbole de PRÉSENCE n'a de toute façon pas à changer
+    # de taille : il dit oui ou non, pas combien.
+    marqueur = QgsMarkerSymbol.createSimple({
+        "name": "circle", "color": couleur,
+        "outline_style": "solid", "outline_color": "#1a1a1a",
+        "outline_width": "0.2", "outline_width_unit": "MM",
+        "size": "%s" % _CERCLE_MM, "size_unit": "MM",
+    })
+    generateur = QgsGeometryGeneratorSymbolLayer.create({})
+    generateur.setSymbolType(_SYMBOLE_PONCTUEL)
+    generateur.setGeometryExpression(
+        "geom_from_wkt(map_get(from_json(\"%s\"), %s))"
+        % (CHAMP_PEE_POINTS, _litteral(nom))
+    )
+    generateur.setSubSymbol(marqueur)
+    symbole = QgsFillSymbol()
+    symbole.changeSymbolLayer(0, generateur)
+    return symbole
+
+
+#: Colonne de l'enjeu de la station dans la vue d'export.
+CHAMP_ENJEU = "station_niveau_enjeu"
+#: Trait des contours sur la carte des enjeux. Fin et gris très sombre plutôt
+#: que noir et épais : sur des aplats clairs — jaune, orange, rose — un trait
+#: noir de 0,26 mm écrase la couleur et fait ressortir le découpage plus que le
+#: propos de la carte, qui est le niveau d'enjeu.
+_CONTOUR_ENJEUX = "#1a1a1a"
+_CONTOUR_ENJEUX_MM = 0.16
+
+
+def _renderer_enjeux(layer):
+    """Rendu par NIVEAU D'ENJEU de la station, contours des habitats par-dessus.
+
+    Une autre carte que celle des habitats : ici la couleur ne dit pas ce qui
+    pousse, mais ce qui est en jeu. Le niveau appartient à la STATION, que ses
+    habitats se partagent — seule l'entité dominante peint donc le fond, sinon
+    les lignes d'une mosaïque repeindraient trois fois le même polygone, pour
+    rien et en plus sombre.
+
+    Les contours d'habitats passent par-dessus les aplats grâce aux **niveaux de
+    symboles** : l'ordre des règles reste celui de la légende — contours en
+    tête, comme sur les planches « Flore Ariège » — sans commander l'ordre de
+    dessin, qui est celui des passes.
+    """
+    racine = QgsRuleBasedRenderer.Rule(None)
+
+    contour = _symbole_contour(layer, _CONTOUR_ENJEUX, _CONTOUR_ENJEUX_MM)
+    if contour is not None:
+        _passe(contour, 1)  # dessiné APRÈS les aplats
+        regle = QgsRuleBasedRenderer.Rule(contour)
+        regle.setLabel("Contours habitats")
+        # UNE fois par station, pas une par ligne. Les habitats d'une mosaïque
+        # partagent la géométrie de leur station : sans ce filtre, le même
+        # contour était retracé trois fois au même endroit, et l'empilement le
+        # faisait grossir et noircir — le trait paraissait sale.
+        regle.setFilterExpression('"%s" = 1' % hs.CHAMP_DOMINANT)
+        racine.appendChild(regle)
+
+    for code, libelle, couleur in ref.COULEURS_ENJEU:
+        symbole = _symbole_plein(couleur)
+        _passe(symbole, 0)
+        regle = QgsRuleBasedRenderer.Rule(symbole)
+        regle.setLabel(libelle)
+        regle.setFilterExpression(_filtre_enjeu(code))
+        racine.appendChild(regle)
+
+    rendu = QgsRuleBasedRenderer(racine)
+    rendu.setUsingSymbolLevels(True)
+    return rendu
+
+
+def _filtre_enjeu(code):
+    """Filtre d'un niveau d'enjeu ; le dernier ramasse tout ce qui n'en a pas."""
+    dominant = '"%s" = 1' % hs.CHAMP_DOMINANT
+    if code:
+        return '%s AND "%s" = %s' % (dominant, CHAMP_ENJEU, _litteral(code))
+    connus = [c for c, _l, _co in ref.COULEURS_ENJEU if c]
+    return '%s AND ("%s" IS NULL OR "%s" NOT IN (%s))' % (
+        dominant, CHAMP_ENJEU, CHAMP_ENJEU,
+        ", ".join(_litteral(c) for c in connus),
+    )
+
+
+def _passe(symbole, numero):
+    """Ranger toutes les couches d'un symbole dans une passe de dessin."""
+    for i in range(symbole.symbolLayerCount()):
+        symbole.symbolLayer(i).setRenderingPass(numero)
+
+
+def _renderer_habitats(layer, palette, mode=MODE_DEFAUT):
+    """Rendu par règles : UNE COULEUR PAR HABITAT, groupées par grand milieu.
+
+    La légende a deux niveaux — le grand milieu porte le groupe, chaque
+    habitat sa nuance — ce qui permet de replier un milieu entier dans le
+    panneau des couches.
+
+    Une station en mosaïque occupe plusieurs entités superposées, et toutes
+    sont dessinées : chacune ne peint que SA part du polygone (bande, anneau
+    ou semis, selon le mode), si bien qu'aucune n'en masque une autre.
+    """
+    racine = QgsRuleBasedRenderer.Rule(None)
+    for classe, libelle_milieu, habitats in palette or []:
+        # Règle-groupe sans symbole : elle ne dessine rien, elle range.
+        groupe = QgsRuleBasedRenderer.Rule(None)
+        # EN CAPITALES, faute de pouvoir les mettre en gras : QGIS rend les
+        # règles-groupes d'un rendu par règles comme de simples entrées de
+        # légende (`QgsSymbolLegendNode`), au même style que les habitats.
+        # Elles se lisaient donc à la même hauteur qu'eux, sans qu'on voie
+        # que c'étaient des titres. La capitale est le procédé classique
+        # quand la graisse n'est pas disponible.
+        groupe.setLabel((libelle_milieu or "").upper())
+        racine.appendChild(groupe)
+        for cle, libelle, couleur in habitats:
+            regle = QgsRuleBasedRenderer.Rule(_symbole_habitat(layer, couleur, mode))
+            regle.setLabel(libelle)
+            regle.setFilterExpression(
+                '"%s" = %s' % (hs.CHAMP_CLE, _litteral(cle))
+            )
+            groupe.appendChild(regle)
+
+    contour = _symbole_contour(layer)
+    if contour is not None:
+        # Un seul contour par station, porté par l'habitat dominant : le
+        # contour de chaque bande dessinerait de fausses limites d'habitat.
+        regle = QgsRuleBasedRenderer.Rule(contour)
+        regle.setLabel("limite de station")
+        regle.setFilterExpression('"%s" = 1' % hs.CHAMP_DOMINANT)
+        racine.appendChild(regle)
+    return QgsRuleBasedRenderer(racine)

@@ -514,12 +514,19 @@ Ensuite : éditez comme d'habitude (§7), puis **synchronisez** (§9).
 > création d'une mise en page. **Synchronisez avant de cartographier** (§9).
 
 > **Le jeu de données ne se choisit pas ici** : c'est celui du panneau, où vous
-> travaillez déjà. Le redemander posait une question dont la bonne réponse était
-> toujours la même, avec le risque de charger un export qui ne parle pas des
-> mêmes stations que votre saisie. Pour en changer, changez-le dans le panneau.
-> Une case **« Charger tous les jeux de données »** reste là pour la
-> consultation au-delà du vôtre — la couche mélange alors des stations qui ne
-> sont pas les vôtres.
+> travaillez déjà. Pour en changer, changez-le dans le panneau. Une couche qui
+> mélangerait plusieurs jeux de données ne se cartographie pas — la légende, les
+> recouvrements et le compte des stations en attente parleraient de trois choses
+> à la fois.
+
+> **La couche vous appartient.** Changez la couleur d'un habitat par un
+> double-clic sur sa pastille dans le panneau des couches : la carte suit.
+> Recolorez, étiquetez, rangez — le style
+> est enregistré **avec le projet QGIS**, et il y sera encore à la réouverture.
+> Le plugin ne retire plus ses couches quand il se décharge, et recharger le même
+> export **ajoute une couche à côté** au lieu de remplacer la vôtre — vous ne
+> perdez jamais un habillage que vous avez travaillé. À vous de supprimer celles
+> dont vous n'avez plus besoin.
 
 **Ce n'est pas dans le même bouton** : cherchez **« Cartographier… ▸ Charger un
 export du serveur (couche)… »**, au pied du panneau. Les deux entrées
@@ -595,11 +602,34 @@ représentations**, à comparer sur vos propres données :
 |---|---|
 | **Bandes proportionnelles** | le polygone partagé en bandes horizontales, une par habitat, à la surface exacte de son recouvrement |
 | **Damier de mailles carrées** | la station quadrillée ; chaque maille revient en entier à un habitat, en nombre proportionnel à son recouvrement |
+| **Carte des enjeux** | une couleur par **niveau d'enjeu de la station**, et les contours des habitats par-dessus — la charte des cartes « Flore Ariège » |
+| **Carte des plantes exotiques envahissantes** | les habitats en bandes, et par-dessus **un cercle par espèce exotique** relevée, une couleur par espèce |
 
 Dans les deux cas, **chaque habitat occupe la surface de son recouvrement** : un
 50 / 30 / 20 se mesure à la règle sur la carte. Les parts sont calculées au
 chargement, y compris sur les polygones concaves, où un simple partage de la
 hauteur donnerait de fausses surfaces.
+
+> **La carte des PEE** pose des cercles dans chaque station où une plante
+> exotique a été relevée, en alternant les couleurs quand il y en a plusieurs.
+> Les habitats restent visibles dessous, en bandes.
+>
+> **Le nombre de cercles ne veut rien dire** : la saisie note une *présence*, pas
+> une abondance. Huit cercles par station, répartis régulièrement, quelle que
+> soit l'ampleur du foyer — un semis plus dense laisserait croire à une densité
+> que la donnée ne contient pas. Une espèce relevée sur deux habitats d'une même
+> station n'y apparaît qu'une fois.
+>
+> Chaque espèce garde sa couleur d'un chargement à l'autre, et les espèces sont
+> rangées par nom : deux cartes du même secteur se comparent.
+
+> **La carte des enjeux ne parle pas des mêmes choses** que les deux autres :
+> la couleur n'y dit pas ce qui pousse, mais ce qui est en jeu. Le niveau
+> appartient à la **station**, que ses habitats se partagent — il n'y a donc ni
+> bandes ni mailles, un aplat par polygone. La légende reprend vos libellés :
+> *Contours habitats*, *Enjeux très forts*, *Enjeux forts*, *Enjeux moyens*,
+> *Enjeux faibles*, *Aucun enjeux*. Une station sans enjeu renseigné tombe dans
+> le gris, avec celles qui n'en ont aucun.
 
 > **Ce qui les distingue.** Les bandes se lisent de haut en bas, ce qui suggère
 > une stratification que la donnée ne contient pas ; en échange, les surfaces
@@ -816,16 +846,30 @@ Le bouton **« Tableau »**, au-dessus de la liste, ouvre une fenêtre qui montr
 tout le JDD courant : **une ligne par habitat**. Une station qui porte trois
 habitats occupe trois lignes ; ses informations de station y sont répétées.
 
-- **La colonne « N° polygone »**, tout à gauche, porte le **numéro de la
-  station** — pas celui de la ligne. Trois habitats d'une même mosaïque portent
-  donc le **même numéro**, et le fond de la ligne change d'un polygone au
-  suivant : les mosaïques se repèrent d'un coup d'œil. L'infobulle du numéro
-  précise « habitat 2 sur 3 ». Ce numéro vaut **pour la session** : il se
-  renumérote au prochain chargement, ne se modifie pas, et ne part ni en base ni
-  vers GeoNature.
+- **La colonne « id_station »**, tout à gauche, porte l'**identifiant de la
+  station sur GeoNature** — le même que dans les exports et l'interface web,
+  celui qu'on cite dans un courriel ou qu'on colle dans une requête. Les trois
+  habitats d'une mosaïque portent donc le **même identifiant**, et le fond de la
+  ligne change d'une station à l'autre : les mosaïques se repèrent d'un coup
+  d'œil. L'infobulle précise « habitat 2 sur 3 ».
+  Il est **vide tant que la station n'est pas synchronisée** : GeoNature ne le lui
+  a pas encore attribué. Le fond alterné, lui, continue de grouper les lignes.
 - **Colonnes** : choisissez *Essentiel*, *Natura 2000* ou *Tout*.
 - **Filtres** : statut, synchro, et une zone de recherche (nom de station,
   habitat, cd_hab). Cliquez un en-tête pour trier.
+- **La colonne « Habitat (HABREF) »** montre, à côté du **nom cité** que vous avez
+  écrit, le libellé que le référentiel donne au **cd_hab** retenu. Les deux
+  diffèrent souvent — abréviation, variante, faute de frappe — et c'est
+  justement ce qu'on veut voir : une détermination dont le code ne correspond
+  plus au nom se repère d'un coup d'œil. Elle est en lecture seule.
+  Les libellés sont demandés au référentiel **une fois pour toutes** et retenus
+  dans votre base locale. Si un habitat change de nom dans HABREF, ou si un
+  libellé vous paraît faux : **Base locale… ▸ Recharger les libellés HABREF**,
+  puis rouvrez le tableau. **Une case vide n'est pas une donnée perdue** : le
+  libellé n'a pas encore pu être obtenu — vous étiez hors ligne à l'ouverture de
+  la table, ou le code manque dans HABREF. Survolez la case, elle vous le dit ;
+  le journal du plugin (**Base locale… ▸ Ouvrir le dossier**) en donne la raison
+  exacte. Rouvrir la table redemande les libellés manquants.
 - **Modifiez directement dans les cellules.** La colonne **« Nom cité »** ouvre
   la **liste HABREF** : double-cliquez, tapez au moins 3 caractères, choisissez
   un habitat — le **cd_hab** de la ligne est renseigné en même temps, même si sa

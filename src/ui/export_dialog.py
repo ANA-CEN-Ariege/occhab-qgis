@@ -140,16 +140,6 @@ class ExportPicker(QDialog):
         )
         form.addRow("Jeu de données", etiquette)
 
-        self.check_tous_jdd = QCheckBox("Charger tous les jeux de données")
-        self.check_tous_jdd.setToolTip(
-            "Pour consulter au-delà de votre jeu de données courant. La couche "
-            "obtenue mélange alors des stations qui ne sont pas les vôtres."
-        )
-        self.check_tous_jdd.setChecked(id_dataset is None)
-        self.check_tous_jdd.setEnabled(id_dataset is not None)
-        self.check_tous_jdd.toggled.connect(self._maj_avertissement)
-        form.addRow("", self.check_tous_jdd)
-
         debut, fin = periode_annee_en_cours()
         self.check_periode = QCheckBox("Restreindre à une période")
         self.check_periode.setChecked(True)
@@ -224,8 +214,14 @@ class ExportPicker(QDialog):
         return self.combo_export.currentText()
 
     def id_dataset(self):
-        """JDD retenu : celui du panneau, ou aucun filtre si « tous » est coché."""
-        return None if self.check_tous_jdd.isChecked() else self._id_dataset
+        """JDD retenu : celui du panneau, toujours.
+
+        Il n'y a pas de choix ici, et pas non plus d'échappatoire « tous les
+        jeux de données » : une couche qui mélange le JDD courant et ceux des
+        collègues ne se cartographie pas — la légende, les recouvrements et le
+        compte des stations en attente parleraient de trois choses à la fois.
+        """
+        return self._id_dataset
 
     def mode(self):
         """Représentation retenue pour les stations à plusieurs habitats."""
@@ -251,14 +247,12 @@ class ExportPicker(QDialog):
         self.label_attente.setVisible(bool(nombre))
         if not nombre:
             return
-        portee = ("tous jeux de données confondus"
-                  if self.check_tous_jdd.isChecked()
-                  else "dans « %s »" % (self._nom_dataset or "ce jeu de données"))
         self.label_attente.setText(
-            "⚠ <b>%d station(s) locale(s) %s ne sont pas encore synchronisées</b> : "
-            "elles ne figureront pas dans cet export, donc pas sur les cartes que "
-            "vous en tirerez. Synchronisez d'abord si vous voulez les voir."
-            % (nombre, portee)
+            "⚠ <b>%d station(s) locale(s) dans « %s » ne sont pas encore "
+            "synchronisées</b> : elles ne figureront pas dans cet export, donc "
+            "pas sur les cartes que vous en tirerez. Synchronisez d'abord si "
+            "vous voulez les voir."
+            % (nombre, self._nom_dataset or "ce jeu de données")
         )
 
     def _maj_aide_mode(self):

@@ -97,6 +97,17 @@ CREATE TABLE IF NOT EXISTS t_sync_log (
     records_count INTEGER
 );
 
+-- Libellés HABREF déjà obtenus du serveur, par `cd_hab`. C'est un CACHE de
+-- données, pas un réglage : sa place est ici, dans la base, et non dans le
+-- fichier de configuration — on ne va pas éditer un fichier de préférences à la
+-- main pour rafraîchir un nom d'habitat. Il se vide et se recharge (cf.
+-- `oublier_libelles_habref`).
+CREATE TABLE IF NOT EXISTS habref_libelles (
+    cd_hab INTEGER PRIMARY KEY,
+    libelle TEXT NOT NULL,
+    date_maj TIMESTAMP
+);
+
 -- Index des colonnes présentes depuis l'origine. Ceux qui portent sur une
 -- colonne ajoutée après coup sont créés dans `_migrate()`, APRÈS l'ALTER TABLE :
 -- ici, `CREATE TABLE IF NOT EXISTS` ne touche pas une table existante, donc la
@@ -483,6 +494,66 @@ class OccHabDatabase:
             " VALUES (?, ?, ?)",
             (id_station_local, id_role, observer_name),
         )
+        self.connection.commit()
+        self.disconnect()
+
+    # -------------------------------------------------- libellés HABREF
+    def libelles_habref(self, cd_habs=None):
+        """{cd_hab: libellé} déjà connus, pour ces codes ou pour tous."""
+        self.connect()
+        cursor = self.connection.cursor()
+        if cd_habs:
+            codes = [int(c) for c in cd_habs if str(c).lstrip("-").isdigit()]
+            if not codes:
+                self.disconnect()
+                return {}
+            # Marqueurs générés d'après le NOMBRE de codes, valeurs paramétrées.
+            cursor.execute(
+                "SELECT cd_hab, libelle FROM habref_libelles WHERE cd_hab IN (%s)"
+                % ",".join("?" * len(codes)),  # nosec B608
+                codes,
+            )
+        else:
+            cursor.execute("SELECT cd_hab, libelle FROM habref_libelles")
+        libelles = {row["cd_hab"]: row["libelle"] for row in cursor.fetchall()}
+        self.disconnect()
+        return libelles
+
+    def enregistrer_libelles_habref(self, libelles):
+        """Mémoriser {cd_hab: libellé}. Les valeurs vides ne sont pas retenues.
+
+        Ne rien écrire d'incomplet est la règle : un libellé absent sera
+        redemandé à la prochaine ouverture, alors qu'une valeur bancale y
+        resterait pour toujours.
+        """
+        propres = {int(k): v.strip() for k, v in (libelles or {}).items()
+                   if isinstance(v, str) and v.strip()}
+        if not propres:
+            return 0
+        self.connect()
+        self.connection.executemany(
+            "INSERT INTO habref_libelles (cd_hab, libelle, date_maj)"
+            " VALUES (?, ?, ?)"
+            " ON CONFLICT(cd_hab) DO UPDATE SET libelle = excluded.libelle,"
+            " date_maj = excluded.date_maj",
+            [(cd, libelle, datetime.now().isoformat())
+             for cd, libelle in propres.items()],
+        )
+        self.connection.commit()
+        self.disconnect()
+        return len(propres)
+
+    def oublier_libelles_habref(self, cd_habs=None):
+        """Oublier ces libellés, ou tous : ils seront redemandés au référentiel."""
+        self.connect()
+        if cd_habs:
+            codes = [int(c) for c in cd_habs if str(c).lstrip("-").isdigit()]
+            self.connection.executemany(
+                "DELETE FROM habref_libelles WHERE cd_hab = ?",
+                [(c,) for c in codes],
+            )
+        else:
+            self.connection.execute("DELETE FROM habref_libelles")
         self.connection.commit()
         self.disconnect()
 

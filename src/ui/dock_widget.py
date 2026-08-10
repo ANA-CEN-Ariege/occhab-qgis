@@ -3,6 +3,7 @@
 
 """Dock principal du plugin OccHab : connexion, saisie et synchronisation."""
 import os
+import re
 
 from qgis.PyQt.QtCore import QItemSelection, QItemSelectionModel, Qt, QUrl
 from qgis.PyQt.QtGui import QDesktopServices
@@ -59,6 +60,51 @@ HABITAT_NOMENCLATURES = {
 }
 
 
+#: Champs portant un NOM d'habitat dans une réponse HABREF, du plus direct au
+#: plus détourné. `lb_code` n'y est pas : un code dans une colonne « Habitat »
+#: n'apprend rien, et le `cd_hab` est déjà dans la colonne d'à côté. Mieux vaut
+#: une case vide, qui se voit et s'explique, qu'un code qui se fait passer pour
+#: un nom.
+_CHAMPS_LIBELLE_HABREF = ("lb_hab_fr", "lb_hab_fr_complet", "lb_nom")
+#: Code HABREF en tête du nom cité, que l'autocomplétion pose sous la forme
+#: « 6.0.1.0.2 - Brachypodio rupestris-Centaureion nemoralis ».
+_CODE_EN_TETE = re.compile(r"^\s*([A-Za-z0-9][\w.]*)\s+-\s+")
+#: Un « libellé » qui n'est qu'un code : chiffres, lettres et points, sans espace.
+_CODE_SEUL = re.compile(r"^[A-Za-z0-9][\w.]*$")
+
+
+def _libelle_de_fiche(fiche):
+    """Nom d'habitat dans une réponse HABREF, quelle que soit sa forme.
+
+    L'autocomplétion ne rend pas les mêmes champs que la fiche : elle donne
+    `search_name`, qui vaut « code - nom ». On en retire le code plutôt que de
+    se rabattre sur `lb_code`, qui ferait afficher « 6.0.1.0.2 » dans une
+    colonne intitulée « Habitat ».
+    """
+    if isinstance(fiche, dict) and isinstance(fiche.get("data"), dict):
+        fiche = fiche["data"]  # certaines instances enveloppent la réponse
+    if not isinstance(fiche, dict):
+        return ""
+    for champ in _CHAMPS_LIBELLE_HABREF:
+        valeur = fiche.get(champ)
+        if isinstance(valeur, str) and valeur.strip():
+            return valeur.strip()
+    return _sans_code(fiche.get("search_name"))
+
+
+def _sans_code(search_name):
+    """« 6.0.1.0.2 - Brachypodio… » → « Brachypodio… ». Vide s'il ne reste rien."""
+    if not isinstance(search_name, str) or not search_name.strip():
+        return ""
+    return _CODE_EN_TETE.sub("", search_name).strip()
+
+
+def _code_habref(nom_cite):
+    """Code lu en tête du nom cité (« 6.0.1.0.2 - … »), ou None."""
+    trouve = _CODE_EN_TETE.match(nom_cite or "")
+    return trouve.group(1) if trouve else None
+
+
 class OccHabDockWidget(QDockWidget):
     """Widget d'ancrage : connexion GeoNature, tableau des stations, synchro."""
 
@@ -108,6 +154,7 @@ class OccHabDockWidget(QDockWidget):
         self._occhab_layers_notice_shown = False
         self._build_ui()
         self._install_map_interaction()
+        self._oublier_ancien_cache_habref()
         self.refresh()
         self._reconnecter()
 
@@ -260,14 +307,17 @@ class OccHabDockWidget(QDockWidget):
             spacing=3,
         ))
 
-        self.table = QTableWidget(0, 3)
+        self.table = QTableWidget(0, 4)
         # « Statut » = où en est le travail ; « synchro » = où en est l'envoi.
         # Deux questions distinctes, nommées toutes les deux dans l'en-tête.
-        self.table.setHorizontalHeaderLabels(["Habitat(s)", "Date", "Statut · synchro"])
+        self.table.setHorizontalHeaderLabels(
+            ["id_station", "Habitat(s)", "Date", "Statut · synchro"]
+        )
         header = self.table.horizontalHeader()
-        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
-        header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
         header.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
         self.table.verticalHeader().setVisible(False)
         self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
@@ -372,6 +422,14 @@ class OccHabDockWidget(QDockWidget):
         menu.addAction(
             "Nettoyer les stations synchronisées anciennes…",
             self._purge_old_synced_stations,
+        )
+        action_habref = menu.addAction(
+            "Recharger les libellés HABREF", self._recharger_libelles_habref
+        )
+        action_habref.setToolTip(
+            "Oublier les libellés déjà obtenus du référentiel. Ils seront "
+            "redemandés à la prochaine ouverture du tableau — utile si un "
+            "habitat a changé de nom dans HABREF."
         )
         btn_storage.setMenu(menu)
         footer.addWidget(btn_storage)
@@ -974,6 +1032,160 @@ class OccHabDockWidget(QDockWidget):
             if value.get("id_nomenclature") is not None:
                 out[cd] = value["id_nomenclature"]
         return out
+
+    #: Codes interrogés au plus à chaque ouverture de la table. Le référentiel
+    #: répond un habitat par requête : sans plafond, une première ouverture sur
+    #: un gros jeu de données figerait QGIS le temps de deux cents allers-retours.
+    #: Les manquants seront pris à l'ouverture suivante, le cache s'épaississant
+    #: à chaque fois.
+    LIBELLES_PAR_OUVERTURE = 40
+
+    def _oublier_ancien_cache_habref(self):
+        """Reprendre le cache des libellés que la 0.7.1 gardait dans la config.
+
+        Il n'avait rien à y faire — un fichier de préférences n'est pas un cache
+        de données — et il a pu retenir des valeurs bancales, un code là où on
+        attendait un nom. On le verse dans la base, sans les valeurs douteuses,
+        et on retire la clé.
+        """
+        ancien = self.config.get("habref.libelles")
+        if not isinstance(ancien, dict):
+            return
+        recuperables = {
+            cle: valeur for cle, valeur in ancien.items()
+            if isinstance(valeur, str) and valeur.strip()
+            # Un libellé qui n'est qu'un code — « 6.0.1.0.2 » — vient d'un repli
+            # qui n'aurait pas dû exister : mieux vaut le redemander.
+            and not _CODE_SEUL.match(valeur.strip())
+        }
+        try:
+            repris = self.db.enregistrer_libelles_habref(recuperables)
+        except Exception as exc:  # noqa: BLE001
+            self.logger.warning("Reprise du cache HABREF impossible : %s", exc)
+            return
+        self.config.set("habref.libelles", None)
+        self.logger.info(
+            "Cache HABREF déplacé de la configuration vers la base : %d repris, "
+            "%d écartés.", repris, len(ancien) - repris,
+        )
+
+    def _recharger_libelles_habref(self):
+        """Vider le cache des libellés : ils seront redemandés au référentiel."""
+        try:
+            connus = len(self.db.libelles_habref())
+            self.db.oublier_libelles_habref()
+        except Exception as exc:  # noqa: BLE001
+            QMessageBox.warning(self, "OccHab",
+                                "Libellés HABREF non oubliés : %s" % exc)
+            return
+        self.logger.info("Libellés HABREF oubliés : %d", connus)
+        QMessageBox.information(
+            self, "OccHab",
+            "%d libellé(s) oublié(s). Ils seront redemandés au référentiel à "
+            "la prochaine ouverture du tableau." % connus,
+        )
+
+    def _libelles_habref(self, stations):
+        """{cd_hab: libellé HABREF} pour ces stations, complété au besoin.
+
+        Le nom cité est ce que le botaniste a écrit ; le libellé HABREF est ce à
+        quoi le `cd_hab` renvoie vraiment. Les voir côte à côte est le seul moyen
+        de repérer une détermination dont le code ne correspond plus au nom.
+
+        Les libellés déjà obtenus sont gardés dans la BASE LOCALE, pas dans le
+        fichier de configuration : c'est un cache de données, pas un réglage, et
+        il doit pouvoir se vider et se recharger sans qu'on aille éditer un
+        fichier de préférences à la main.
+
+        Hors ligne, on rend ce qu'on a : une colonne partiellement vide vaut
+        mieux qu'une table qui refuse de s'ouvrir.
+        """
+        codes = {}
+        for station in stations or []:
+            for habitat in station.get("habitats") or []:
+                if habitat.get("cd_hab"):
+                    codes.setdefault(habitat["cd_hab"], habitat.get("nom_cite") or "")
+        if not codes:
+            return {}
+        try:
+            connus = self.db.libelles_habref(codes)
+        except Exception as exc:  # noqa: BLE001 - une colonne ne bloque pas la table
+            self.logger.warning("Cache des libellés HABREF illisible : %s", exc)
+            connus = {}
+        manquants = [c for c in sorted(codes) if c not in connus]
+        if not manquants:
+            return connus
+
+        if self.client is None or not self.client.is_authenticated:
+            self.logger.info(
+                "Libellés HABREF : %d code(s) inconnus et pas de connexion — la "
+                "colonne restera vide pour eux (%s).",
+                len(manquants), ", ".join(str(c) for c in manquants[:8]),
+            )
+            return connus
+
+        echecs, obtenus = [], {}
+        for cd_hab in manquants[: self.LIBELLES_PAR_OUVERTURE]:
+            libelle, raison = self._libelle_habref(cd_hab, codes.get(cd_hab))
+            if libelle:
+                obtenus[cd_hab] = libelle
+            else:
+                echecs.append("%s (%s)" % (cd_hab, raison))
+        if obtenus:
+            self.db.enregistrer_libelles_habref(obtenus)
+            connus.update(obtenus)
+        if echecs:
+            # En INFO et non en debug : une case vide dans la colonne HABREF est
+            # une question qu'on se pose, et le journal doit pouvoir y répondre.
+            self.logger.info("Libellés HABREF non obtenus : %s", " ; ".join(echecs))
+        reste = len(manquants) - self.LIBELLES_PAR_OUVERTURE
+        if reste > 0:
+            self.logger.info(
+                "Libellés HABREF : %d code(s) restants, ils seront demandés à la "
+                "prochaine ouverture de la table.", reste,
+            )
+        return connus
+
+    def _libelle_habref(self, cd_hab, nom_cite=None):
+        """(libellé, raison de l'échec) pour un cd_hab.
+
+        Deux chemins, parce que le premier ne suffit pas :
+
+        1. `GET habref/habitat/<cd_hab>`, la fiche directe ;
+        2. à défaut, l'**autocomplétion** sur le code lu dans le nom cité. Un
+           habitat marqué `fg_validite = NR` — non retenu, c'est-à-dire un
+           synonyme — existe dans HABREF avec son libellé, mais la fiche directe
+           peut le refuser. C'est le cas relevé sur le `Brachypodio
+           rupestris-Centaureion nemoralis` (cd_hab 16415), dont la base porte
+           bien `lb_hab_fr` alors que la colonne restait vide.
+
+        HABREF ne remplit d'ailleurs pas toujours le même champ selon la
+        typologie : on prend le premier renseigné plutôt que d'exiger
+        `lb_hab_fr`, faute de quoi la colonne reste vide alors que le
+        référentiel a répondu.
+        """
+        raisons = []
+        try:
+            libelle = _libelle_de_fiche(self.client.get_habref(cd_hab))
+            if libelle:
+                return libelle, ""
+            raisons.append("fiche sans libellé")
+        except Exception as exc:  # noqa: BLE001 - hors ligne, code retiré…
+            raisons.append(str(exc)[:60])
+
+        code = _code_habref(nom_cite)
+        if not code:
+            return "", " puis ".join(raisons) or "aucun libellé"
+        try:
+            for item in self.client.search_habref(code) or []:
+                if item.get("cd_hab") == cd_hab:
+                    libelle = _libelle_de_fiche(item)
+                    if libelle:
+                        return libelle, ""
+            raisons.append("absent de la recherche sur « %s »" % code)
+        except Exception as exc:  # noqa: BLE001
+            raisons.append("recherche « %s » : %s" % (code, str(exc)[:40]))
+        return "", " puis ".join(raisons)
 
     def _habref_search_fn(self):
         """Callable de recherche HABREF (avec filtre typologie) si connecté, sinon None."""
@@ -2083,6 +2295,9 @@ class OccHabDockWidget(QDockWidget):
             Contexte(
                 nomenclatures=nomenclatures,
                 datasets=self._dataset_items(),
+                # Le libellé du référentiel à côté du nom cité : on voit à quoi
+                # le cd_hab renvoie vraiment.
+                habref_labels=self._libelles_habref(stations),
                 # Pour choisir un habitat en masse comme dans le formulaire.
                 habref_search=self._habref_search_fn(),
                 typologies=self._habref_typologies(),
@@ -2170,14 +2385,19 @@ class OccHabDockWidget(QDockWidget):
                 n_conflict += 1
             row = self.table.rowCount()
             self.table.insertRow(row)
+            # L'identifiant LOCAL voyage sur la première colonne, quelle qu'elle
+            # soit : c'est là que le reste du panneau va le chercher pour savoir
+            # sur quelle station porte une action.
+            item_id = self._item_id_station(station)
+            item_id.setData(Qt.ItemDataRole.UserRole, station["id"])
+            self.table.setItem(row, 0, item_id)
             item_hab = QTableWidgetItem(self._station_label(station, habitats))
-            item_hab.setData(Qt.ItemDataRole.UserRole, station["id"])  # id local caché
             observers = station.get("observers_txt") or ""
             if observers:
                 item_hab.setToolTip("Observateur(s) : %s" % observers)
-            self.table.setItem(row, 0, item_hab)
-            self.table.setItem(row, 1, QTableWidgetItem(station.get("date_min") or ""))
-            self.table.setCellWidget(row, 2, self._status_pill(station))
+            self.table.setItem(row, 1, item_hab)
+            self.table.setItem(row, 2, QTableWidgetItem(station.get("date_min") or ""))
+            self.table.setCellWidget(row, 3, self._status_pill(station))
         # Les deux pastilles sont empilées : la hauteur par défaut les tronquerait.
         self.table.resizeRowsToContents()
         try:
@@ -2193,6 +2413,26 @@ class OccHabDockWidget(QDockWidget):
         self._refresh_attribute_table(stations)
         self.logger.info("Liste rafraîchie : %d station(s)", len(stations))
         self._notify_occhab_layers_once()
+
+    @staticmethod
+    def _item_id_station(station):
+        """Identifiant GeoNature de la station, ou un tiret s'il n'existe pas.
+
+        Un tiret plutôt qu'une case vide : l'identifiant manque tant que la
+        station n'est pas partie sur le serveur, et une case vide se lit comme
+        un oubli de saisie.
+        """
+        identifiant = station.get("id_station")
+        item = QTableWidgetItem("%s" % identifiant if identifiant else "—")
+        item.setTextAlignment(Qt.AlignmentFlag.AlignRight
+                              | Qt.AlignmentFlag.AlignVCenter)
+        item.setToolTip(
+            "Identifiant de la station sur GeoNature : le même que dans les "
+            "exports et l'interface web." if identifiant else
+            "Pas encore synchronisée : GeoNature ne lui a pas encore attribué "
+            "d'identifiant."
+        )
+        return item
 
     def _refresh_attribute_table(self, stations):
         """Répercuter dans la table ouverte ce qui vient d'être écrit ailleurs.

@@ -1337,6 +1337,63 @@ raison : `Qgis.RenderUnit` (QGIS 3.30), `Qgis.SymbolType` (3.20) et
 `QgsLegendStyle.Style`. Toutes existent encore dans les versions récentes, mais
 leur ancienne place existe dans TOUTES — c'est elle qui sert de filet.
 
+**La carte des PEE** (`_poser_pee`, `_ajouter_regles_pee`) pose un cercle par
+espèce exotique, sur les bandes d'habitats. Trois décisions :
+
+- **les couleurs viennent d'un pas d'or** sur le cercle des teintes
+  (`processing/pee.py`), avec clarté et saturation alternées : deux espèces
+  voisines se distinguent alors même sans percevoir la teinte. Un pas régulier
+  (360/n) aurait rebattu toutes les couleurs à chaque espèce ajoutée ; ici les
+  précédentes ne bougent pas. Les espèces sont triées par nom, jamais par ordre
+  d'apparition — sinon deux chargements du même export donnent deux cartes ;
+- **les points sont répartis en ALTERNANCE**, pas par blocs : trois espèces
+  réparties par tiers dessineraient trois taches contiguës, qu'on lirait comme
+  une localisation à l'intérieur de la station. Or la donnée dit seulement
+  qu'elles sont là. Le nombre de cercles est fixe (huit) pour la même raison :
+  la saisie note une présence, pas une abondance ;
+- **une seule entité par station porte les points**, la dominante : les habitats
+  d'une station partagent sa géométrie, et laisser chaque ligne poser ses
+  cercles les empilerait au même endroit. Les points partent en JSON dans
+  `pee_points`, relus à l'affichage par `map_get(from_json(…))`.
+
+Trois pièges rencontrés, tous silencieux :
+
+- les mailles de bordure. Prendre le centre d'une maille ROGNÉE plaçait les
+  cercles sur le contour, en chapelet ; on écarte désormais celles qui font
+  moins de 55 % d'une maille pleine, ce qui suppose une grille plus fine (40
+  mailles calculées pour 8 cercles retenus) ;
+- `@symbol_label` dans le générateur de géométrie : la variable n'y est pas
+  résolue, et **aucun cercle ne sortait**, sans message. Le nom de l'espèce est
+  écrit dans l'expression, une règle par espèce ;
+- une taille de marqueur **définie par données en unités de carte** : les bornes
+  en millimètres d'un `QgsMapUnitScale` ne s'y appliquent pas, et sur des
+  coordonnées en degrés le cercle tombait à deux centièmes de millimètre. Taille
+  fixe en millimètres — un symbole de présence n'a pas à changer de taille.
+
+**La carte des enjeux** (`_renderer_enjeux`) est une autre carte, pas une autre
+mosaïque : la couleur n'y dit pas ce qui pousse mais ce qui est en jeu. Le niveau
+appartient à la STATION (`station_niveau_enjeu` dans la vue d'export), que ses
+habitats se partagent — seule l'entité **dominante** peint le fond, sinon les
+lignes d'une mosaïque repeindraient trois fois le même polygone, pour rien et en
+plus sombre.
+
+Palette et libellés dans `referentiels.COULEURS_ENJEU`, repris de la charte des
+planches « Flore Ariège ». La dernière entrée ramasse « aucun », « inconnu » et
+l'absence de valeur : les distinguer donnerait trois postes de légende là où la
+carte n'en montre qu'un. Un test vérifie qu'une station tombe dans **exactement
+une** règle, quel que soit son niveau — deux la dessineraient deux fois, aucune la
+laisserait invisible, et ni l'un ni l'autre ne se voit sur une carte.
+
+Les contours d'habitats passent au-dessus des aplats par les **niveaux de
+symboles** (`setUsingSymbolLevels`, passe 1 contre 0) : l'ordre des règles reste
+celui de la légende — contours en tête, comme sur les planches — sans commander
+l'ordre de dessin. Ils sont tracés **une fois par station** et non par ligne :
+les habitats d'une mosaïque partagent la géométrie de leur station, et sans le
+filtre `est_dominant = 1` le même contour était retracé trois fois au même
+endroit — l'empilement le faisait grossir et noircir, le trait paraissait sale.
+0,16 mm en gris très sombre plutôt que 0,26 en noir : sur des aplats clairs, un
+trait épais fait ressortir le découpage plus que le propos de la carte.
+
 **Mosaïques : deux représentations, choisies au chargement** (`MODES` dans
 `ui/export_layers.py`). Aucune convention nationale ne tranche — le guide
 MNHN/CBN 2005 normalise le modèle de données, pas la sémiologie — d'où le choix
@@ -1347,6 +1404,8 @@ représentations des mêmes données cohabitent.
 |---|---|
 | `bandes` | `QgsGeometryGeneratorSymbolLayer` découpant des bandes horizontales |
 | `damier` | grille régulière, mailles affectées par déficit, stockées en WKT et relues par `geom_from_wkt` |
+| `enjeux` | une règle par niveau d'enjeu de la station, contours d'habitats en passe de dessin supérieure |
+| `pee` | les bandes, plus une règle par espèce exotique ; les points sont posés au chargement et relus par `map_get(from_json(…))` |
 
 Quatre autres figurés ont été construits, rendus sur les données réelles, puis
 **écartés** ; le détail vaut d'être gardé, ne serait-ce que pour ne pas les
@@ -1519,19 +1578,75 @@ aussitôt en brouillon. ⚠️ Cette règle vaut dans la **table** ; dans le for
 station, la liste « Statut » est **autoritaire** (ce qu'elle affiche est
 enregistré), pour ne pas empêcher de conserver une station validée qu'on rouvre.
 
-**Numéro de polygone** — la colonne `N° polygone` (clé `champs.POLYGONE`) est
-posée par `Grille.__init__`, une par station, et **partagée par toutes ses
-lignes** : c'est ce qui permet de voir qu'un bloc de trois lignes décrit une
-seule mosaïque. Elle est `lecture_seule` et `cellule=False`, donc jamais dans
-`colonnes_modifiees()` — ni la base ni le payload GeoNature ne peuvent la
-recevoir, tous deux filtrant d'ailleurs sur une liste de colonnes figée. Le
-numéro vaut pour la session et se renumérote au chargement suivant : c'est un
-repère de lecture, pas un identifiant.
+**Libellé HABREF** — la colonne `Habitat (HABREF)` (clé `champs.HABREF`) montre à
+quoi le `cd_hab` renvoie vraiment, à côté du `nom_cite` que le botaniste a écrit :
+c'est ainsi qu'on repère une détermination dont le code ne correspond plus au nom.
+Elle n'est pas dans la base — `Contexte.poser_libelles_habref()` l'écrit sur les
+dicts d'habitat au chargement de la table, pour que la valeur circule comme les
+autres (affichage, infobulle, copie TSV, tri) plutôt que par un cas particulier
+dans le modèle. `lecture_seule` et `cellule=False` la tiennent hors de tout
+enregistrement.
 
-Le fond des cellules le suit — un **polygone sur deux** est teinté sur toute la
-largeur de la ligne, ce qui a remplacé l'alternance ligne à ligne de Qt
-(`setAlternatingRowColors`). Les deux rythmes se contrariaient : une mosaïque de
-trois habitats paraissait en compter six.
+Les libellés viennent de `GET habref/habitat/<cd_hab>`, **un appel par code**, et
+sont mis en cache dans la **base locale** (table `habref_libelles`) : sans cela,
+chaque ouverture de la table rejouerait des dizaines d'allers-retours. Ils ont
+d'abord été rangés dans `config.json` — c'était une faute : un fichier de
+PRÉFÉRENCES n'est pas un cache de données, rafraîchir un nom d'habitat y
+demandait de l'éditer à la main, et une valeur bancale y restait pour toujours.
+Le menu **Base locale… ▸ Recharger les libellés HABREF** vide la table ; les
+libellés sont redemandés à l'ouverture suivante. Au premier lancement, l'ancien
+cache de la configuration est versé en base — sans les valeurs qui ne sont qu'un
+code — et la clé est retirée. La première
+ouverture d'un gros jeu de données en demande au plus 40 (`LIBELLES_PAR_OUVERTURE`),
+le reste venant aux ouvertures suivantes — le cache s'épaissit à chaque fois.
+**Deux chemins pour un libellé**, parce que la fiche directe ne suffit pas. Un
+habitat marqué `fg_validite = NR` — non retenu, c'est-à-dire un synonyme —
+existe dans HABREF avec son `lb_hab_fr`, mais `GET habref/habitat/<cd_hab>` peut
+le refuser. Relevé sur le `Brachypodio rupestris-Centaureion nemoralis`
+(cd_hab 16415, `cd_typo` 18) : la base porte le nom, la colonne restait vide. À
+défaut de fiche, on repasse donc par l'**autocomplétion**, sur le code lu en tête
+du nom cité (`6.0.1.0.2 - …`, tel que le sélecteur HABREF l'écrit), en retenant
+l'entrée dont le `cd_hab` correspond.
+
+Hors ligne, la colonne reste partiellement vide : mieux vaut ça qu'une table qui
+refuse de s'ouvrir. Encore faut-il pouvoir répondre à « pourquoi celui-là n'a pas
+de nom ? » — la première version consignait l'échec en `debug` et laissait une
+case muette. Désormais : la raison est journalisée en `info` code par code
+(hors ligne, erreur du serveur, fiche sans libellé), l'infobulle de la case vide
+la rappelle, et `_libelle_de_fiche()` accepte plusieurs formes de réponse.
+
+La fiche et l'autocomplétion ne rendent d'ailleurs pas les mêmes champs : la
+première donne `lb_hab_fr` / `lb_hab_fr_complet`, la seconde `search_name`, qui
+vaut « code - nom ». On en retire le code plutôt que de se rabattre sur
+`lb_code` — qui ferait afficher « 6.0.1.0.2 » dans une colonne intitulée
+« Habitat », alors que le `cd_hab` est déjà dans la colonne d'à côté. Mieux vaut
+une case vide, qui se voit et s'explique, qu'un code qui se fait passer pour un
+nom.
+
+**`id_station`** — première colonne de la table attributaire **et** de la liste
+du dock. C'est l'identifiant de la station sur GeoNature : le même que dans la
+base, dans les exports et dans l'interface web, donc celui qu'on cite dans un
+courriel ou qu'on colle dans une requête. Une première version affichait un
+numéro d'ordre inventé au chargement — lisible, mais qui ne désignait rien hors
+de la fenêtre où il s'affichait.
+
+Il est **vide tant que la station n'est pas synchronisée** : GeoNature ne le lui
+a pas encore attribué. La liste du dock écrit alors un tiret plutôt qu'une case
+vide, qui se lirait comme un oubli de saisie. Le champ est `lecture_seule` et
+`cellule=False`, donc jamais dans `colonnes_modifiees()` — c'est le serveur qui
+l'attribue, la table ne fait que le montrer.
+
+Le fond des cellules, lui, suit le **rang de la station dans la grille**
+(`Grille.rang_station`), tenu à part et non écrit dans le dict de la station :
+une clé de plus finirait par se retrouver quelque part. Une station sur deux est
+teintée sur toute la largeur de la ligne, ce qui a remplacé l'alternance ligne à
+ligne de Qt (`setAlternatingRowColors`) : les deux rythmes se contrariaient, et
+une mosaïque de trois habitats paraissait en compter six. C'est ce fond qui
+continue de grouper les lignes quand `id_station` est encore vide.
+
+Dans la liste du dock, la colonne porte aussi l'**identifiant local** en donnée
+cachée (`UserRole`) : tout le panneau va le chercher sur la première colonne pour
+savoir sur quelle station porte une action.
 
 **Copier vers un tableur** — `Ctrl+C`, le bouton « Copier » et le menu
 contextuel produisent du **TSV** (`processing/tableur.py`), le seul format que
@@ -1567,6 +1682,33 @@ un avertissement de synchronisation, un choix de figuré, une ligne d'aide, et l
 champs se compriment jusqu'à se couper — sans que rien ne le signale. Avec un
 ascenseur, la fenêtre peut être trop courte sans que rien ne disparaisse. Vérifié
 en la forçant à 500 × 380 puis à 520 × 300 : aucun champ tronqué.
+
+**La symbologie doit rester modifiable.** Chaque part de mosaïque est peinte par
+une couche de symbole dont la couleur est **définie par données**, pour s'éteindre
+quand elle ne s'applique pas — la variante « mosaïque » et la variante « station à
+un seul habitat » cohabitent dans un même symbole, chacune transparente quand
+l'autre s'applique, faute de quoi la légende compterait deux entrées par habitat.
+
+L'expression écrivait la couleur EN TOUTES LETTRES. Elle l'imposait donc à
+l'affichage : on changeait la couleur d'un habitat dans le panneau des couches,
+la pastille de légende suivait, la carte gardait l'ancienne — et le style
+enregistré dans le projet ne servait à rien. Elle lit désormais
+`coalesce(@symbol_color, '<couleur d'origine>')` : la teinte vient du symbole, et
+l'expression ne fait plus que ce pour quoi elle est là, allumer ou éteindre.
+`coalesce` couvre une version de QGIS qui ne connaîtrait pas la variable, où
+l'expression rendrait NULL — donc une carte blanche.
+
+> Vérifié au rendu, dans les deux modes : une règle recolorée en magenta passe
+> de 0 à plus de 2 700 pixels magenta à l'écran.
+
+**Une couche d'export appartient au PROJET, pas à la session du plugin.**
+`ExportLayerManager.cleanup()` les retirait au déchargement — c'est-à-dire à la
+fermeture de QGIS comme au rechargement de l'extension — et un projet enregistré
+après coup en ressortait amputé, avec le travail de symbologie perdu. Il ne
+retire plus que le groupe **vide**. De même, recharger un même export ne remplace
+plus la couche : `_nom_libre()` numérote (« … (2) »), fichier GeoJSON compris,
+parce qu'une couche déjà chargée a pu être recolorée et enregistrée. Vérifié :
+style retouché, projet écrit puis relu — la couleur revient.
 
 **Le JDD ne se choisit pas dans la fenêtre d'export.** C'est celui du panneau, où
 l'on travaille déjà ; le redemander posait une question dont la bonne réponse
@@ -1793,6 +1935,7 @@ occhab/
     │                 grille.py                  # tampon d'édition en masse (pur, testé)
     │                 export.py                  # aplatissement cartographie (pur, testé)
     │                 duplicate.py               # duplication / collage / reprise (pur, testé)
+    │                 geojson_wkt.py             # GeoJSON → WKT, sans QgsJsonUtils (pur, testé)
     │                 tableur.py                 # mise en TSV pour le presse-papiers (pur, testé)
     │                 gabarits.py                # repérage des .qpt de mise en page (pur, testé)
     │                 mise_en_page.py            # dimensionnement de la légende (pur, testé)

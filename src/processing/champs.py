@@ -85,16 +85,21 @@ def _champ(cle, niveau, libelle, type_, stockage, groupe, referentiel=None,
                  nomenclature, masse, cellule, lecture_seule, largeur)
 
 
-#: Clé du numéro de polygone. Ce n'est pas une donnée : le numéro est posé au
-#: chargement de la table (cf. `grille.Grille`), le temps d'une session, pour
-#: qu'on voie d'un coup d'œil quelles lignes décrivent la MÊME station. Sans
-#: lui, trois habitats d'une mosaïque se lisent comme trois polygones.
-POLYGONE = "polygone"
+#: Identifiant de la station sur GeoNature. Il vaut mieux qu'un numéro d'ordre
+#: inventé au chargement : c'est LE même que dans la base, dans les exports et
+#: dans l'interface web, donc celui qu'on cite dans un courriel ou qu'on colle
+#: dans une requête. Vide tant que la station n'est pas synchronisée — le fond
+#: alterné, lui, continue de montrer quelles lignes décrivent la même mosaïque.
+ID_STATION = "id_station"
+#: Libellé HABREF du `cd_hab`, posé au chargement de la table depuis le cache du
+#: plugin (cf. `dock_widget._libelles_habref`). Ce n'est pas une donnée saisie :
+#: `lecture_seule` et `cellule=False` le tiennent hors de tout enregistrement.
+HABREF = "habref"
 
 CHAMPS = [
     # ---------------------------------------------------------- identité
-    _champ(POLYGONE, STATION, "N° polygone", ENTIER, COLONNE, G_IDENTITE,
-           masse=False, cellule=False, lecture_seule=True, largeur=80),
+    _champ(ID_STATION, STATION, "id_station", ENTIER, COLONNE, G_IDENTITE,
+           masse=False, cellule=False, lecture_seule=True, largeur=90),
     _champ("validation_status", STATION, "Statut", CODE, COLONNE, G_IDENTITE,
            referentiel=ref.STATUTS_VALIDATION, largeur=90),
     _champ("sync_status", STATION, "Synchro", TEXTE, COLONNE, G_IDENTITE,
@@ -160,6 +165,12 @@ CHAMPS = [
     # car un code sans son nom (ou l'inverse) serait une donnée incohérente.
     _champ("cd_hab", HABITAT, "cd_hab", ENTIER, COLONNE, G_HABITAT, largeur=80),
     _champ("nom_cite", HABITAT, "Nom cité", TEXTE, COLONNE, G_HABITAT, largeur=200),
+    # Le nom cité est celui que le botaniste a ÉCRIT ; celui-ci est celui que
+    # HABREF donne au cd_hab retenu. Les deux diffèrent souvent — abréviation,
+    # variante, faute de frappe — et c'est justement ce qu'on veut voir : la
+    # colonne montre à quoi le code renvoie vraiment.
+    _champ(HABREF, HABITAT, "Habitat (HABREF)", TEXTE, COLONNE, G_HABITAT,
+           masse=False, cellule=False, lecture_seule=True, largeur=220),
     _champ("recouvrement", HABITAT, "Recouvrement %", POURCENTAGE, DOUBLE, G_HABITAT,
            largeur=110),
     _champ("determiner", HABITAT, "Déterminateur", TEXTE, COLONNE, G_HABITAT,
