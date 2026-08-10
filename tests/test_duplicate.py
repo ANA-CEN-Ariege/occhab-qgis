@@ -3,6 +3,7 @@
 
 """Tests du modèle de duplication d'une station (module pur `duplicate`)."""
 import duplicate
+import eval_fields as ef
 
 
 def _station():
@@ -203,3 +204,31 @@ def test_duplicata_repart_en_brouillon():
     template = duplicate.station_template(source)
 
     assert "validation_status" not in template
+
+
+# ----------- la détermination et les correspondances ne suivent pas l'habitat suivant
+def test_la_reprise_jette_determination_et_correspondances():
+    """Elles décrivent l'habitat PRÉCÉDENT, sous un code qui va changer.
+
+    `nom_cite` et `cd_hab` sont déjà écartés de la reprise : garder l'alliance et
+    ses correspondances les rattacherait au code du prochain habitat — une
+    correspondance EUNIS fausse, et muette, puisque rien ne l'affiche tant qu'on
+    n'ouvre pas la section.
+    """
+    habitat = {
+        "id_habitat": 7, "cd_hab": 1204, "nom_cite": "Subularion aquaticae",
+        "id_nomenclature_collection_technique": 3,
+        "technical_precision": ef.encode_eval(
+            "Relevé du 12 mai.", enjeu="fort", recouvrement=40,
+            determination={"nom": "Subularion aquaticae", "ancre": "CORINE_biotopes"},
+            corresp={"EUNIS": {"cd_hab": 1672, "code": "C3.4", "src": "manuel"}},
+        ),
+    }
+    reprise = duplicate.habitat_reprise(habitat)
+    codes = ef.decode_eval(reprise["technical_precision"])
+    assert "determination" not in codes
+    assert "corresp" not in codes
+    # Ce qui décrit la MANIÈRE de travailler, lui, se reprend bien.
+    assert codes["enjeu"] == "fort"
+    assert reprise["id_nomenclature_collection_technique"] == 3
+    assert ef.strip_eval(reprise["technical_precision"]) == "Relevé du 12 mai."
