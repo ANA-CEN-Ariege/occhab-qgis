@@ -288,24 +288,48 @@ SELECT
     -- botaniste peut avoir adapté au terrain. Si l'habitat est DÉJÀ dans la
     -- typologie visée, son propre code fait foi — la table de correspondance ne
     -- se référence pas elle-même — et le rang vaut alors 0.
+    -- Le code SAISI prime sur le calculé. `habref_equivalents` ne connaît que le
+    -- référentiel ; le botaniste, lui, tranche station par station — une même
+    -- alliance ne se traduit pas pareil d'un polygone à l'autre. La colonne
+    -- `habitat_*_source` dit d'où vient la valeur retenue :
+    --   manuel        arbitré par un botaniste — le SEUL qui atteste d'un contrôle
+    --   catalogue     repris du catalogue des végétations de l'Ariège
+    --   habref        proposé par HABREF et accepté tel quel
+    --   determination l'habitat est DÉJÀ dans cette typologie : son code fait foi
+    --   (vide)        rien de saisi : c'est `habref_equivalents` qui a parlé, et
+    --                 `habitat_*_rang` dit ce que vaut sa déduction
     coalesce(
+        corresp_saisi.j -> 'CORINE_biotopes' ->> 'code',
         CASE WHEN t_hab.lb_nom_typo = 'CORINE_biotopes' THEN hab.lb_code END,
         corine.codes
     )                                                           AS habitat_code_corine,
     coalesce(
+        corresp_saisi.j -> 'CORINE_biotopes' ->> 'nom',
         CASE WHEN t_hab.lb_nom_typo = 'CORINE_biotopes' THEN hab.lb_hab_fr END,
         corine.noms
     )                                                           AS habitat_nom_corine,
+    CASE WHEN corresp_saisi.j -> 'CORINE_biotopes' ->> 'code' IS NOT NULL
+              THEN coalesce(corresp_saisi.j -> 'CORINE_biotopes' ->> 'src', 'saisi')
+         WHEN t_hab.lb_nom_typo = 'CORINE_biotopes' THEN 'determination'
+         WHEN corine.codes IS NOT NULL THEN 'habref'
+    END                                                         AS habitat_corine_source,
     CASE WHEN t_hab.lb_nom_typo = 'CORINE_biotopes' THEN 0
-         ELSE corine.rang END                                   AS habitat_corine_rang,
+         ELSE corine.rang END                                    AS habitat_corine_rang,
     coalesce(
+        corresp_saisi.j -> 'EUNIS' ->> 'code',
         CASE WHEN t_hab.lb_nom_typo = 'EUNIS' THEN hab.lb_code END,
         eunis.codes
     )                                                           AS habitat_code_eunis,
     coalesce(
+        corresp_saisi.j -> 'EUNIS' ->> 'nom',
         CASE WHEN t_hab.lb_nom_typo = 'EUNIS' THEN hab.lb_hab_fr END,
         eunis.noms
     )                                                           AS habitat_nom_eunis,
+    CASE WHEN corresp_saisi.j -> 'EUNIS' ->> 'code' IS NOT NULL
+              THEN coalesce(corresp_saisi.j -> 'EUNIS' ->> 'src', 'saisi')
+         WHEN t_hab.lb_nom_typo = 'EUNIS' THEN 'determination'
+         WHEN eunis.codes IS NOT NULL THEN 'habref'
+    END                                                         AS habitat_eunis_source,
     CASE WHEN t_hab.lb_nom_typo = 'EUNIS' THEN 0
          ELSE eunis.rang END                                    AS habitat_eunis_rang,
     -- Natura 2000. Deux typologies, que « N2000 » confond souvent : le code de
@@ -318,25 +342,39 @@ SELECT
     -- `interet_communautaire` plus bas, qui est la nomenclature SAISIE : un
     -- désaccord entre les deux signale une erreur ou un cas à regarder.
     coalesce(
+        corresp_saisi.j -> 'Habitats_d''intérêt_communautaire' ->> 'code',
         CASE WHEN t_hab.lb_nom_typo = 'Habitats_d''intérêt_communautaire' THEN hab.lb_code END,
         n2000.codes
     )                                                           AS habitat_code_n2000,
     coalesce(
+        corresp_saisi.j -> 'Habitats_d''intérêt_communautaire' ->> 'nom',
         CASE WHEN t_hab.lb_nom_typo = 'Habitats_d''intérêt_communautaire' THEN hab.lb_hab_fr END,
         n2000.noms
     )                                                           AS habitat_nom_n2000,
+    CASE WHEN corresp_saisi.j -> 'Habitats_d''intérêt_communautaire' ->> 'code' IS NOT NULL
+              THEN coalesce(corresp_saisi.j -> 'Habitats_d''intérêt_communautaire' ->> 'src', 'saisi')
+         WHEN t_hab.lb_nom_typo = 'Habitats_d''intérêt_communautaire' THEN 'determination'
+         WHEN n2000.codes IS NOT NULL THEN 'habref'
+    END                                                         AS habitat_n2000_source,
     CASE WHEN t_hab.lb_nom_typo = 'Habitats_d''intérêt_communautaire' THEN 0
          ELSE n2000.rang END                                    AS habitat_n2000_rang,
     coalesce(
+        corresp_saisi.j -> 'Cahiers_d''habitats' ->> 'code',
         CASE WHEN t_hab.lb_nom_typo = 'Cahiers_d''habitats' THEN hab.lb_code END,
         cahiers.codes
     )                                                           AS habitat_code_cahiers,
     coalesce(
+        corresp_saisi.j -> 'Cahiers_d''habitats' ->> 'nom',
         CASE WHEN t_hab.lb_nom_typo = 'Cahiers_d''habitats' THEN hab.lb_hab_fr END,
         cahiers.noms
     )                                                           AS habitat_nom_cahiers,
+    CASE WHEN corresp_saisi.j -> 'Cahiers_d''habitats' ->> 'code' IS NOT NULL
+              THEN coalesce(corresp_saisi.j -> 'Cahiers_d''habitats' ->> 'src', 'saisi')
+         WHEN t_hab.lb_nom_typo = 'Cahiers_d''habitats' THEN 'determination'
+         WHEN cahiers.codes IS NOT NULL THEN 'habref'
+    END                                                         AS habitat_cahiers_source,
     CASE WHEN t_hab.lb_nom_typo = 'Cahiers_d''habitats' THEN 0
-         ELSE cahiers.rang END                                  AS habitat_cahiers_rang,
+         ELSE cahiers.rang END                                    AS habitat_cahiers_rang,
     h.determiner                                                AS determinateur,
     n_tech.label_default                                        AS technique_collecte,
     n_det.label_default                                         AS type_determination,
@@ -361,6 +399,12 @@ SELECT
     (SELECT string_agg(t, ', ') FROM jsonb_array_elements_text(
         CASE WHEN jsonb_typeof(eh.j -> 'pee') = 'array'
              THEN eh.j -> 'pee' ELSE '[]'::jsonb END) AS t)     AS habitat_pee,
+    -- Détermination hors HABREF : renseignée SEULEMENT quand `cd_hab` est une
+    -- ANCRE — un code CORINE ou EUNIS emprunté faute d'entrée HABREF pour
+    -- l'alliance déterminée. Vide ne veut donc pas dire « pas d'alliance », mais
+    -- « le cd_hab est lui-même la détermination ».
+    eh.j -> 'determination' ->> 'nom'                           AS habitat_alliance,
+    eh.j -> 'determination' ->> 'ancre'                         AS habitat_ancre_typologie,
     s.geom_4326                                                 AS geom
 FROM pr_occhab.t_stations s
 LEFT JOIN pr_occhab.t_habitats h   ON h.id_station  = s.id_station
@@ -431,4 +475,21 @@ LEFT JOIN LATERAL (
 ) cahiers ON true
 -- Bloc ANA-EVAL décodé UNE SEULE FOIS par ligne, station puis habitat.
 LEFT JOIN LATERAL (SELECT gn_exports.ana_eval_json(s.comment)             AS j) es ON true
-LEFT JOIN LATERAL (SELECT gn_exports.ana_eval_json(h.technical_precision) AS j) eh ON true;
+LEFT JOIN LATERAL (SELECT gn_exports.ana_eval_json(h.technical_precision) AS j) eh ON true
+-- Correspondances SAISIES, résolues en libellés. Le plugin n'enregistre que le
+-- cd_hab et le code : le nom vient de HABREF, qui fait foi et peut le corriger
+-- d'une version à l'autre — le figer dans la donnée garderait un nom périmé à
+-- côté d'un code juste. Le cast n'a lieu que si la valeur est bien un entier :
+-- un bloc abîmé à la main ne doit pas faire échouer la vue entière.
+LEFT JOIN LATERAL (
+    SELECT jsonb_object_agg(c.cle, jsonb_build_object(
+               'code', coalesce(saisi.lb_code, c.valeur ->> 'code'),
+               'nom',  saisi.lb_hab_fr,
+               'src',  c.valeur ->> 'src'
+           )) AS j
+    FROM jsonb_each(CASE WHEN jsonb_typeof(eh.j -> 'corresp') = 'object'
+                         THEN eh.j -> 'corresp' ELSE '{}'::jsonb END) AS c(cle, valeur)
+    LEFT JOIN ref_habitats.habref saisi
+           ON saisi.cd_hab = CASE WHEN c.valeur ->> 'cd_hab' ~ '^[0-9]+$'
+                                  THEN (c.valeur ->> 'cd_hab')::int END
+) corresp_saisi ON true;

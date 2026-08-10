@@ -345,6 +345,14 @@ dizaine de `regexp_match`.
 | `pee` | habitat | liste de **3 taxons au plus** (plantes exotiques envahissantes) |
 | `zone_humide` | station | `oui` `non` `a_verifier` — extension **ANA**. Anciennement un booléen : `true` se relit `oui`, `false` ne se relit pas (une case décochée ne disait pas « non ») |
 | `recouvrement` | habitat | 0-100 ; **pré-sélectionne** l'Abondance (< 5 %, 5-25 %, 25-50 %, 50-75 %, > 75 %) **et** alimente le champ natif `recovery_percentage` |
+| `determination` | habitat | `{"nom": …, "ancre": …}` — présente **seulement** quand `cd_hab` est une ancre (cf. §6 quater) |
+| `corresp` | habitat | `{typologie: {"cd_hab": …, "code": …, "src": …}}` — correspondances inscrites dans la donnée (cf. §6 quater) |
+
+Ces deux dernières clés sont les seules **structurées** du bloc ; toutes les
+autres sont scalaires. Elles sont validées typologie par typologie : une
+typologie hors référentiel est écartée, une entrée sans `cd_hab` exploitable
+aussi — c'est le `cd_hab` qui fait la correspondance, un code seul ne se
+raccorde à rien.
 
 Les codes internes sont **textuels** ; leur équivalent **numérique** attendu par
 le rendu réglementaire est donné à part (`CDC_*` dans
@@ -704,24 +712,48 @@ SELECT
     -- botaniste peut avoir adapté au terrain. Si l'habitat est DÉJÀ dans la
     -- typologie visée, son propre code fait foi — la table de correspondance ne
     -- se référence pas elle-même — et le rang vaut alors 0.
+    -- Le code SAISI prime sur le calculé. `habref_equivalents` ne connaît que le
+    -- référentiel ; le botaniste, lui, tranche station par station — une même
+    -- alliance ne se traduit pas pareil d'un polygone à l'autre. La colonne
+    -- `habitat_*_source` dit d'où vient la valeur retenue :
+    --   manuel        arbitré par un botaniste — le SEUL qui atteste d'un contrôle
+    --   catalogue     repris du catalogue des végétations de l'Ariège
+    --   habref        proposé par HABREF et accepté tel quel
+    --   determination l'habitat est DÉJÀ dans cette typologie : son code fait foi
+    --   (vide)        rien de saisi : c'est `habref_equivalents` qui a parlé, et
+    --                 `habitat_*_rang` dit ce que vaut sa déduction
     coalesce(
+        corresp_saisi.j -> 'CORINE_biotopes' ->> 'code',
         CASE WHEN t_hab.lb_nom_typo = 'CORINE_biotopes' THEN hab.lb_code END,
         corine.codes
     )                                                           AS habitat_code_corine,
     coalesce(
+        corresp_saisi.j -> 'CORINE_biotopes' ->> 'nom',
         CASE WHEN t_hab.lb_nom_typo = 'CORINE_biotopes' THEN hab.lb_hab_fr END,
         corine.noms
     )                                                           AS habitat_nom_corine,
+    CASE WHEN corresp_saisi.j -> 'CORINE_biotopes' ->> 'code' IS NOT NULL
+              THEN coalesce(corresp_saisi.j -> 'CORINE_biotopes' ->> 'src', 'saisi')
+         WHEN t_hab.lb_nom_typo = 'CORINE_biotopes' THEN 'determination'
+         WHEN corine.codes IS NOT NULL THEN 'habref'
+    END                                                         AS habitat_corine_source,
     CASE WHEN t_hab.lb_nom_typo = 'CORINE_biotopes' THEN 0
-         ELSE corine.rang END                                   AS habitat_corine_rang,
+         ELSE corine.rang END                                    AS habitat_corine_rang,
     coalesce(
+        corresp_saisi.j -> 'EUNIS' ->> 'code',
         CASE WHEN t_hab.lb_nom_typo = 'EUNIS' THEN hab.lb_code END,
         eunis.codes
     )                                                           AS habitat_code_eunis,
     coalesce(
+        corresp_saisi.j -> 'EUNIS' ->> 'nom',
         CASE WHEN t_hab.lb_nom_typo = 'EUNIS' THEN hab.lb_hab_fr END,
         eunis.noms
     )                                                           AS habitat_nom_eunis,
+    CASE WHEN corresp_saisi.j -> 'EUNIS' ->> 'code' IS NOT NULL
+              THEN coalesce(corresp_saisi.j -> 'EUNIS' ->> 'src', 'saisi')
+         WHEN t_hab.lb_nom_typo = 'EUNIS' THEN 'determination'
+         WHEN eunis.codes IS NOT NULL THEN 'habref'
+    END                                                         AS habitat_eunis_source,
     CASE WHEN t_hab.lb_nom_typo = 'EUNIS' THEN 0
          ELSE eunis.rang END                                    AS habitat_eunis_rang,
     -- Natura 2000. Deux typologies, que « N2000 » confond souvent : le code de
@@ -734,25 +766,39 @@ SELECT
     -- `interet_communautaire` plus bas, qui est la nomenclature SAISIE : un
     -- désaccord entre les deux signale une erreur ou un cas à regarder.
     coalesce(
+        corresp_saisi.j -> 'Habitats_d''intérêt_communautaire' ->> 'code',
         CASE WHEN t_hab.lb_nom_typo = 'Habitats_d''intérêt_communautaire' THEN hab.lb_code END,
         n2000.codes
     )                                                           AS habitat_code_n2000,
     coalesce(
+        corresp_saisi.j -> 'Habitats_d''intérêt_communautaire' ->> 'nom',
         CASE WHEN t_hab.lb_nom_typo = 'Habitats_d''intérêt_communautaire' THEN hab.lb_hab_fr END,
         n2000.noms
     )                                                           AS habitat_nom_n2000,
+    CASE WHEN corresp_saisi.j -> 'Habitats_d''intérêt_communautaire' ->> 'code' IS NOT NULL
+              THEN coalesce(corresp_saisi.j -> 'Habitats_d''intérêt_communautaire' ->> 'src', 'saisi')
+         WHEN t_hab.lb_nom_typo = 'Habitats_d''intérêt_communautaire' THEN 'determination'
+         WHEN n2000.codes IS NOT NULL THEN 'habref'
+    END                                                         AS habitat_n2000_source,
     CASE WHEN t_hab.lb_nom_typo = 'Habitats_d''intérêt_communautaire' THEN 0
          ELSE n2000.rang END                                    AS habitat_n2000_rang,
     coalesce(
+        corresp_saisi.j -> 'Cahiers_d''habitats' ->> 'code',
         CASE WHEN t_hab.lb_nom_typo = 'Cahiers_d''habitats' THEN hab.lb_code END,
         cahiers.codes
     )                                                           AS habitat_code_cahiers,
     coalesce(
+        corresp_saisi.j -> 'Cahiers_d''habitats' ->> 'nom',
         CASE WHEN t_hab.lb_nom_typo = 'Cahiers_d''habitats' THEN hab.lb_hab_fr END,
         cahiers.noms
     )                                                           AS habitat_nom_cahiers,
+    CASE WHEN corresp_saisi.j -> 'Cahiers_d''habitats' ->> 'code' IS NOT NULL
+              THEN coalesce(corresp_saisi.j -> 'Cahiers_d''habitats' ->> 'src', 'saisi')
+         WHEN t_hab.lb_nom_typo = 'Cahiers_d''habitats' THEN 'determination'
+         WHEN cahiers.codes IS NOT NULL THEN 'habref'
+    END                                                         AS habitat_cahiers_source,
     CASE WHEN t_hab.lb_nom_typo = 'Cahiers_d''habitats' THEN 0
-         ELSE cahiers.rang END                                  AS habitat_cahiers_rang,
+         ELSE cahiers.rang END                                    AS habitat_cahiers_rang,
     h.determiner                                                AS determinateur,
     n_tech.label_default                                        AS technique_collecte,
     n_det.label_default                                         AS type_determination,
@@ -777,6 +823,12 @@ SELECT
     (SELECT string_agg(t, ', ') FROM jsonb_array_elements_text(
         CASE WHEN jsonb_typeof(eh.j -> 'pee') = 'array'
              THEN eh.j -> 'pee' ELSE '[]'::jsonb END) AS t)     AS habitat_pee,
+    -- Détermination hors HABREF : renseignée SEULEMENT quand `cd_hab` est une
+    -- ANCRE — un code CORINE ou EUNIS emprunté faute d'entrée HABREF pour
+    -- l'alliance déterminée. Vide ne veut donc pas dire « pas d'alliance », mais
+    -- « le cd_hab est lui-même la détermination ».
+    eh.j -> 'determination' ->> 'nom'                           AS habitat_alliance,
+    eh.j -> 'determination' ->> 'ancre'                         AS habitat_ancre_typologie,
     s.geom_4326                                                 AS geom
 FROM pr_occhab.t_stations s
 LEFT JOIN pr_occhab.t_habitats h   ON h.id_station  = s.id_station
@@ -847,7 +899,24 @@ LEFT JOIN LATERAL (
 ) cahiers ON true
 -- Bloc ANA-EVAL décodé UNE SEULE FOIS par ligne, station puis habitat.
 LEFT JOIN LATERAL (SELECT gn_exports.ana_eval_json(s.comment)             AS j) es ON true
-LEFT JOIN LATERAL (SELECT gn_exports.ana_eval_json(h.technical_precision) AS j) eh ON true;
+LEFT JOIN LATERAL (SELECT gn_exports.ana_eval_json(h.technical_precision) AS j) eh ON true
+-- Correspondances SAISIES, résolues en libellés. Le plugin n'enregistre que le
+-- cd_hab et le code : le nom vient de HABREF, qui fait foi et peut le corriger
+-- d'une version à l'autre — le figer dans la donnée garderait un nom périmé à
+-- côté d'un code juste. Le cast n'a lieu que si la valeur est bien un entier :
+-- un bloc abîmé à la main ne doit pas faire échouer la vue entière.
+LEFT JOIN LATERAL (
+    SELECT jsonb_object_agg(c.cle, jsonb_build_object(
+               'code', coalesce(saisi.lb_code, c.valeur ->> 'code'),
+               'nom',  saisi.lb_hab_fr,
+               'src',  c.valeur ->> 'src'
+           )) AS j
+    FROM jsonb_each(CASE WHEN jsonb_typeof(eh.j -> 'corresp') = 'object'
+                         THEN eh.j -> 'corresp' ELSE '{}'::jsonb END) AS c(cle, valeur)
+    LEFT JOIN ref_habitats.habref saisi
+           ON saisi.cd_hab = CASE WHEN c.valeur ->> 'cd_hab' ~ '^[0-9]+$'
+                                  THEN (c.valeur ->> 'cd_hab')::int END
+) corresp_saisi ON true;
 ```
 
 #### 5. Matérialiser les correspondances
@@ -1871,6 +1940,130 @@ fait vite détester :
 - **désactivable** par `geonature.reconnexion_auto = false`.
 
 ---
+
+## 6 quater. Déterminer dans le catalogue des végétations, arbitrer les correspondances
+
+### Le problème
+
+Les correspondances entre typologies calculées depuis HABREF (§ « Correspondances
+entre typologies ») ne sont pas toujours justes, et la bonne **dépend de la
+station** : une même alliance ne se traduit pas pareil d'un polygone à l'autre.
+Le catalogue des végétations de l'Ariège porte d'ailleurs **quatre lignes** pour
+`Luzulo luzuloidis – Fagion sylvaticae`, qui ne diffèrent que par leurs codes.
+Il faut donc que le botaniste puisse trancher, station par station, et que son
+arbitrage **prime** sur le calcul.
+
+### Le catalogue, importé une fois
+
+`scripts/import_typologie.py` transforme le tableur des botanistes
+(`0_Typologie.xlsx`, feuille *Classif*, qui **fait autorité**) en
+`resources/typologie/dictionnaire_typologie.csv`, livré avec le plugin. Le script
+tourne hors QGIS, n'écrit **jamais** dans le fichier source, et met ses
+résolutions HABREF en cache — une seconde exécution est instantanée.
+
+```
+python3 scripts/import_typologie.py CHEMIN/0_Typologie.xlsx --sortie resources/typologie
+```
+
+Trois règles portent l'essentiel :
+
+| Règle | Pourquoi |
+|---|---|
+| **Ancrage** | 43 alliances sont absentes de HABREF — le catalogue diverge délibérément du Prodrome. `cd_hab` étant obligatoire, on y met le code CORINE (à défaut EUNIS) de la ligne |
+| **Routage Natura 2000** | La colonne « Natura 2000 » du tableur mélange deux typologies HABREF : `6510` (intérêt communautaire) et `6510-1` (Cahiers d'habitats). Un code suffixé part vers les Cahiers |
+| **Tirets** | Le tableur écrit `–`, HABREF `-`. Sans normalisation, la résolution tombe de 81 % à 63 %, **en silence** |
+
+Le second fichier produit, `anomalies_typologie.csv`, n'est pas un sous-produit :
+c'est la liste de travail des botanistes, et le seul garde-fou contre un import
+qui aurait l'air complet sans l'être. `--complement` accepte un CSV de
+corrections provisoires (`ligne_xlsx;corine;eunis;n2000`), chacune ressortant en
+anomalie « à reporter dans le tableur » — un correctif de circonstance ne doit
+pas devenir une seconde source de vérité.
+
+> Le script **ne lit pas les couleurs** des cellules. Elles portent pourtant du
+> sens (« divergence avec le PVF II », « présence incertaine en Ariège ») : tant
+> qu'elles ne sont pas des colonnes explicites, cette information reste dans le
+> tableur. Le script le rappelle à chaque exécution.
+
+### Une ancre n'est pas une détermination
+
+C'est la distinction qui commande tout le reste. Quand `cd_hab` porte un code
+emprunté, la clé `determination` du bloc le dit :
+
+```json
+{"determination": {"nom": "Salicion pyrenaicae", "ancre": "CORINE_biotopes"}}
+```
+
+Sans elle, rien ne distinguerait un code CORINE **choisi** comme détermination
+d'un code CORINE **posé faute de mieux**. Le formulaire l'affiche en clair, et
+l'export la sort en colonne `alliance` — vide ne veut donc pas dire « pas
+d'alliance », mais « le `cd_hab` est lui-même la détermination ».
+
+### Choisir, pas taper un code
+
+Un botaniste connaît son alliance, pas le code EUNIS d'arrivée. Chaque typologie
+a donc sa ligne dans le formulaire, garnie de propositions **avec leurs
+libellés** — « 41.112 — Hêtraies montagnardes à Luzule » se choisit, « 41.112 »
+se devine. Deux sources, dans cet ordre :
+
+1. le **catalogue**, quand il connaît le `cd_hab` déterminé ;
+2. les **correspondances que HABREF publie** dans la fiche de l'habitat
+   (`/habref/habitat/<cd_hab>`), sinon.
+
+Faute des deux, la ligne reste en recherche libre — qui accepte un nom aussi bien
+qu'un code. La saisie n'est **jamais** bloquée.
+
+Deux règles d'ergonomie qui sont en réalité des règles de données :
+
+- **rien n'est retenu d'office dès qu'il y a plusieurs candidats.** Trancher en
+  silence une question que le catalogue laisse ouverte produirait de la donnée
+  fausse et muette ; la ligne affiche « n propositions — à choisir » ;
+- **la typologie de la détermination ne pose pas de question.** Un habitat
+  déterminé en EUNIS *est* sa propre correspondance EUNIS ; la ligne se remplit
+  de son code et se verrouille. Rien n'est enregistré pour autant — ce serait
+  recopier le `cd_hab`, avec le risque que les deux divergent.
+
+### Trois provenances
+
+| `src` | Sens |
+|---|---|
+| `catalogue` | repris du catalogue des végétations tel quel |
+| `habref` | proposé par HABREF et accepté tel quel |
+| `manuel` | **arbitré par un botaniste** — le seul qui atteste d'un contrôle |
+
+C'est ce qui permet, en fin de campagne, de lister ce qui a été vérifié. L'export
+du plugin l'isole dans `corresp_manu` ; la vue SQL l'expose par typologie dans
+`habitat_*_source`, où s'ajoute `determination` (l'habitat était déjà dans la
+typologie visée) et le vide (rien de saisi : c'est `habref_equivalents` qui a
+parlé, et `habitat_*_rang` dit ce que vaut sa déduction).
+
+### Colonnes ajoutées
+
+**Export du plugin** (`processing/export.py`) : `alliance`, `ancre_typo`,
+`corine_cite`, `eunis_cite`, `n2000_cite`, `cahiers_cite`, `corresp_manu`.
+
+**Vue `gn_exports.v_occhab_complet`** : `habitat_alliance`,
+`habitat_ancre_typologie`, et pour chacune des quatre typologies une colonne
+`habitat_*_source`. Les colonnes `habitat_code_*` / `habitat_nom_*` existantes
+**changent de sémantique** : elles rendent désormais la valeur saisie quand il y
+en a une, le calcul sinon. Le libellé de la valeur saisie est résolu par jointure
+sur HABREF, jamais lu depuis la donnée : HABREF fait foi et peut le corriger
+d'une version à l'autre.
+
+### Limites connues
+
+- Le catalogue est **désactivé dans les cellules de la table attributaire** :
+  une cellule n'écrit que le nom cité et le `cd_hab`, elle y poserait une ancre
+  sans la détermination qui dit que c'en est une. Le catalogue se choisit au
+  formulaire. Les autres éditions de la table sont sûres — `champs.ecrire()`
+  passe par `merge_eval`, donc modifier un enjeu ne détruit pas les
+  correspondances de la même ligne (un test le verrouille).
+- Seules les correspondances **directes** de HABREF sont proposées. Il en publie
+  aussi à deux sauts, mais sans libellé : les proposer reviendrait à afficher des
+  codes nus. Elles restent du ressort de la vue, qui les résout côté serveur.
+- Le choix d'un habitat déclenche **un appel réseau** (fiche HABREF), mis en
+  cache par `cd_hab` pour la durée du formulaire. Hors connexion, aucune
+  proposition : les lignes passent en recherche libre.
 
 ## 7. API GeoNature utilisée
 

@@ -179,3 +179,47 @@ def test_colonnes_touchees_couvre_tout_le_registre():
     """Aucun champ ne doit rendre un ensemble vide : il serait jamais enregistré."""
     for champ in ch.CHAMPS:
         assert ch.colonnes_touchees(champ), champ.cle
+
+
+# ------------- la détermination et les correspondances survivent aux éditions
+def _habitat_avec_correspondances():
+    """Habitat portant une alliance ancrée et deux correspondances arbitrées."""
+    return {"cd_hab": 1204, "nom_cite": "Subularion aquaticae",
+            "technical_precision": ef.encode_eval(
+                "Relevé du 12 mai.",
+                enjeu="fort",
+                determination={"nom": "Subularion aquaticae",
+                               "ancre": "CORINE_biotopes"},
+                corresp={"EUNIS": {"cd_hab": 1672, "code": "C3.4", "src": "manuel"}},
+            )}
+
+
+def test_editer_un_champ_du_bloc_preserve_les_correspondances():
+    """La table attributaire écrit clé par clé : `merge_eval` doit garder le reste.
+
+    Sans cela, changer l'enjeu d'une ligne effacerait l'arbitrage EUNIS de la
+    même ligne — une perte silencieuse, et invisible à l'écran puisque la table
+    n'affiche pas ces clés.
+    """
+    habitat = _habitat_avec_correspondances()
+    ch.ecrire(habitat, ch.par_cle(ch.HABITAT, "enjeu"), "faible")
+    codes = ef.decode_eval(habitat["technical_precision"])
+    assert codes["enjeu"] == "faible"
+    assert codes["determination"]["nom"] == "Subularion aquaticae"
+    assert codes["corresp"]["EUNIS"] == {"cd_hab": 1672, "code": "C3.4", "src": "manuel"}
+
+
+def test_editer_le_texte_libre_preserve_les_correspondances():
+    """L'autre chemin d'écriture : `encode_eval` reconstruit le bloc entier."""
+    habitat = _habitat_avec_correspondances()
+    ch.ecrire(habitat, ch.par_cle(ch.HABITAT, "technical_precision"), "Autre remarque.")
+    codes = ef.decode_eval(habitat["technical_precision"])
+    assert ef.strip_eval(habitat["technical_precision"]) == "Autre remarque."
+    assert codes["determination"]["ancre"] == "CORINE_biotopes"
+    assert codes["corresp"]["EUNIS"]["src"] == "manuel"
+
+
+def test_les_cles_structurees_ne_sont_pas_des_champs_saisissables():
+    """Ni colonne ni éditeur : elles n'ont pas de forme scalaire à afficher."""
+    for cle in ("determination", "corresp"):
+        assert ch.par_cle(ch.HABITAT, cle) is None

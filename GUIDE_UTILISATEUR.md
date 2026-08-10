@@ -26,6 +26,7 @@ QGIS. Il couvre l'installation, la première configuration et l'usage quotidien.
 13. [Les champs « enjeu / état / zone humide / recouvrement »](#13-les-champs-enjeu--état--zone-humide--recouvrement)
 13 bis. [Brouillon, validé, et la table des stations](#13-bis-brouillon-validé-et-la-table-des-stations)
 13 ter. [Sortir une carte : la mise en page](#13-ter-sortir-une-carte--la-mise-en-page)
+13 quater. [Le catalogue des végétations et les correspondances](#13-quater-le-catalogue-des-végétations-et-les-correspondances)
 14. [Dépannage (FAQ)](#14-dépannage-faq)
 15. [Glossaire](#15-glossaire)
 
@@ -412,7 +413,13 @@ ajouter, dans le formulaire :
   Si rien n'apparaît, un message sous le champ vous dit pourquoi : **hors
   connexion** (la recherche HABREF a besoin du serveur — saisissez alors le nom
   et le code à la main), erreur du serveur, ou aucun habitat trouvé.
-- **Filtre typologie** — pour cibler la recherche (Corine, EUNIS…).
+- **Catalogue ANA** — les propositions marquées **★ Catalogue ANA** viennent du
+  *catalogue des végétations de l'Ariège* et arrivent **en tête** de liste. Elles
+  apportent l'alliance **et** ses correspondances CORINE / EUNIS / Natura 2000
+  (§13 quater). Elles restent proposées **hors connexion** : le catalogue est sur
+  votre disque.
+- **Filtre typologie** — pour cibler la recherche (Corine, EUNIS…). Il ne
+  s'applique qu'à HABREF, pas au catalogue.
 - **Déterminateur** — utilisateur connecté par défaut, saisie libre possible.
 - **Type de détermination**, **intérêt communautaire**.
 - **Technique de collecte** — **« In situ » par défaut**.
@@ -990,6 +997,94 @@ déplacez les cadres, changez les polices, exportez en PDF ou en PNG.
 > est construit sans QtWebKit, et le plugin convertit donc les blocs HTML du
 > gabarit (adresse, sources, mention du fond) en étiquettes ordinaires. Le
 > gabarit lui-même n'est pas modifié.
+
+---
+
+## 13 quater. Le catalogue des végétations et les correspondances
+
+### Pourquoi cette section existe
+
+La correspondance d'un habitat vers **CORINE, EUNIS ou Natura 2000** n'est pas
+toujours déductible du code déterminé : elle dépend du **lieu de la station**.
+Une même alliance ne se traduit pas pareil d'un polygone à l'autre — le catalogue
+de l'ANA porte d'ailleurs **quatre lignes** pour `Luzulo luzuloidis – Fagion
+sylvaticae`. Le plugin propose, vous tranchez, et **votre choix l'emporte** sur
+tout calcul automatique.
+
+### Choisir une alliance du catalogue
+
+Tapez le nom de l'alliance (ou de sa classe) dans **Nom cité**. Les propositions
+**★ Catalogue ANA** arrivent en tête :
+
+```
+★ Catalogue ANA · Luzulo luzuloidis – Fagion sylvaticae — PVF1 57.0.3.3.3 → 4 correspondances au choix
+```
+
+En la retenant, le plugin remplit le **code cd_hab**, met le **nom d'alliance**
+en nom cité, et ouvre la section **« Correspondances »**.
+
+> **Certaines alliances n'existent pas dans HABREF.** Le catalogue de l'ANA
+> diverge volontairement du Prodrome sur une quarantaine d'entrées. Le plugin
+> pose alors le code **CORINE** de la ligne comme **ancre** — un code d'emprunt,
+> parce qu'OccHab exige un code — et vous prévient :
+>
+> ⚠ *« Salicion pyrenaicae » est absente de HABREF : le code CORINE biotopes est
+> une ANCRE, pas la détermination — celle-ci est le nom cité.*
+>
+> Votre détermination n'est pas perdue : elle voyage dans le nom cité et dans les
+> exports (colonne `alliance`).
+
+### La section « Correspondances »
+
+Une ligne par typologie, **modifiable indépendamment** — vous pouvez corriger
+l'EUNIS sans toucher au CORINE :
+
+```
+▾ Correspondances (CORINE, EUNIS, Natura 2000)
+   CORINE biotopes    [— aucune —                                  ▾]  3 propositions — à choisir
+   EUNIS              [G1.672 — Hêtraies acidophiles des Pyrénées  ▾]  arbitré ici
+   Natura 2000        [9120 — Hêtraies acidophiles atlantiques…    ▾]  repris du catalogue
+   Cahiers d'habitats [1170-5 — La roche infralittorale…           ▾]  proposé par HABREF
+```
+
+Les listes affichent le **libellé** et pas seulement le code : vous choisissez
+« Hêtraies montagnardes à Luzule », pas « 41.112 ».
+
+- **Vous n'avez pas besoin de connaître les codes.** Les propositions viennent du
+  catalogue quand il connaît l'habitat, sinon des correspondances que **HABREF**
+  publie lui-même.
+- **Rien n'est choisi à votre place.** Quand plusieurs correspondances sont
+  possibles, la ligne reste vide et affiche « n propositions — à choisir ».
+- **Aucune proposition ?** La ligne devient un champ de recherche : tapez un
+  **nom** (« hêtraie », « aulnaie ») ou un code. `Autre…` en bas d'une liste fait
+  la même chose quand aucune proposition ne convient ; **↩** revient à la liste.
+- **La typologie que vous avez déterminée ne pose pas de question.** Si vous avez
+  déterminé un habitat EUNIS, la ligne EUNIS affiche son propre code et se
+  verrouille : *« A3.112 — c'est la détermination elle-même »*.
+
+### « repris », « proposé », « arbitré » : la mention compte
+
+| Mention | Ce qu'elle dit |
+|---|---|
+| *repris du catalogue* | valeur du catalogue de l'ANA, **non vérifiée** sur cette station |
+| *proposé par HABREF* | correspondance du référentiel national, **non vérifiée** |
+| *arbitré ici* | **vous** l'avez choisie — la seule qui atteste d'un contrôle |
+
+En fin de campagne, les exports permettent de retrouver ce qui reste à vérifier :
+colonne `corresp_manu` (export du plugin) et `habitat_*_source` (vue serveur).
+
+### Ce qu'il faut savoir
+
+- Le catalogue vient d'un **tableur tenu par les botanistes**, qui fait autorité.
+  Le plugin ne l'écrit jamais. Pour le corriger, corrigez le tableur et
+  redemandez un import.
+- Ces champs ne sont **pas disponibles dans les cellules de la table
+  attributaire** : une cellule n'écrit que le nom cité et le code, elle poserait
+  une ancre sans dire que c'en est une. Passez par le formulaire. Modifier
+  d'autres colonnes de la table **ne détruit pas** vos correspondances.
+- Le choix d'un habitat interroge le serveur pour ses correspondances. **Hors
+  connexion**, aucune proposition n'apparaît, mais le catalogue ANA reste
+  proposé dans le nom cité et vous gardez la main.
 
 ---
 
