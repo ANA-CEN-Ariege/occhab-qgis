@@ -3,7 +3,7 @@ name=OccHab GeoNature
 qgisMinimumVersion=3.28
 qgisMaximumVersion=3.99
 description=Offline-first data entry for GeoNature's OccHab module (habitat stations) from QGIS, with local SQLite storage and synchronisation to the GeoNature REST API.
-version=0.8.0
+version=0.8.1
 author=Cédric Roy
 email=it@ariegenature.fr
 license=GPL-3.0-or-later
@@ -32,7 +32,19 @@ icon=resources/icons/occhab.svg
 experimental=True
 deprecated=False
 
-changelog=0.8.0 - Determiner dans le catalogue des vegetations de l'Ariege,
+changelog=0.8.1 - Correction : charger un export echouait au bout de 30
+    secondes.
+    La 0.8.0 a donne une limite de temps a toutes les requetes — sans elle, un
+    serveur qui n'acheve pas sa reponse figeait QGIS pour de bon. Mais la meme
+    limite courte s'appliquait aux routes LOURDES : un export bati sur
+    v_occhab_complet fait travailler le serveur (jointures HABREF,
+    correspondances) et une page de 1000 entites depasse couramment la
+    demi-minute. Le chargement echouait sur « Read timed out » alors que rien
+    n'etait casse.
+    Deux limites desormais : 30 secondes pour les appels interactifs
+    (autocompletion, nomenclatures), 10 minutes pour les exports, la liste des
+    stations du serveur et l'export de stations.
+    0.8.0 - Determiner dans le catalogue des vegetations de l'Ariege,
     et arbitrer les correspondances entre typologies.
     Les correspondances calculees depuis HABREF ne sont pas toujours justes, et
     la bonne depend de la station : une meme alliance ne se traduit pas pareil

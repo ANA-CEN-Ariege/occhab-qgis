@@ -13,11 +13,20 @@ n'est donc importé que lorsque la synchronisation est réellement utilisée
 import requests
 
 
-#: Limite de temps de toute requête, en secondes. Sans elle, une connexion
-#: suspendue (portail captif, serveur qui n'achève pas sa réponse) fige QGIS
-#: indéfiniment : `requests` attend sans fin par défaut, et ces appels ont lieu
-#: dans le fil de l'interface.
+#: Limite de temps des requêtes INTERACTIVES (autocomplétion, nomenclatures,
+#: fiche d'un habitat), en secondes. Sans limite, une connexion suspendue
+#: (portail captif, serveur qui n'achève pas sa réponse) fige QGIS indéfiniment :
+#: `requests` attend sans fin par défaut, et ces appels ont lieu dans le fil de
+#: l'interface. 30 s y est confortable — au-delà, l'utilisateur croit déjà que
+#: l'extension a planté.
 DELAI_MAX = 30
+#: Limite des requêtes LOURDES : un export bâti sur `v_occhab_complet` fait
+#: travailler le serveur (jointures HABREF, correspondances) et une page de
+#: 1000 entités dépasse couramment la demi-minute. Leur appliquer le délai
+#: interactif faisait échouer un chargement qui n'avait besoin que de patienter —
+#: « Read timed out » là où rien n'était cassé. Une limite reste nécessaire : sans
+#: elle, un serveur muet gèle QGIS pour de bon.
+DELAI_LONG = 600
 
 
 class GeoNatureAPIError(Exception):
@@ -96,17 +105,22 @@ class GeoNatureAPIClient:
     def is_authenticated(self):
         return self.user is not None or bool(self.session.cookies)
 
-    def _make_request(self, method, endpoint, data=None, params=None):
+    def _make_request(self, method, endpoint, data=None, params=None,
+                      timeout=DELAI_MAX):
         """Requête HTTP. `endpoint` est RELATIF à api_url (ex. 'occhab/stations/').
 
         Concaténation manuelle : urljoin() écraserait le sous-chemin de api_url
         dès que endpoint commence par '/'.
+
+        `timeout` vaut le délai interactif par défaut : c'est le cas de la
+        plupart des routes. Les appels lourds passent `DELAI_LONG` — le choix est
+        fait par l'appelant, qui sait ce qu'il demande au serveur.
         """
         url = "%s/%s" % (self.api_url, endpoint.lstrip("/"))
         try:
             response = self.session.request(
                 method, url, json=data, params=params, verify=self.verify_ssl,
-                timeout=DELAI_MAX,
+                timeout=timeout,
             )
         except requests.exceptions.RequestException as exc:
             raise GeoNatureAPIError("Connexion impossible : %s" % exc)
@@ -125,10 +139,13 @@ class GeoNatureAPIClient:
 
     # ------------------------------------------------------------ stations
     def get_stations(self, params=None, geojson=False):
+        """Stations du serveur. Route LOURDE : elle peut rendre un JDD entier,
+        géométries comprises."""
         params = dict(params or {})
         if geojson:
             params["format"] = "geojson"
-        return self._make_request("GET", "occhab/stations/", params=params)
+        return self._make_request("GET", "occhab/stations/", params=params,
+                                  timeout=DELAI_LONG)
 
     def get_station(self, id_station):
         return self._make_request("GET", "occhab/stations/%s/" % id_station)
@@ -146,7 +163,8 @@ class GeoNatureAPIClient:
 
     def export_stations(self, export_format, data=None):
         return self._make_request(
-            "POST", "occhab/export_stations/%s" % export_format, data=data
+            "POST", "occhab/export_stations/%s" % export_format, data=data,
+            timeout=DELAI_LONG,
         )
 
     # ---------------------------------------------- nomenclatures & référentiels
@@ -224,7 +242,8 @@ class GeoNatureAPIClient:
         """
         params = dict(filters or {})
         params.update(limit=limit, offset=offset)
-        return self._make_request("GET", "exports/api/%s" % int(id_export), params=params)
+        return self._make_request("GET", "exports/api/%s" % int(id_export),
+                                  params=params, timeout=DELAI_LONG)
 
     def iter_export_features(self, id_export, filters=None, limit=1000,
                              pages_max=500, on_progress=None):
