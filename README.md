@@ -726,30 +726,40 @@ SELECT
     -- saisie l'emporte, il est mis à NULL. Le laisser rendre la distance de saut
     -- d'un code écarté ferait noter la qualité d'une valeur qui n'est pas celle
     -- de la colonne d'à côté.
-    CASE WHEN corresp_saisi.j -> 'CORINE_biotopes' ->> 'code' IS NOT NULL THEN corresp_saisi.j -> 'CORINE_biotopes' ->> 'code'
+    --
+    -- ⚠ `habitat_nom_*` est NULL quand le code vient de la saisie. Ce n'est pas
+    -- un oubli : résoudre ce libellé demanderait d'interroger `ref_habitats`
+    -- pour chaque habitat, et c'est précisément ce qui a fait s'effondrer
+    -- l'export en 0.8.0. La vue ne lit donc QUE ce que le bloc contient déjà —
+    -- extractions jsonb sur `eh.j`, aucune table, aucune fonction à retour
+    -- d'ensemble, aucune jointure de plus qu'en 0.7.1. Le code suffit à
+    -- identifier l'habitat, et `habitat_*_source` dit d'où il vient.
+    CASE WHEN eh.j -> 'corresp' -> 'CORINE_biotopes' ->> 'code' IS NOT NULL THEN eh.j -> 'corresp' -> 'CORINE_biotopes' ->> 'code'
          WHEN t_hab.lb_nom_typo = 'CORINE_biotopes' THEN hab.lb_code
          ELSE corine.codes END                                    AS habitat_code_corine,
-    CASE WHEN corresp_saisi.j -> 'CORINE_biotopes' ->> 'code' IS NOT NULL THEN corresp_saisi.j -> 'CORINE_biotopes' ->> 'nom'
+    CASE WHEN eh.j -> 'corresp' -> 'CORINE_biotopes' ->> 'code' IS NOT NULL THEN NULL
          WHEN t_hab.lb_nom_typo = 'CORINE_biotopes' THEN hab.lb_hab_fr
          ELSE corine.noms END                                     AS habitat_nom_corine,
-    CASE WHEN corresp_saisi.j -> 'CORINE_biotopes' ->> 'code' IS NOT NULL THEN coalesce(corresp_saisi.j -> 'CORINE_biotopes' ->> 'src', 'saisi')
+    CASE WHEN eh.j -> 'corresp' -> 'CORINE_biotopes' ->> 'code' IS NOT NULL
+              THEN coalesce(eh.j -> 'corresp' -> 'CORINE_biotopes' ->> 'src', 'saisi')
          WHEN t_hab.lb_nom_typo = 'CORINE_biotopes' THEN 'determination'
          WHEN corine.codes IS NOT NULL THEN 'habref'
     END                                                         AS habitat_corine_source,
-    CASE WHEN corresp_saisi.j -> 'CORINE_biotopes' ->> 'code' IS NOT NULL THEN NULL
+    CASE WHEN eh.j -> 'corresp' -> 'CORINE_biotopes' ->> 'code' IS NOT NULL THEN NULL
          WHEN t_hab.lb_nom_typo = 'CORINE_biotopes' THEN 0
          ELSE corine.rang END                                     AS habitat_corine_rang,
-    CASE WHEN corresp_saisi.j -> 'EUNIS' ->> 'code' IS NOT NULL THEN corresp_saisi.j -> 'EUNIS' ->> 'code'
+    CASE WHEN eh.j -> 'corresp' -> 'EUNIS' ->> 'code' IS NOT NULL THEN eh.j -> 'corresp' -> 'EUNIS' ->> 'code'
          WHEN t_hab.lb_nom_typo = 'EUNIS' THEN hab.lb_code
          ELSE eunis.codes END                                    AS habitat_code_eunis,
-    CASE WHEN corresp_saisi.j -> 'EUNIS' ->> 'code' IS NOT NULL THEN corresp_saisi.j -> 'EUNIS' ->> 'nom'
+    CASE WHEN eh.j -> 'corresp' -> 'EUNIS' ->> 'code' IS NOT NULL THEN NULL
          WHEN t_hab.lb_nom_typo = 'EUNIS' THEN hab.lb_hab_fr
          ELSE eunis.noms END                                     AS habitat_nom_eunis,
-    CASE WHEN corresp_saisi.j -> 'EUNIS' ->> 'code' IS NOT NULL THEN coalesce(corresp_saisi.j -> 'EUNIS' ->> 'src', 'saisi')
+    CASE WHEN eh.j -> 'corresp' -> 'EUNIS' ->> 'code' IS NOT NULL
+              THEN coalesce(eh.j -> 'corresp' -> 'EUNIS' ->> 'src', 'saisi')
          WHEN t_hab.lb_nom_typo = 'EUNIS' THEN 'determination'
          WHEN eunis.codes IS NOT NULL THEN 'habref'
     END                                                         AS habitat_eunis_source,
-    CASE WHEN corresp_saisi.j -> 'EUNIS' ->> 'code' IS NOT NULL THEN NULL
+    CASE WHEN eh.j -> 'corresp' -> 'EUNIS' ->> 'code' IS NOT NULL THEN NULL
          WHEN t_hab.lb_nom_typo = 'EUNIS' THEN 0
          ELSE eunis.rang END                                     AS habitat_eunis_rang,
     -- Natura 2000. Deux typologies, que « N2000 » confond souvent : le code de
@@ -761,30 +771,32 @@ SELECT
     -- deux codes N2000 ? » en fin de section correspondances. À croiser avec
     -- `interet_communautaire` plus bas, qui est la nomenclature SAISIE : un
     -- désaccord entre les deux signale une erreur ou un cas à regarder.
-    CASE WHEN corresp_saisi.j -> 'Habitats_d''intérêt_communautaire' ->> 'code' IS NOT NULL THEN corresp_saisi.j -> 'Habitats_d''intérêt_communautaire' ->> 'code'
+    CASE WHEN eh.j -> 'corresp' -> 'Habitats_d''intérêt_communautaire' ->> 'code' IS NOT NULL THEN eh.j -> 'corresp' -> 'Habitats_d''intérêt_communautaire' ->> 'code'
          WHEN t_hab.lb_nom_typo = 'Habitats_d''intérêt_communautaire' THEN hab.lb_code
          ELSE n2000.codes END                                    AS habitat_code_n2000,
-    CASE WHEN corresp_saisi.j -> 'Habitats_d''intérêt_communautaire' ->> 'code' IS NOT NULL THEN corresp_saisi.j -> 'Habitats_d''intérêt_communautaire' ->> 'nom'
+    CASE WHEN eh.j -> 'corresp' -> 'Habitats_d''intérêt_communautaire' ->> 'code' IS NOT NULL THEN NULL
          WHEN t_hab.lb_nom_typo = 'Habitats_d''intérêt_communautaire' THEN hab.lb_hab_fr
          ELSE n2000.noms END                                     AS habitat_nom_n2000,
-    CASE WHEN corresp_saisi.j -> 'Habitats_d''intérêt_communautaire' ->> 'code' IS NOT NULL THEN coalesce(corresp_saisi.j -> 'Habitats_d''intérêt_communautaire' ->> 'src', 'saisi')
+    CASE WHEN eh.j -> 'corresp' -> 'Habitats_d''intérêt_communautaire' ->> 'code' IS NOT NULL
+              THEN coalesce(eh.j -> 'corresp' -> 'Habitats_d''intérêt_communautaire' ->> 'src', 'saisi')
          WHEN t_hab.lb_nom_typo = 'Habitats_d''intérêt_communautaire' THEN 'determination'
          WHEN n2000.codes IS NOT NULL THEN 'habref'
     END                                                         AS habitat_n2000_source,
-    CASE WHEN corresp_saisi.j -> 'Habitats_d''intérêt_communautaire' ->> 'code' IS NOT NULL THEN NULL
+    CASE WHEN eh.j -> 'corresp' -> 'Habitats_d''intérêt_communautaire' ->> 'code' IS NOT NULL THEN NULL
          WHEN t_hab.lb_nom_typo = 'Habitats_d''intérêt_communautaire' THEN 0
          ELSE n2000.rang END                                     AS habitat_n2000_rang,
-    CASE WHEN corresp_saisi.j -> 'Cahiers_d''habitats' ->> 'code' IS NOT NULL THEN corresp_saisi.j -> 'Cahiers_d''habitats' ->> 'code'
+    CASE WHEN eh.j -> 'corresp' -> 'Cahiers_d''habitats' ->> 'code' IS NOT NULL THEN eh.j -> 'corresp' -> 'Cahiers_d''habitats' ->> 'code'
          WHEN t_hab.lb_nom_typo = 'Cahiers_d''habitats' THEN hab.lb_code
          ELSE cahiers.codes END                                    AS habitat_code_cahiers,
-    CASE WHEN corresp_saisi.j -> 'Cahiers_d''habitats' ->> 'code' IS NOT NULL THEN corresp_saisi.j -> 'Cahiers_d''habitats' ->> 'nom'
+    CASE WHEN eh.j -> 'corresp' -> 'Cahiers_d''habitats' ->> 'code' IS NOT NULL THEN NULL
          WHEN t_hab.lb_nom_typo = 'Cahiers_d''habitats' THEN hab.lb_hab_fr
          ELSE cahiers.noms END                                     AS habitat_nom_cahiers,
-    CASE WHEN corresp_saisi.j -> 'Cahiers_d''habitats' ->> 'code' IS NOT NULL THEN coalesce(corresp_saisi.j -> 'Cahiers_d''habitats' ->> 'src', 'saisi')
+    CASE WHEN eh.j -> 'corresp' -> 'Cahiers_d''habitats' ->> 'code' IS NOT NULL
+              THEN coalesce(eh.j -> 'corresp' -> 'Cahiers_d''habitats' ->> 'src', 'saisi')
          WHEN t_hab.lb_nom_typo = 'Cahiers_d''habitats' THEN 'determination'
          WHEN cahiers.codes IS NOT NULL THEN 'habref'
     END                                                         AS habitat_cahiers_source,
-    CASE WHEN corresp_saisi.j -> 'Cahiers_d''habitats' ->> 'code' IS NOT NULL THEN NULL
+    CASE WHEN eh.j -> 'corresp' -> 'Cahiers_d''habitats' ->> 'code' IS NOT NULL THEN NULL
          WHEN t_hab.lb_nom_typo = 'Cahiers_d''habitats' THEN 0
          ELSE cahiers.rang END                                     AS habitat_cahiers_rang,
     h.determiner                                                AS determinateur,
@@ -887,39 +899,7 @@ LEFT JOIN LATERAL (
 ) cahiers ON true
 -- Bloc ANA-EVAL décodé UNE SEULE FOIS par ligne, station puis habitat.
 LEFT JOIN LATERAL (SELECT gn_exports.ana_eval_json(s.comment)             AS j) es ON true
-LEFT JOIN LATERAL (SELECT gn_exports.ana_eval_json(h.technical_precision) AS j) eh ON true
--- Correspondances SAISIES, résolues en libellés. Le plugin n'enregistre que le
--- cd_hab et le code : le nom vient de HABREF, qui fait foi et peut le corriger
--- d'une version à l'autre — le figer dans la donnée garderait un nom périmé à
--- côté d'un code juste. Le cast n'a lieu que si la valeur est bien un entier :
--- un bloc abîmé à la main ne doit pas faire échouer la vue entière.
---
--- ⚠ La résolution du libellé passe par un LATERAL IMBRIQUÉ, et non par un
--- `LEFT JOIN ref_habitats.habref ON habref.cd_hab = …`. Ce n'est pas un détail
--- de style : `jsonb_each` est une fonction à retour d'ensemble, dont PostgreSQL
--- ignore la cardinalité (il en estime 100). Avec une jointure ordinaire, le
--- planificateur choisit un hachage et construit une table de hachage sur
--- `habref` ENTIÈRE — plusieurs centaines de milliers de lignes — à chaque
--- invocation du LATERAL, donc à chaque habitat. L'export s'effondrait et le
--- reverse-proxy rendait un 502. Sous cette forme, la seule stratégie possible
--- est la boucle imbriquée avec parcours d'index sur la clé primaire, et le
--- sous-requête n'est même pas exécutée quand l'habitat n'a pas de bloc
--- `corresp` — c'est-à-dire presque toujours.
-LEFT JOIN LATERAL (
-    SELECT jsonb_object_agg(c.cle, jsonb_build_object(
-               'code', coalesce(saisi.lb_code, c.valeur ->> 'code'),
-               'nom',  saisi.lb_hab_fr,
-               'src',  c.valeur ->> 'src'
-           )) AS j
-    FROM jsonb_each(CASE WHEN jsonb_typeof(eh.j -> 'corresp') = 'object'
-                         THEN eh.j -> 'corresp' ELSE '{}'::jsonb END) AS c(cle, valeur)
-    LEFT JOIN LATERAL (
-        SELECT h.lb_code, h.lb_hab_fr
-        FROM ref_habitats.habref h
-        WHERE h.cd_hab = CASE WHEN c.valeur ->> 'cd_hab' ~ '^[0-9]+$'
-                              THEN (c.valeur ->> 'cd_hab')::int END
-    ) saisi ON true
-) corresp_saisi ON true;
+LEFT JOIN LATERAL (SELECT gn_exports.ana_eval_json(h.technical_precision) AS j) eh ON true;
 ```
 
 #### 5. Matérialiser les correspondances

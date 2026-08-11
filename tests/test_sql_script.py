@@ -77,19 +77,30 @@ def test_les_blocs_du_readme_sont_dans_le_script():
     assert not manquants, [bloc.splitlines()[0] for bloc in manquants]
 
 
-def test_la_resolution_des_libelles_saisis_ne_joint_pas_habref_directement():
-    """`jsonb_each` sans cardinalité connue + jointure ordinaire = hachage.
+def test_les_correspondances_saisies_ne_coutent_aucune_jointure():
+    """La 0.8.0 a cassé l'export : plus jamais de table pour lire le bloc.
 
-    PostgreSQL estime 100 lignes à une fonction à retour d'ensemble, choisit un
-    hachage, et construit une table de hachage sur `ref_habitats.habref` entière
-    à chaque invocation du LATERAL — donc à chaque habitat. L'export s'effondrait
-    et le proxy rendait un 502. Le LATERAL imbriqué ne laisse que la boucle
-    imbriquée avec parcours d'index.
+    Pour résoudre le libellé d'une correspondance saisie, la vue joignait
+    `ref_habitats.habref` depuis un `jsonb_each`. PostgreSQL ignore la
+    cardinalité d'une fonction à retour d'ensemble, choisissait un hachage, et
+    construisait une table de hachage sur HABREF entière à chaque habitat.
+    L'export s'effondrait et le reverse-proxy rendait un 502.
+
+    La vue ne lit donc plus QUE ce que le bloc contient déjà. Ce test compare
+    l'arbre de jointures à celui de la version qui fonctionnait : il doit être
+    identique. Aucun test fonctionnel ne peut voir cette propriété, et elle se
+    reperd à la première relecture distraite.
     """
     code = _sans_commentaires(_lire(_SCRIPT))
-    bloc = code[code.index("jsonb_object_agg(c.cle"):]
-    bloc = bloc[: bloc.index("corresp_saisi ON true")]
-    assert "LEFT JOIN LATERAL" in bloc, "la résolution doit rester un LATERAL"
-    assert "JOIN ref_habitats.habref saisi" not in bloc, (
-        "jointure directe sur habref : le planificateur peut hacher la table entière"
+    vue = code[code.index("CREATE OR REPLACE VIEW gn_exports.v_occhab_complet"):]
+    assert "jsonb_each" not in vue, (
+        "fonction à retour d'ensemble dans la vue : cardinalité inconnue du "
+        "planificateur, donc hachage possible sur la table jointe"
     )
+    # Les seules occurrences de `ref_habitats` admises sont celles de la version
+    # qui fonctionnait : les jointures `hab` et `t_hab` sur le cd_hab de
+    # l'habitat lui-même.
+    assert vue.count("ref_habitats.habref") == 1, (
+        "une seule lecture de habref dans la vue, celle de l'habitat"
+    )
+    assert "eh.j -> 'corresp'" in vue, "les correspondances saisies se lisent dans le bloc"
