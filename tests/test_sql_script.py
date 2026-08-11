@@ -22,6 +22,7 @@ _OBJETS = (
     "CREATE OR REPLACE FUNCTION gn_exports.ana_eval_json",
     "CREATE OR REPLACE FUNCTION gn_exports.habref_famille",
     "CREATE OR REPLACE FUNCTION gn_exports.habref_equivalents",
+    "CREATE MATERIALIZED VIEW gn_exports.mv_habref_equivalents",
     "CREATE OR REPLACE VIEW gn_exports.v_occhab_complet AS",
 )
 
@@ -124,3 +125,24 @@ def test_le_bloc_ana_eval_est_decode_une_seule_fois_par_ligne():
             "le LATERAL %s doit porter la barrière, sinon la fonction est "
             "réévaluée à chaque référence" % alias
         )
+
+
+def test_les_correspondances_sont_materialisees():
+    """Le calcul à la volée met 2,5 s là où la jointure met 12 ms (README §5).
+
+    La table matérialisée n'était que dans le README, en « optimisation » ; le
+    script s'arrêtait avant. Qui l'exécutait héritait de la version lente sans
+    que rien ne le lui dise — jusqu'au 502 du reverse-proxy, dont la cause n'a
+    aucun rapport visible avec le symptôme.
+    """
+    code = _sans_commentaires(_lire(_SCRIPT))
+    assert "CREATE MATERIALIZED VIEW gn_exports.mv_habref_equivalents" in code
+    vue = code[code.index("CREATE OR REPLACE VIEW gn_exports.v_occhab_complet"):]
+    assert "habref_equivalents(h.cd_hab" not in vue, (
+        "la vue appelle encore la fonction par ligne au lieu de joindre la table"
+    )
+    assert vue.count("gn_exports.mv_habref_equivalents") == 4, (
+        "les quatre typologies doivent joindre la table matérialisée"
+    )
+    # La table se périme : le script doit dire comment la rafraîchir.
+    assert "REFRESH MATERIALIZED VIEW" in _lire(_SCRIPT)

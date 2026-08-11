@@ -873,30 +873,14 @@ LEFT JOIN LATERAL (
 -- On filtre sur le nom plutôt que sur `cd_typo`, qui varie d'une instance à
 -- l'autre — et dont un numéro recopié ne se relit pas.
 -- ⚠ Les apostrophes des libellés se DOUBLENT : 'Cahiers_d''habitats'.
-LEFT JOIN LATERAL (
-    SELECT string_agg(e.o_code, ' ; ' ORDER BY e.o_code) AS codes,
-           string_agg(e.o_nom,  ' ; ' ORDER BY e.o_code) AS noms,
-           min(e.o_rang)                                 AS rang
-    FROM gn_exports.habref_equivalents(h.cd_hab, 'CORINE_biotopes') e
-) corine ON true
-LEFT JOIN LATERAL (
-    SELECT string_agg(e.o_code, ' ; ' ORDER BY e.o_code) AS codes,
-           string_agg(e.o_nom,  ' ; ' ORDER BY e.o_code) AS noms,
-           min(e.o_rang)                                 AS rang
-    FROM gn_exports.habref_equivalents(h.cd_hab, 'EUNIS') e
-) eunis ON true
-LEFT JOIN LATERAL (
-    SELECT string_agg(e.o_code, ' ; ' ORDER BY e.o_code) AS codes,
-           string_agg(e.o_nom,  ' ; ' ORDER BY e.o_code) AS noms,
-           min(e.o_rang)                                 AS rang
-    FROM gn_exports.habref_equivalents(h.cd_hab, 'Habitats_d''intérêt_communautaire') e
-) n2000 ON true
-LEFT JOIN LATERAL (
-    SELECT string_agg(e.o_code, ' ; ' ORDER BY e.o_code) AS codes,
-           string_agg(e.o_nom,  ' ; ' ORDER BY e.o_code) AS noms,
-           min(e.o_rang)                                 AS rang
-    FROM gn_exports.habref_equivalents(h.cd_hab, 'Cahiers_d''habitats') e
-) cahiers ON true
+LEFT JOIN gn_exports.mv_habref_equivalents corine
+       ON corine.cd_hab = h.cd_hab AND corine.typologie = 'CORINE_biotopes'
+LEFT JOIN gn_exports.mv_habref_equivalents eunis
+       ON eunis.cd_hab = h.cd_hab AND eunis.typologie = 'EUNIS'
+LEFT JOIN gn_exports.mv_habref_equivalents n2000
+       ON n2000.cd_hab = h.cd_hab AND n2000.typologie = 'Habitats_d''intérêt_communautaire'
+LEFT JOIN gn_exports.mv_habref_equivalents cahiers
+       ON cahiers.cd_hab = h.cd_hab AND cahiers.typologie = 'Cahiers_d''habitats'
 -- Bloc ANA-EVAL décodé UNE SEULE FOIS par ligne, station puis habitat.
 --
 -- ⚠ `OFFSET 0` n'est pas décoratif : c'est une BARRIÈRE D'OPTIMISATION. Sans

@@ -217,7 +217,52 @@ $fn$;
 
 
 -- ----------------------------------------------------------------------------
--- Étape 4 — La vue
+-- Étape 5 — Matérialiser les correspondances
+--
+-- Les fonctions de l'étape 3 sont évaluées PAR LIGNE et enchaînent deux
+-- récursions. Mesuré sur une base à l'échelle du réel (41 000 habitats HABREF,
+-- 2 000 habitats saisis) : 63 s sans les index de l'étape 1, 2,5 s avec eux,
+-- 12 ms en joignant cette table. Sa construction coûte 5 s, une fois.
+--
+-- Ce n'est donc PAS une optimisation facultative : sans elle, l'export dépasse
+-- la limite de temps d'un reverse-proxy dès que le jeu de données grossit, et
+-- l'échec se présente en « 502 Proxy Error » sans rapport visible avec la cause.
+-- Elle vivait dans le README, et le script s'arrêtait à l'étape 4 : qui exécutait
+-- le script héritait de la version lente sans que rien ne le lui dise.
+--
+-- ⚠ ELLE SE PÉRIME. Elle est bâtie sur les `cd_hab` PRÉSENTS dans t_habitats :
+-- un habitat saisi avec un code nouveau ressortira SANS correspondance tant
+-- qu'elle n'est pas rafraîchie. D'où le REFRESH ci-dessous, à rejouer après une
+-- campagne de saisie ou une mise à jour de HABREF — et la requête de contrôle
+-- qui dit s'il y a des codes non couverts.
+-- ----------------------------------------------------------------------------
+
+DROP MATERIALIZED VIEW IF EXISTS gn_exports.mv_habref_equivalents CASCADE;
+CREATE MATERIALIZED VIEW gn_exports.mv_habref_equivalents AS
+SELECT h.cd_hab, typo.nom AS typologie,
+       string_agg(e.o_code, ' ; ' ORDER BY e.o_code) AS codes,
+       string_agg(e.o_nom,  ' ; ' ORDER BY e.o_code) AS noms,
+       min(e.o_rang)                                 AS rang
+FROM (SELECT DISTINCT cd_hab FROM pr_occhab.t_habitats WHERE cd_hab IS NOT NULL) h
+CROSS JOIN (VALUES ('CORINE_biotopes'), ('EUNIS'),
+                   ('Habitats_d''intérêt_communautaire'), ('Cahiers_d''habitats')) AS typo(nom)
+CROSS JOIN LATERAL gn_exports.habref_equivalents(h.cd_hab, typo.nom) e
+GROUP BY h.cd_hab, typo.nom;
+-- UNIQUE, pour autoriser un jour REFRESH … CONCURRENTLY (sans verrou exclusif)
+CREATE UNIQUE INDEX ON gn_exports.mv_habref_equivalents (cd_hab, typologie);
+
+-- À REJOUER après une campagne de saisie ou une mise à jour de HABREF :
+--     REFRESH MATERIALIZED VIEW gn_exports.mv_habref_equivalents;
+--
+-- CONTRÔLE — codes saisis absents de la table (donc sans correspondance) :
+--     SELECT DISTINCT h.cd_hab FROM pr_occhab.t_habitats h
+--     WHERE h.cd_hab IS NOT NULL
+--       AND NOT EXISTS (SELECT 1 FROM gn_exports.mv_habref_equivalents m
+--                       WHERE m.cd_hab = h.cd_hab);
+
+
+-- ----------------------------------------------------------------------------
+-- Étape 6 — La vue
 --
 -- Une ligne par habitat, les stations sans habitat comprises. `id_ligne` est la
 -- clé stable, unique et non nulle à déclarer côté GeoNature : l'API d'export
@@ -449,30 +494,14 @@ LEFT JOIN LATERAL (
 -- On filtre sur le nom plutôt que sur `cd_typo`, qui varie d'une instance à
 -- l'autre — et dont un numéro recopié ne se relit pas.
 -- ⚠ Les apostrophes des libellés se DOUBLENT : 'Cahiers_d''habitats'.
-LEFT JOIN LATERAL (
-    SELECT string_agg(e.o_code, ' ; ' ORDER BY e.o_code) AS codes,
-           string_agg(e.o_nom,  ' ; ' ORDER BY e.o_code) AS noms,
-           min(e.o_rang)                                 AS rang
-    FROM gn_exports.habref_equivalents(h.cd_hab, 'CORINE_biotopes') e
-) corine ON true
-LEFT JOIN LATERAL (
-    SELECT string_agg(e.o_code, ' ; ' ORDER BY e.o_code) AS codes,
-           string_agg(e.o_nom,  ' ; ' ORDER BY e.o_code) AS noms,
-           min(e.o_rang)                                 AS rang
-    FROM gn_exports.habref_equivalents(h.cd_hab, 'EUNIS') e
-) eunis ON true
-LEFT JOIN LATERAL (
-    SELECT string_agg(e.o_code, ' ; ' ORDER BY e.o_code) AS codes,
-           string_agg(e.o_nom,  ' ; ' ORDER BY e.o_code) AS noms,
-           min(e.o_rang)                                 AS rang
-    FROM gn_exports.habref_equivalents(h.cd_hab, 'Habitats_d''intérêt_communautaire') e
-) n2000 ON true
-LEFT JOIN LATERAL (
-    SELECT string_agg(e.o_code, ' ; ' ORDER BY e.o_code) AS codes,
-           string_agg(e.o_nom,  ' ; ' ORDER BY e.o_code) AS noms,
-           min(e.o_rang)                                 AS rang
-    FROM gn_exports.habref_equivalents(h.cd_hab, 'Cahiers_d''habitats') e
-) cahiers ON true
+LEFT JOIN gn_exports.mv_habref_equivalents corine
+       ON corine.cd_hab = h.cd_hab AND corine.typologie = 'CORINE_biotopes'
+LEFT JOIN gn_exports.mv_habref_equivalents eunis
+       ON eunis.cd_hab = h.cd_hab AND eunis.typologie = 'EUNIS'
+LEFT JOIN gn_exports.mv_habref_equivalents n2000
+       ON n2000.cd_hab = h.cd_hab AND n2000.typologie = 'Habitats_d''intérêt_communautaire'
+LEFT JOIN gn_exports.mv_habref_equivalents cahiers
+       ON cahiers.cd_hab = h.cd_hab AND cahiers.typologie = 'Cahiers_d''habitats'
 -- Bloc ANA-EVAL décodé UNE SEULE FOIS par ligne, station puis habitat.
 --
 -- ⚠ `OFFSET 0` n'est pas décoratif : c'est une BARRIÈRE D'OPTIMISATION. Sans
