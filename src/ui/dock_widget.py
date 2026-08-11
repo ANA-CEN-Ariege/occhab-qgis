@@ -91,14 +91,10 @@ def _libelle_de_fiche(fiche):
         valeur = fiche.get(champ)
         if isinstance(valeur, str) and valeur.strip():
             return valeur.strip()
-    return _sans_code(fiche.get("search_name"))
-
-
-def _sans_code(search_name):
-    """« 6.0.1.0.2 - Brachypodio… » → « Brachypodio… ». Vide s'il ne reste rien."""
-    if not isinstance(search_name, str) or not search_name.strip():
-        return ""
-    return _CODE_EN_TETE.sub("", search_name).strip()
+    # `nom_habref` et non `_sans_code` : l'autocomplétion répète le nom avant
+    # les auteurs (« Cynosurion cristati Cynosurion cristati Tüxen 1947 »), et
+    # c'est ce doublon qui s'afficherait dans la colonne.
+    return corresp.nom_habref(fiche.get("search_name"))
 
 
 def _code_habref(nom_cite):
@@ -1273,18 +1269,22 @@ class OccHabDockWidget(QDockWidget):
         except Exception as exc:  # noqa: BLE001 - hors ligne, code retiré…
             raisons.append(str(exc)[:60])
 
-        code = _code_habref(nom_cite)
-        if not code:
+        # Le code s'il est là, sinon le nom cité lui-même : une alliance du
+        # Prodrome est citée « Cynosurion cristati », sans code en tête. Exiger
+        # un code laissait la colonne vide pour toute une classe d'habitats
+        # alors que l'autocomplétion, elle, répond.
+        terme = _code_habref(nom_cite) or (nom_cite or "").strip()
+        if not terme:
             return "", " puis ".join(raisons) or "aucun libellé"
         try:
-            for item in self.client.search_habref(code) or []:
+            for item in self.client.search_habref(terme) or []:
                 if item.get("cd_hab") == cd_hab:
                     libelle = _libelle_de_fiche(item)
                     if libelle:
                         return libelle, ""
-            raisons.append("absent de la recherche sur « %s »" % code)
+            raisons.append("absent de la recherche sur « %s »" % terme)
         except Exception as exc:  # noqa: BLE001
-            raisons.append("recherche « %s » : %s" % (code, str(exc)[:40]))
+            raisons.append("recherche « %s » : %s" % (terme, str(exc)[:40]))
         return "", " puis ".join(raisons)
 
     def _habref_search_fn(self):
