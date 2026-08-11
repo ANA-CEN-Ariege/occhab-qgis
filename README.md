@@ -727,17 +727,20 @@ SELECT
     -- d'un code écarté ferait noter la qualité d'une valeur qui n'est pas celle
     -- de la colonne d'à côté.
     --
-    -- ⚠ `habitat_nom_*` est NULL quand le code vient de la saisie. Ce n'est pas
-    -- un oubli : résoudre ce libellé demanderait d'interroger `ref_habitats`
-    -- pour chaque habitat, et c'est précisément ce qui a fait s'effondrer
-    -- l'export en 0.8.0. La vue ne lit donc QUE ce que le bloc contient déjà —
-    -- extractions jsonb sur `eh.j`, aucune table, aucune fonction à retour
-    -- d'ensemble, aucune jointure de plus qu'en 0.7.1. Le code suffit à
-    -- identifier l'habitat, et `habitat_*_source` dit d'où il vient.
+    -- Le LIBELLÉ d'une correspondance saisie vient du bloc lui aussi : le plugin
+    -- l'enregistre avec le code depuis la 0.9.1. Une première version le mettait
+    -- à NULL pour éviter d'interroger `ref_habitats` par habitat — ce qui avait
+    -- fait s'effondrer l'export en 0.8.0 — mais la légende d'une carte affichait
+    -- alors « C1.32 » tout court, et une carte d'habitats se lit par ses noms.
+    -- La vue ne lit donc QUE ce que le bloc contient déjà : extractions jsonb sur
+    -- `eh.j`, aucune table, aucune fonction à retour d'ensemble, aucune jointure
+    -- de plus qu'en 0.7.1. Les correspondances enregistrées AVANT la 0.9.1 n'ont
+    -- pas de libellé stocké et ressortent avec leur seul code jusqu'à
+    -- réenregistrement de l'habitat.
     CASE WHEN eh.j -> 'corresp' -> 'CORINE_biotopes' ->> 'code' IS NOT NULL THEN eh.j -> 'corresp' -> 'CORINE_biotopes' ->> 'code'
          WHEN t_hab.lb_nom_typo = 'CORINE_biotopes' THEN hab.lb_code
          ELSE corine.codes END                                    AS habitat_code_corine,
-    CASE WHEN eh.j -> 'corresp' -> 'CORINE_biotopes' ->> 'code' IS NOT NULL THEN NULL
+    CASE WHEN eh.j -> 'corresp' -> 'CORINE_biotopes' ->> 'code' IS NOT NULL THEN eh.j -> 'corresp' -> 'CORINE_biotopes' ->> 'nom'
          WHEN t_hab.lb_nom_typo = 'CORINE_biotopes' THEN hab.lb_hab_fr
          ELSE corine.noms END                                     AS habitat_nom_corine,
     CASE WHEN eh.j -> 'corresp' -> 'CORINE_biotopes' ->> 'code' IS NOT NULL
@@ -751,7 +754,7 @@ SELECT
     CASE WHEN eh.j -> 'corresp' -> 'EUNIS' ->> 'code' IS NOT NULL THEN eh.j -> 'corresp' -> 'EUNIS' ->> 'code'
          WHEN t_hab.lb_nom_typo = 'EUNIS' THEN hab.lb_code
          ELSE eunis.codes END                                    AS habitat_code_eunis,
-    CASE WHEN eh.j -> 'corresp' -> 'EUNIS' ->> 'code' IS NOT NULL THEN NULL
+    CASE WHEN eh.j -> 'corresp' -> 'EUNIS' ->> 'code' IS NOT NULL THEN eh.j -> 'corresp' -> 'EUNIS' ->> 'nom'
          WHEN t_hab.lb_nom_typo = 'EUNIS' THEN hab.lb_hab_fr
          ELSE eunis.noms END                                     AS habitat_nom_eunis,
     CASE WHEN eh.j -> 'corresp' -> 'EUNIS' ->> 'code' IS NOT NULL
@@ -774,7 +777,7 @@ SELECT
     CASE WHEN eh.j -> 'corresp' -> 'Habitats_d''intérêt_communautaire' ->> 'code' IS NOT NULL THEN eh.j -> 'corresp' -> 'Habitats_d''intérêt_communautaire' ->> 'code'
          WHEN t_hab.lb_nom_typo = 'Habitats_d''intérêt_communautaire' THEN hab.lb_code
          ELSE n2000.codes END                                    AS habitat_code_n2000,
-    CASE WHEN eh.j -> 'corresp' -> 'Habitats_d''intérêt_communautaire' ->> 'code' IS NOT NULL THEN NULL
+    CASE WHEN eh.j -> 'corresp' -> 'Habitats_d''intérêt_communautaire' ->> 'code' IS NOT NULL THEN eh.j -> 'corresp' -> 'Habitats_d''intérêt_communautaire' ->> 'nom'
          WHEN t_hab.lb_nom_typo = 'Habitats_d''intérêt_communautaire' THEN hab.lb_hab_fr
          ELSE n2000.noms END                                     AS habitat_nom_n2000,
     CASE WHEN eh.j -> 'corresp' -> 'Habitats_d''intérêt_communautaire' ->> 'code' IS NOT NULL
@@ -788,7 +791,7 @@ SELECT
     CASE WHEN eh.j -> 'corresp' -> 'Cahiers_d''habitats' ->> 'code' IS NOT NULL THEN eh.j -> 'corresp' -> 'Cahiers_d''habitats' ->> 'code'
          WHEN t_hab.lb_nom_typo = 'Cahiers_d''habitats' THEN hab.lb_code
          ELSE cahiers.codes END                                    AS habitat_code_cahiers,
-    CASE WHEN eh.j -> 'corresp' -> 'Cahiers_d''habitats' ->> 'code' IS NOT NULL THEN NULL
+    CASE WHEN eh.j -> 'corresp' -> 'Cahiers_d''habitats' ->> 'code' IS NOT NULL THEN eh.j -> 'corresp' -> 'Cahiers_d''habitats' ->> 'nom'
          WHEN t_hab.lb_nom_typo = 'Cahiers_d''habitats' THEN hab.lb_hab_fr
          ELSE cahiers.noms END                                     AS habitat_nom_cahiers,
     CASE WHEN eh.j -> 'corresp' -> 'Cahiers_d''habitats' ->> 'code' IS NOT NULL

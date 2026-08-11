@@ -314,17 +314,22 @@ class CorrespondancesEdit(QWidget):
             self._rafraichir(cle)
 
     def get_data(self):
-        """{typologie: {cd_hab, code, src}} — None si rien n'est renseigné.
+        """{typologie: {cd_hab, code, nom, src}} — None si rien n'est renseigné.
 
-        Le libellé n'est pas enregistré : il vient de HABREF, qui fait foi et
-        peut le corriger d'une version à l'autre. Le figer dans la donnée, c'est
-        garder un nom périmé à côté d'un code juste.
+        Le libellé EST enregistré, contrairement à ce qu'une première version
+        avait décidé. L'argument — HABREF fait foi et peut le corriger d'une
+        version à l'autre — vaut pour la donnée, pas pour la carte : sans nom
+        stocké, la légende d'un export affichait « C1.32 » tout court, et une
+        carte d'habitats se lit par ses noms. Un libellé légèrement daté vaut
+        mieux qu'un code nu. Le `cd_hab` reste ce qui fait autorité.
         """
         propre = {}
         for cle, valeurs in self._valeurs.items():
             entree = {"cd_hab": valeurs["cd_hab"]}
             if valeurs.get("code"):
                 entree["code"] = valeurs["code"]
+            if valeurs.get("nom"):
+                entree["nom"] = valeurs["nom"]
             if valeurs.get("src") in SOURCES_CORRESPONDANCE:
                 entree["src"] = valeurs["src"]
             propre[cle] = entree

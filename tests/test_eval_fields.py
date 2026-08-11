@@ -371,3 +371,24 @@ def test_merge_efface_les_correspondances_sans_toucher_au_reste():
                            corresp={"EUNIS": {"cd_hab": 5678}})
     apres = ef.decode_eval(ef.merge_eval(texte, determination=None, corresp=None))
     assert apres == {"enjeu": "fort"}
+
+
+def test_le_libelle_d_une_correspondance_est_conserve():
+    """Sans lui, la légende d'une carte affiche « C1.32 » tout court.
+
+    Une première version ne l'enregistrait pas — HABREF fait foi et peut le
+    corriger d'une version à l'autre. L'argument vaut pour la donnée, pas pour
+    la carte : un libellé légèrement daté vaut mieux qu'un code nu.
+    """
+    texte = ef.encode_eval("", corresp={"EUNIS": {
+        "cd_hab": 1778, "code": "F9.1", "nom": "Fourrés ripicoles", "src": "manuel"}})
+    assert ef.decode_eval(texte)["corresp"]["EUNIS"] == {
+        "cd_hab": 1778, "code": "F9.1", "nom": "Fourrés ripicoles", "src": "manuel"}
+
+
+def test_une_correspondance_sans_libelle_reste_valide():
+    """Les correspondances enregistrées avant la 0.9.1 n'en ont pas."""
+    codes = ef.decode_eval(ef.encode_eval("", corresp={
+        "EUNIS": {"cd_hab": 1778, "code": "F9.1", "src": "manuel"}}))
+    assert "nom" not in codes["corresp"]["EUNIS"]
+    assert codes["corresp"]["EUNIS"]["code"] == "F9.1"

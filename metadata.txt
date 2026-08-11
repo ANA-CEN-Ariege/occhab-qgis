@@ -3,7 +3,7 @@ name=OccHab GeoNature
 qgisMinimumVersion=3.28
 qgisMaximumVersion=3.99
 description=Offline-first data entry for GeoNature's OccHab module (habitat stations) from QGIS, with local SQLite storage and synchronisation to the GeoNature REST API.
-version=0.9.0
+version=0.9.1
 author=Cédric Roy
 email=it@ariegenature.fr
 license=GPL-3.0-or-later
@@ -32,7 +32,20 @@ icon=resources/icons/occhab.svg
 experimental=True
 deprecated=False
 
-changelog=0.9.0 - Cartographier dans une autre typologie que celle de saisie.
+changelog=0.9.1 - Correction : la legende n'affichait que le code d'une
+    correspondance arbitree.
+    Une carte chargee en EUNIS montrait « C1.32 » ou « E2.1 » tout court, la ou
+    les habitats sans correspondance affichaient bien leur nom. Une carte
+    d'habitats se lit par ses noms, pas par ses codes.
+    Cause : le libelle d'une correspondance n'etait pas enregistre. HABREF fait
+    foi et peut le corriger d'une version a l'autre — l'argument vaut pour la
+    donnee, pas pour la carte. Il est desormais enregistre avec le code, et la
+    vue le restitue (une extraction du bloc, aucune table interrogee).
+    A REDEPLOYER : psql -d geonature -f sql/v_occhab_complet.sql
+    Les correspondances enregistrees AVANT cette version n'ont pas de libelle
+    stocke : elles continuent d'afficher leur seul code jusqu'a reenregistrement
+    de l'habitat.
+    0.9.0 - Cartographier dans une autre typologie que celle de saisie.
     On determine dans la typologie qui convient au terrain — souvent le Prodrome
     des vegetations, a l'alliance, ou CORINE biotopes. Une restitution Natura
     2000, elle, se lit en codes N2000. « Charger un export du serveur » propose
