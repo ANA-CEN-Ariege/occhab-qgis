@@ -1969,6 +1969,26 @@ fait vite détester :
 
 ---
 
+### Cartographier dans une autre typologie
+
+Le dialogue « Charger un export du serveur » propose une **typologie de carte**,
+distincte de celle de saisie : l'habitat est identifié par son code et son nom
+dans la typologie demandée (`habitat_code_*` / `habitat_nom_*` de la vue), et
+`habitat_style.cle_habitat` regroupe les couleurs là-dessus. Le libellé de
+légende suit le même choix — sinon la légende nommerait un habitat autrement que
+la couleur ne le regroupe.
+
+Un habitat **sans correspondance** retombe sur l'habitat saisi. Une carte ne doit
+pas perdre un polygone parce que HABREF ne sait pas le traduire : mieux vaut un
+habitat exprimé dans une autre typologie qu'un trou dans la légende. Trois tests
+verrouillent ce repli, ainsi que l'identité du comportement quand aucune
+typologie n'est demandée.
+
+Les choix proposés sont **dérivés** de `referentiels.TYPOLOGIES_CORRESPONDANCE` :
+ajouter une typologie à la vue la fait apparaître dans le menu sans autre
+changement. Le Prodrome n'y figure pas — la vue ne le calcule pas, et les
+déterminations de l'ANA y sont déjà, donc « Habitat saisi » donne cette carte.
+
 ## 6 quater. Déterminer dans le catalogue des végétations, arbitrer les correspondances
 
 ### Le problème

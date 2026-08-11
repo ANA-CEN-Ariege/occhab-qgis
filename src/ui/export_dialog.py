@@ -26,6 +26,7 @@ from qgis.PyQt.QtWidgets import (
     QWidget,
 )
 
+from ..processing.referentiels import TYPOLOGIES_CORRESPONDANCE
 from .dialog_size import (ajuster_a_l_ecran, borner_largeur_combos,
                           rendre_defilant)
 from .export_layers import MODE_DEFAUT, MODES
@@ -162,6 +163,22 @@ class ExportPicker(QDialog):
         self.combo_mode.currentIndexChanged.connect(self._maj_aide_mode)
         form.addRow("Mosaïques", self.combo_mode)
 
+        # Typologie de la CARTE, distincte de celle de saisie : un botaniste
+        # détermine en PVF ou en CORINE, mais une restitution Natura 2000 se lit
+        # en codes N2000. La couleur, le regroupement et la légende suivent
+        # ensemble — sans quoi la légende nommerait autrement que la couleur ne
+        # regroupe.
+        self.combo_typologie = QComboBox()
+        self.combo_typologie.addItem("Habitat saisi (tel que déterminé)", None)
+        for _cle, libelle, court in TYPOLOGIES_CORRESPONDANCE:
+            self.combo_typologie.addItem(libelle, court)
+        self.combo_typologie.setToolTip(
+            "Cartographier les habitats dans cette typologie. Un habitat sans "
+            "correspondance garde son habitat saisi plutôt que de disparaître "
+            "de la légende."
+        )
+        form.addRow("Typologie de la carte", self.combo_typologie)
+
         self._maj_avertissement()
 
         self.label_mode = QLabel()
@@ -222,6 +239,14 @@ class ExportPicker(QDialog):
         compte des stations en attente parleraient de trois choses à la fois.
         """
         return self._id_dataset
+
+    def typologie(self):
+        """Nom court de la typologie de restitution, ou None (habitat saisi)."""
+        return self.combo_typologie.currentData()
+
+    def libelle_typologie(self):
+        """Libellé du choix, pour le nom de la couche."""
+        return self.combo_typologie.currentText()
 
     def mode(self):
         """Représentation retenue pour les stations à plusieurs habitats."""

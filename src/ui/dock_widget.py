@@ -1559,10 +1559,11 @@ class OccHabDockWidget(QDockWidget):
         if not dialog.exec():
             return
         self._charger_export(dialog.id_export(), dialog.libelle_export(),
-                             dialog.filtres(), dialog.mode(), dialog.libelle_mode())
+                             dialog.filtres(), dialog.mode(), dialog.libelle_mode(),
+                             dialog.typologie(), dialog.libelle_typologie())
 
     def _charger_export(self, id_export, libelle, filtres, mode=None,
-                        libelle_mode=None):
+                        libelle_mode=None, typologie=None, libelle_typologie=None):
         """Rapatrier toutes les pages d'un export et le poser en couche."""
         from qgis.PyQt.QtCore import Qt as _Qt
         from qgis.PyQt.QtWidgets import QApplication
@@ -1570,6 +1571,12 @@ class OccHabDockWidget(QDockWidget):
         # Le mode figure dans le nom : deux représentations des mêmes données
         # doivent pouvoir cohabiter pour être comparées.
         nom_couche = self._nom_couche_export(libelle, filtres)
+        if typologie:
+            # La typologie AVANT le mode : c'est elle qui change ce que la carte
+            # dit, quand le mode ne change que la façon de le dessiner. Deux
+            # cartes du même export dans deux typologies doivent se distinguer
+            # au premier coup d'œil dans le panneau des couches.
+            nom_couche = "%s [%s]" % (nom_couche, libelle_typologie)
         if libelle_mode:
             nom_couche = "%s [%s]" % (nom_couche, libelle_mode.lower())
         QApplication.setOverrideCursor(_Qt.CursorShape.WaitCursor)
@@ -1594,7 +1601,8 @@ class OccHabDockWidget(QDockWidget):
                 "et cette période." % libelle,
             )
             return
-        layer, count = self.export_layers.show(nom_couche, features, mode=mode)
+        layer, count = self.export_layers.show(nom_couche, features, mode=mode,
+                                               typologie=typologie)
         if layer is None:
             QMessageBox.warning(
                 self, "OccHab",

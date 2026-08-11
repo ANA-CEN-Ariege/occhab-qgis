@@ -3,7 +3,7 @@ name=OccHab GeoNature
 qgisMinimumVersion=3.28
 qgisMaximumVersion=3.99
 description=Offline-first data entry for GeoNature's OccHab module (habitat stations) from QGIS, with local SQLite storage and synchronisation to the GeoNature REST API.
-version=0.8.1
+version=0.9.0
 author=Cédric Roy
 email=it@ariegenature.fr
 license=GPL-3.0-or-later
@@ -32,7 +32,21 @@ icon=resources/icons/occhab.svg
 experimental=True
 deprecated=False
 
-changelog=0.8.1 - Correction : l'export du serveur ne se chargeait plus (502).
+changelog=0.9.0 - Cartographier dans une autre typologie que celle de saisie.
+    On determine dans la typologie qui convient au terrain — souvent le Prodrome
+    des vegetations, a l'alliance, ou CORINE biotopes. Une restitution Natura
+    2000, elle, se lit en codes N2000. « Charger un export du serveur » propose
+    donc une TYPOLOGIE DE LA CARTE : CORINE biotopes, EUNIS, Natura 2000,
+    Cahiers d'habitats, ou l'habitat saisi tel que determine (par defaut).
+    La couleur, le regroupement en legende et le libelle suivent ENSEMBLE : deux
+    habitats partageant un meme code EUNIS deviennent une seule entree de
+    legende, d'une seule couleur.
+    Un habitat SANS correspondance garde son habitat saisi au lieu de
+    disparaitre : mieux vaut un habitat exprime dans une autre typologie qu'un
+    trou dans la legende. Le choix figure dans le nom de la couche, pour que deux
+    cartes du meme export se distinguent.
+    Rien ne change dans les donnees : c'est une lecture, pas une conversion.
+    0.8.1 - Correction : l'export du serveur ne se chargeait plus (502).
     Cause : les correspondances entre typologies etaient calculees A LA VOLEE,
     ligne par ligne, par deux fonctions recursives sur HABREF. Mesure sur une
     base a l'echelle du reel : 63 s sans index, 2,5 s avec, 12 ms en joignant une

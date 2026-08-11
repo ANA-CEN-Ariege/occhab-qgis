@@ -471,10 +471,16 @@ class ExportLayerManager:
         self._directory = str(directory)
         self.logger = logger
 
-    def show(self, libelle, features, mode=MODE_DEFAUT):
+    def show(self, libelle, features, mode=MODE_DEFAUT, typologie=None):
         """Charger `features` (liste GeoJSON) sous le nom `libelle`.
 
         `mode` choisit la représentation des mosaïques (cf. `MODES`).
+
+        `typologie` (nom court : « corine », « eunis »…) cartographie les
+        habitats dans CETTE typologie plutôt que dans celle où ils ont été
+        déterminés — couleur, regroupement et légende suivent ensemble. Un
+        habitat sans correspondance garde son habitat saisi : une carte ne doit
+        pas perdre un polygone parce que HABREF ne sait pas le traduire.
 
         Returns:
             (QgsVectorLayer ou None, nombre d'entités réellement chargées).
@@ -486,8 +492,8 @@ class ExportLayerManager:
         # fichier pour que la couche les porte (et qu'on puisse les relire dans
         # la table attributaire). `palette` en fait partie — elle repose la
         # couleur sur chaque entité, dont le rendu des mosaïques a besoin.
-        hs.enrichir(features)
-        palette = hs.palette(features)
+        hs.enrichir(features, typologie=typologie)
+        palette = hs.palette(features, typologie)
         especes = pee.palette(features) if mode == MODE_PEE else ()
         # Chaque mode a ses besoins : inutile de payer la dichotomie des bandes
         # pour un semis de points.

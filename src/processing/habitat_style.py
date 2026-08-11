@@ -527,8 +527,26 @@ def _squelette(nom):
     return "-".join(membre.split()[0] for membre in membres)
 
 
-def cle_habitat(feature):
+def _correspondance(props, typologie):
+    """(nom, code) de l'habitat dans `typologie`, ou None s'il n'en a pas.
+
+    `None` déclenche le REPLI sur l'habitat saisi : une carte ne doit pas perdre
+    un polygone parce que HABREF ne sait pas le traduire. Mieux vaut un habitat
+    exprimé dans une autre typologie qu'un trou dans la légende.
+    """
+    if not typologie:
+        return None
+    nom = props.get("habitat_nom_%s" % typologie)
+    code = props.get("habitat_code_%s" % typologie)
+    return (nom, code) if (nom or code) else None
+
+
+def cle_habitat(feature, typologie=None):
     """Identité de l'habitat pour la couleur : son NOM HABREF, sinon le cd_hab.
+
+    `typologie` (nom court : « corine », « eunis »…) demande de cartographier
+    l'habitat dans CETTE typologie plutôt que dans celle où il a été déterminé.
+    Sans correspondance, on retombe sur l'habitat saisi.
 
     Le `cd_hab` semblait l'identifiant sûr. Il crée en fait des doublons de
     légende : HABREF porte plusieurs `cd_hab` pour un même syntaxon — la même
@@ -542,6 +560,13 @@ def cle_habitat(feature):
     Repli sur le nom cité puis sur le cd_hab quand il manque.
     """
     props = _proprietes(feature)
+    correspondance = _correspondance(props, typologie)
+    if correspondance is not None:
+        nom, code = correspondance
+        # Le nom d'abord, pour la même raison que plus bas : il regroupe les
+        # entrées HABREF en double. Le code seul quand la vue n'a pas résolu le
+        # libellé — c'est le cas d'une correspondance saisie.
+        return "nom:%s" % _squelette(nom) if nom else "code:%s" % code
     for valeur in (props.get("habitat"), props.get("nom_cite")):
         if valeur:
             return "nom:%s" % _squelette(valeur)
@@ -549,11 +574,19 @@ def cle_habitat(feature):
     return "cd:%s" % cd_hab if cd_hab not in (None, "") else None
 
 
-def libelle_habitat(feature):
-    """Libellé de légende : nom de l'habitat suivi de son code."""
+def libelle_habitat(feature, typologie=None):
+    """Libellé de légende : nom de l'habitat suivi de son code.
+
+    Suit le même choix de typologie que `cle_habitat` — sans quoi la légende
+    nommerait un habitat autrement que la couleur ne le regroupe.
+    """
     props = _proprietes(feature)
-    nom = props.get("habitat") or props.get("nom_cite")
-    code = props.get("code_habref") or props.get("habitat_code_eunis")
+    correspondance = _correspondance(props, typologie)
+    if correspondance is not None:
+        nom, code = correspondance
+    else:
+        nom = props.get("habitat") or props.get("nom_cite")
+        code = props.get("code_habref") or props.get("habitat_code_eunis")
     if nom and code:
         return "%s (%s)" % (nom, str(code).split(_SEPARATEUR.strip())[0].strip())
     return nom or (str(code) if code else LIBELLE_INCONNU)
@@ -601,7 +634,7 @@ def _bandes(classement):
     return bornes
 
 
-def enrichir(features, cle_station="id_station"):
+def enrichir(features, cle_station="id_station", typologie=None):
     """Ajouter les champs de style aux entités (mute et renvoie la liste).
 
     Un seul parcours par station : l'habitat dominant reçoit `est_dominant`, et
@@ -637,7 +670,7 @@ def enrichir(features, cle_station="id_station"):
             # relire une carte dont les habitats viennent de référentiels
             # différents, et pour repérer ce qui n'a pu être rattaché.
             props[CHAMP_SOURCE] = source
-            props[CHAMP_CLE] = cle_habitat(feature) or CLASSE_INCONNUE
+            props[CHAMP_CLE] = cle_habitat(feature, typologie) or CLASSE_INCONNUE
             props[CHAMP_DOMINANT] = 1 if feature is dominant else 0
             props[CHAMP_RANG] = classement.index(feature)
             props[CHAMP_MOSAIQUE] = 1 if mosaique else 0
@@ -758,7 +791,7 @@ def _rattacher_les_homonymes(features):
     return features
 
 
-def palette(features):
+def palette(features, typologie=None):
     """Couleurs à poser, groupées par grand milieu.
 
     Returns:
@@ -778,7 +811,7 @@ def palette(features):
         cle = props.get(CHAMP_CLE) or CLASSE_INCONNUE
         classe = props.get(CHAMP_CLASSE) or CLASSE_INCONNUE
         habitats = par_classe.setdefault(classe, {})
-        libelle = libelle_habitat(feature)
+        libelle = libelle_habitat(feature, typologie)
         ancien = habitats.get(cle)
         # Plusieurs entrées HABREF derrière une même clé : on affiche la plus
         # RENSEIGNÉE. « Brachypodio rupestris-Centaureion nemoralis (6.0.1.0.2) »

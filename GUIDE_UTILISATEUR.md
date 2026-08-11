@@ -550,6 +550,36 @@ décodés), chargée en **couche QGIS en lecture seule**.
    31 décembre) ; modifiable, ou décochez **« Restreindre à une période »** pour
    tout rapatrier. Sont retenues les stations dont les dates de début **et** de
    fin tombent dans l'intervalle.
+4. Choisissez la **typologie de la carte** — voir juste en dessous.
+
+#### Cartographier dans une autre typologie que celle de saisie
+
+Vous déterminez dans la typologie qui convient au terrain — souvent le
+**Prodrome des végétations**, à l'alliance, ou **CORINE biotopes**. Une
+restitution Natura 2000, elle, se lit en codes N2000. Le menu **« Typologie de
+la carte »** traduit la couche sans rien changer à vos données :
+
+| Choix | Ce que la carte montre |
+|---|---|
+| **Habitat saisi** *(par défaut)* | l'habitat tel que vous l'avez déterminé |
+| CORINE biotopes · EUNIS · Natura 2000 · Cahiers d'habitats | l'habitat **traduit** dans cette typologie |
+
+La **couleur**, le **regroupement** en légende et le **libellé** suivent
+ensemble : deux habitats qui partagent un même code EUNIS deviennent une seule
+entrée de légende, d'une seule couleur.
+
+> **Un habitat sans correspondance ne disparaît pas.** S'il n'a pas d'équivalent
+> dans la typologie demandée, il garde son **habitat saisi** — mieux vaut un
+> habitat exprimé dans une autre typologie qu'un trou dans la légende. Vous
+> pouvez donc obtenir une carte qui mélange les deux ; c'est voulu, et
+> l'infobulle de chaque polygone dit d'où vient ce qu'il porte.
+
+Le choix figure dans le **nom de la couche** (`… [EUNIS]`), pour que deux cartes
+du même export se distinguent dans le panneau. Rien n'empêche de charger le même
+export deux fois, dans deux typologies, et de les comparer.
+
+> Le Prodrome n'est pas dans la liste : vos déterminations y sont déjà, donc
+> **« Habitat saisi »** donne exactement cette carte-là.
 
 #### Les couleurs de la couche
 

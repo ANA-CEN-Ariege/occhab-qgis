@@ -676,3 +676,54 @@ def test_la_classe_pvf_ne_deteint_pas_sur_un_habitat_deja_rattache():
     hs.enrichir(features)
     assert features[0]["properties"][hs.CHAMP_CLASSE] == "F"
     assert features[1]["properties"][hs.CHAMP_CLASSE] == "G"
+
+
+# ---------------------------- cartographier dans une AUTRE typologie que la saisie
+def _entite(**props):
+    return {"type": "Feature", "properties": dict(props),
+            "geometry": {"type": "Point", "coordinates": [0, 0]}}
+
+
+def test_la_typologie_choisie_decide_de_l_identite():
+    """Un botaniste détermine en PVF ou en CORINE ; une restitution N2000 se lit
+    en codes N2000. La couleur doit regrouper sur la typologie demandée."""
+    feature = _entite(habitat="Hêtraies à Luzule", nom_cite="Luzulo-Fagion",
+                      cd_hab=16402, habitat_nom_eunis="Hêtraies acidophiles",
+                      habitat_code_eunis="G1.62")
+    assert hs.cle_habitat(feature, "eunis") != hs.cle_habitat(feature)
+    assert hs.cle_habitat(feature, "eunis") == "nom:hêtraies acidophiles"
+
+
+def test_sans_correspondance_on_retombe_sur_l_habitat_saisi():
+    """Une carte ne doit pas perdre un polygone parce que HABREF ne sait pas le
+    traduire : mieux vaut un habitat dans une autre typologie qu'un trou."""
+    feature = _entite(habitat="Salicion pyrenaicae", nom_cite="Salicion pyrenaicae",
+                      cd_hab=1204)
+    assert hs.cle_habitat(feature, "eunis") == hs.cle_habitat(feature)
+    assert hs.cle_habitat(feature, "eunis") is not None
+
+
+def test_le_code_seul_suffit_a_identifier():
+    """La vue laisse `habitat_nom_*` vide quand le code vient de la saisie."""
+    feature = _entite(habitat="Chênaies", cd_hab=1261, habitat_code_eunis="G1.A1")
+    assert hs.cle_habitat(feature, "eunis") == "code:G1.A1"
+
+
+def test_la_legende_suit_le_meme_choix():
+    """Sinon la légende nommerait un habitat autrement que la couleur ne le
+    regroupe."""
+    feature = _entite(habitat="Hêtraies à Luzule", code_habref="41.112",
+                      habitat_nom_eunis="Hêtraies acidophiles",
+                      habitat_code_eunis="G1.62")
+    assert hs.libelle_habitat(feature, "eunis") == "Hêtraies acidophiles (G1.62)"
+    assert hs.libelle_habitat(feature) == "Hêtraies à Luzule (41.112)"
+
+
+def test_sans_typologie_rien_ne_change():
+    """Le défaut reste l'habitat saisi : la carte d'avant doit être identique."""
+    feature = _entite(habitat="Chênaies-charmaies", cd_hab=1261,
+                      habitat_nom_eunis="Autre chose", habitat_code_eunis="G1.A1")
+    assert hs.cle_habitat(feature, None) == hs.cle_habitat(feature)
+    # La clé est normalisée (minuscules, squelette de genres) : on compare donc
+    # au comportement d'origine, pas à une chaîne devinée.
+    assert hs.cle_habitat(feature) == "nom:chênaies-charmaies"
