@@ -2421,6 +2421,7 @@ class OccHabDockWidget(QDockWidget):
                 habref_labels=self._libelles_habref(stations),
                 # Pour choisir un habitat en masse comme dans le formulaire.
                 habref_search=self._habref_search_fn(),
+                habref_detail=self._habref_detail_fn(),
                 typologies=self._habref_typologies(),
                 observers=self._observers_items(),
                 cd_typo=self._last_cd_typo(),

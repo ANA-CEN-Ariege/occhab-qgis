@@ -32,6 +32,10 @@ EXCLUDE_DIRS = {
 EXCLUDE_GLOBS = [
     "*.pyc", "*.pyo", "*.db", "*.sqlite", "*.sqlite3", "*.log",
     "*.qgz", "*.qgs~", "*.swp", ".coverage", "*.egg-info",
+    # Le catalogue des botanistes est la SOURCE du dictionnaire, versionnée dans
+    # le dépôt — pas une ressource d'exécution. L'embarquer alourdirait le paquet
+    # de 100 Ko sans que l'extension le lise jamais.
+    "*.xlsx",
 ]
 # Fichiers dev exclus à la racine du plugin.
 EXCLUDE_TOP_FILES = {"package.py"}

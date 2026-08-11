@@ -62,7 +62,7 @@ from ..processing import champs as ch
 from ..processing import correspondances as corresp
 from ..processing.correspondances import Catalogue
 from ..processing.grille import Grille
-from ..processing.referentiels import label_for
+from ..processing.referentiels import TYPOLOGIES_CORRESPONDANCE, label_for
 from ..processing.tableur import tsv
 from .dialog_size import ajuster_a_l_ecran, borner_largeur_combos
 from .habref_widget import HabrefLineEdit, HabrefSearchEdit
@@ -119,12 +119,17 @@ class Contexte:
     """
 
     def __init__(self, nomenclatures=None, datasets=None, habref_labels=None,
-                 habref_search=None,
+                 habref_search=None, habref_detail=None,
                  typologies=None, observers=None, cd_typo=None):
         # {clé de champ: [(id_nomenclature, libellé)]}
         self.nomenclatures = nomenclatures or {}
         self.datasets = datasets or []  # [(id_dataset, nom)]
         self.habref_search = habref_search  # callable(texte, cd_typo) ou None
+        # callable(cd_hab) -> fiche HABREF. Elle porte les correspondances que le
+        # référentiel connaît : sans elle, l'édition en masse ne peut proposer que
+        # ce que le catalogue de l'ANA sait, et un habitat déterminé hors
+        # catalogue n'a qu'un champ de recherche vide.
+        self.habref_detail = habref_detail
         # {cd_hab: libellé HABREF}. Rempli par le dock, qui le garde d'une
         # session à l'autre : interroger le référentiel pour chaque ligne à
         # chaque ouverture de la table serait insupportable.
@@ -612,6 +617,7 @@ class AppliquerDialog(QDialog):
         # propose rien, car une correspondance juste pour l'un serait
         # fausse pour l'autre.
         self._cd_habs = set(cd_habs or ())
+        self._candidats = None  # résolus à la demande, une seule fois
         self._editeurs = {}  # (niveau, cle) -> (case, widget, champ)
 
         layout = QVBoxLayout(self)
@@ -775,11 +781,33 @@ class AppliquerDialog(QDialog):
         Il faut que les lignes visées décrivent le MÊME habitat : proposer les
         correspondances de l'un pour les appliquer à l'autre écrirait une donnée
         fausse sur tout un lot.
+
+        Deux sources, comme au formulaire : le catalogue de l'ANA s'il connaît cet
+        habitat, sinon les correspondances que HABREF publie dans sa fiche. La
+        seconde manquait ici, et un habitat déterminé hors catalogue —
+        « Eleocharito-Sagittarion », par exemple — n'avait qu'un champ de
+        recherche vide, alors que le référentiel avait la réponse.
         """
         if len(self._cd_habs) != 1:
             return []
-        alliance = corresp.catalogue().par_determination(next(iter(self._cd_habs)))
-        return alliance.candidats(typologie) if alliance is not None else []
+        cd_hab = next(iter(self._cd_habs))
+        if self._candidats is None:
+            self._candidats = self._resoudre_candidats(cd_hab)
+        return self._candidats.get(typologie) or []
+
+    def _resoudre_candidats(self, cd_hab):
+        """{typologie: [candidats]} pour cet habitat. Un seul appel réseau."""
+        alliance = corresp.catalogue().par_determination(cd_hab)
+        if alliance is not None:
+            return {cle: alliance.candidats(cle)
+                    for cle, _lib, _court in TYPOLOGIES_CORRESPONDANCE}
+        if self.contexte.habref_detail is None:
+            return {}
+        try:
+            fiche = self.contexte.habref_detail(cd_hab)
+        except Exception:  # noqa: BLE001 - l'édition doit rester possible
+            return {}
+        return corresp.candidats_habref(fiche, dict(self.contexte.typologies))
 
     def _combo_typologie(self, edit):
         """Menu de typologie qui cible la recherche HABREF de `edit`."""

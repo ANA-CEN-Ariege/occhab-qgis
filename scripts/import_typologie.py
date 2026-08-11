@@ -71,6 +71,15 @@ sys.path.insert(0, os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src", "processing"))
 from correspondances import nom_habref  # noqa: E402
 
+#: Classeur des botanistes, versionné DANS le dépôt. Il vivait dans un dossier
+#: de téléchargement : un document qui fait autorité — 227 alliances et leurs
+#: correspondances — n'a rien à faire là où les fichiers arrivent en double et
+#: se vident. Ici, chaque modification se relit en `git diff`, et le dictionnaire
+#: livré ne peut plus diverger de sa source.
+CATALOGUE_SOURCE = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+    "resources", "typologie", "0_Typologie.xlsx")
+
 NS = "{http://schemas.openxmlformats.org/spreadsheetml/2006/main}"
 
 #: Colonnes de la feuille « Classif », par lettre. Le fichier a des en-têtes
@@ -642,7 +651,9 @@ def main(argv=None):
     parseur = argparse.ArgumentParser(
         description="Catalogue des végétations (xlsx) → dictionnaire de correspondances.",
     )
-    parseur.add_argument("xlsx", help="chemin du fichier 0_Typologie.xlsx")
+    parseur.add_argument(
+        "xlsx", nargs="?", default=CATALOGUE_SOURCE,
+        help="chemin du classeur des botanistes (défaut : celui du dépôt)")
     parseur.add_argument(
         "--api", default="https://geonature.ariegenature.fr/geonature/api",
         help="base de l'API GeoNature (les routes HABREF sont publiques)",

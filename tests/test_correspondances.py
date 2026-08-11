@@ -137,7 +137,7 @@ def test_catalogue_absent_ne_fait_pas_echouer():
 def test_catalogue_livre_avec_le_plugin():
     """Le CSV livré doit se charger et être cohérent avec l'import qui l'a produit."""
     catalogue = co.charger(CATALOGUE_LIVRE)
-    assert len(catalogue) == 225
+    assert len(catalogue) == 227
     assert len(catalogue.ancrees()) == 43
     # Toute alliance doit pouvoir être saisie : c'est ce que l'import garantit.
     assert [a.nom for a in catalogue.alliances if not a.est_saisissable] == []
