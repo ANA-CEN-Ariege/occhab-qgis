@@ -42,6 +42,13 @@ changelog=0.9.1 - Correction : la legende n'affichait que le code d'une
     donnee, pas pour la carte. Il est desormais enregistre avec le code, et la
     vue le restitue (une extraction du bloc, aucune table interrogee).
     A REDEPLOYER : psql -d geonature -f sql/v_occhab_complet.sql
+    Correction : treize correspondances EUNIS du catalogue etaient FAUSSES.
+    EUNIS emploie des lettres aux niveaux profonds — C3.24A, G1.A41, D2.2C11 —
+    et le motif de l'import n'admettait que des chiffres apres le point : il
+    coupait au premier caractere non numerique. « G1.A41 » devenait « G1 », cinq
+    niveaux au-dessus, et comme ce code existe dans HABREF il se resolvait : la
+    correspondance fausse partait dans le dictionnaire livre. Le catalogue
+    embarque est regenere.
     Pour les correspondances enregistrees AVANT cette version, « Base locale…
     -> Completer les libelles de correspondance » demande les libelles manquants
     au referentiel et les inscrit dans les habitats concernes. Les stations
