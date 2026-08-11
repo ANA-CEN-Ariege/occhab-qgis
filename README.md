@@ -901,6 +901,11 @@ LEFT JOIN LATERAL (
 
 #### 5. Matérialiser les correspondances
 
+> Cette étape fait partie du script depuis la 0.8.1. Elle y figurait
+> auparavant comme une optimisation à envisager, et le script s'arrêtait
+> avant : on héritait donc du calcul à la volée sans le savoir, jusqu'au
+> 502 d'un reverse-proxy dont la cause est invisible depuis QGIS.
+
 Les deux fonctions de l'étape 3 sont `STABLE PARALLEL SAFE`, mais elles sont
 évaluées **par ligne** et enchaînent deux récursions. **La vue est lente** si on
 s'en tient au calcul à la volée — assez pour que ça se voie tout de suite. Mesuré
