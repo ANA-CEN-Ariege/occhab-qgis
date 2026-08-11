@@ -104,3 +104,23 @@ def test_les_correspondances_saisies_ne_coutent_aucune_jointure():
         "une seule lecture de habref dans la vue, celle de l'habitat"
     )
     assert "eh.j -> 'corresp'" in vue, "les correspondances saisies se lisent dans le bloc"
+
+
+def test_le_bloc_ana_eval_est_decode_une_seule_fois_par_ligne():
+    """`OFFSET 0` est une barrière d'optimisation, pas une coquetterie.
+
+    Sans elle, PostgreSQL aplatit le LATERAL trivial et recopie l'appel de
+    fonction à chaque référence : `ana_eval_json()` — plpgsql, expression
+    régulière — serait exécutée une quarantaine de fois par ligne au lieu d'une.
+    C'est la part la plus coûteuse de la vue, et elle grossit à chaque champ
+    ajouté au bloc sans que rien ne le signale.
+    """
+    code = _sans_commentaires(_lire(_SCRIPT))
+    for alias in ("es", "eh"):
+        debut = code.index("ana_eval_json(%s" % ("s.comment" if alias == "es"
+                                                 else "h.technical_precision"))
+        bloc = code[debut: code.index(") %s ON true" % alias, debut)]
+        assert "OFFSET 0" in bloc, (
+            "le LATERAL %s doit porter la barrière, sinon la fonction est "
+            "réévaluée à chaque référence" % alias
+        )

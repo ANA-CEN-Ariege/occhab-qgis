@@ -898,8 +898,21 @@ LEFT JOIN LATERAL (
     FROM gn_exports.habref_equivalents(h.cd_hab, 'Cahiers_d''habitats') e
 ) cahiers ON true
 -- Bloc ANA-EVAL décodé UNE SEULE FOIS par ligne, station puis habitat.
-LEFT JOIN LATERAL (SELECT gn_exports.ana_eval_json(s.comment)             AS j) es ON true
-LEFT JOIN LATERAL (SELECT gn_exports.ana_eval_json(h.technical_precision) AS j) eh ON true;
+--
+-- ⚠ `OFFSET 0` n'est pas décoratif : c'est une BARRIÈRE D'OPTIMISATION. Sans
+-- elle, PostgreSQL aplatit ces sous-requêtes triviales et recopie l'appel de
+-- fonction à CHAQUE référence — `eh.j` apparaît une quarantaine de fois dans la
+-- vue, donc `ana_eval_json()` (plpgsql, expression régulière, boucle d'analyse)
+-- serait exécutée autant de fois par ligne. Le commentaire ci-dessus promettait
+-- « une seule fois par ligne » ; seule cette barrière le rend vrai. C'est la
+-- part la plus coûteuse de la vue, et elle croît avec chaque champ ajouté au
+-- bloc : la 0.8.0 est passée de 12 à 39 références sans que rien ne le signale.
+LEFT JOIN LATERAL (
+    SELECT gn_exports.ana_eval_json(s.comment) AS j OFFSET 0
+) es ON true
+LEFT JOIN LATERAL (
+    SELECT gn_exports.ana_eval_json(h.technical_precision) AS j OFFSET 0
+) eh ON true;
 ```
 
 #### 5. Matérialiser les correspondances
