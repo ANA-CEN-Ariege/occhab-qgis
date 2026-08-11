@@ -101,6 +101,22 @@ ID_STATION = "id_station"
 #: `lecture_seule` et `cellule=False` le tiennent hors de tout enregistrement.
 HABREF = "habref"
 
+#: Correspondances arbitrées, une par typologie, DÉRIVÉES du référentiel :
+#: ajouter une typologie les fait apparaître d'un coup dans les colonnes du
+#: tableau ET dans « modifier les lignes sélectionnées ». Elles étaient réservées
+#: au formulaire, un habitat à la fois — intenable sur une mosaïque où trente
+#: polygones voisins portent le même habitat.
+#:
+#: Déclarées ICI, à la suite du couple cd_hab / nom cité : une correspondance dit
+#: ce qu'est l'habitat dans une autre typologie, elle appartient donc à son
+#: identité. Reléguées en fin de liste, elles se retrouvaient tout en bas de la
+#: fenêtre d'édition en masse, après les champs d'évaluation.
+CHAMPS_CORRESPONDANCE = [
+    _champ(cle, HABITAT, "%s (corresp.)" % libelle, TEXTE, CORRESP, G_HABITAT,
+           largeur=120)
+    for cle, libelle, _court in ref.TYPOLOGIES_CORRESPONDANCE
+]
+
 CHAMPS = [
     # ---------------------------------------------------------- identité
     _champ(ID_STATION, STATION, "id_station", ENTIER, COLONNE, G_IDENTITE,
@@ -176,6 +192,7 @@ CHAMPS = [
     # colonne montre à quoi le code renvoie vraiment.
     _champ(HABREF, HABITAT, "Habitat (HABREF)", TEXTE, COLONNE, G_HABITAT,
            masse=False, cellule=False, lecture_seule=True, largeur=220),
+    *CHAMPS_CORRESPONDANCE,
     _champ("recouvrement", HABITAT, "Recouvrement %", POURCENTAGE, DOUBLE, G_HABITAT,
            largeur=110),
     _champ("determiner", HABITAT, "Déterminateur", TEXTE, COLONNE, G_HABITAT,
@@ -213,17 +230,6 @@ CHAMPS = [
     _champ("remarque", HABITAT, "Remarque", TEXTE_LONG, EVAL, G_N2000, largeur=180),
     _champ("technical_precision", HABITAT, "Précision technique", TEXTE_LONG,
            TEXTE_LIBRE, G_HABITAT, masse=False, largeur=180),
-]
-
-# Correspondances arbitrées, une par typologie, DÉRIVÉES du référentiel : ajouter
-# une typologie les fait apparaître d'un coup dans les colonnes du tableau ET
-# dans « modifier les lignes sélectionnées ». Elles étaient jusqu'ici réservées au
-# formulaire, un habitat à la fois — intenable sur une mosaïque où trente
-# polygones voisins portent le même habitat.
-CHAMPS += [
-    _champ(_cle, HABITAT, "%s (corresp.)" % _libelle, TEXTE, CORRESP, G_HABITAT,
-           largeur=120)
-    for _cle, _libelle, _court in ref.TYPOLOGIES_CORRESPONDANCE
 ]
 
 

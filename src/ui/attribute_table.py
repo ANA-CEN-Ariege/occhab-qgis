@@ -562,6 +562,13 @@ class _ObservateursEdit(QListWidget):
         return retenus
 
 
+def _libelle_corresp(entree):
+    """« 41.112 — Hêtraies montagnardes à Luzule », ou le code seul."""
+    code = entree.get("code") or "?"
+    nom = entree.get("nom")
+    return "%s — %s" % (code, nom) if nom else code
+
+
 def _correspondance_choisie(edit):
     """{cd_hab, code, nom} de la proposition retenue, ou None si le champ est vide.
 
@@ -594,10 +601,17 @@ class AppliquerDialog(QDialog):
     saisie groupée du syntaxon paraissait ne pas fonctionner.
     """
 
-    def __init__(self, contexte, nb_lignes, parent=None):
+    def __init__(self, contexte, nb_lignes, parent=None, cd_habs=None):
         super().__init__(parent)
         self.setWindowTitle("Modifier les lignes sélectionnées")
         self.contexte = contexte
+        # `cd_hab` des lignes visées. Quand elles décrivent TOUTES le même
+        # habitat — le cas d'une mosaïque, où trente polygones voisins
+        # portent la même liste — on peut proposer ses correspondances au
+        # lieu d'un champ de recherche vide. Sélection hétérogène : on ne
+        # propose rien, car une correspondance juste pour l'un serait
+        # fausse pour l'autre.
+        self._cd_habs = set(cd_habs or ())
         self._editeurs = {}  # (niveau, cle) -> (case, widget, champ)
 
         layout = QVBoxLayout(self)
@@ -636,9 +650,11 @@ class AppliquerDialog(QDialog):
                 )
                 widget = self._widget(champ)
                 self._cocher_a_la_saisie(case, widget)
-                if isinstance(widget, HabrefLineEdit):
+                if isinstance(widget, HabrefLineEdit) and champ.stockage != ch.CORRESP:
                     # Filtre de recherche, pas une valeur à appliquer : sa ligne
-                    # n'a donc pas de case à cocher.
+                    # n'a donc pas de case à cocher. Réservé au NOM CITÉ, dont la
+                    # typologie est libre : un champ de correspondance a déjà la
+                    # sienne, et lui en proposer une autre n'aurait aucun sens.
                     form.addRow("Typologie", self._combo_typologie(widget))
                 rang = QWidget()
                 box = QHBoxLayout(rang)
@@ -705,9 +721,19 @@ class AppliquerDialog(QDialog):
                 catalogue=SANS_CATALOGUE,  # cf. `_creer_editeur`
             )
         if champ.stockage == ch.CORRESP:
-            # Une correspondance se choisit DANS SA TYPOLOGIE : le champ EUNIS
-            # n'interroge que l'EUNIS. Le cd_typo vient de la liste du serveur,
-            # jamais d'un numéro codé en dur.
+            candidats = self._candidats_corresp(champ.cle)
+            if candidats:
+                # Comme au formulaire : on CHOISIT, on ne tape pas un code. Un
+                # botaniste connaît son alliance, pas son code EUNIS.
+                widget = QComboBox()
+                widget.addItem("— retirer la correspondance —", None)
+                for entree in candidats:
+                    widget.addItem(_libelle_corresp(entree), entree)
+                widget.setCurrentIndex(-1)
+                return widget
+            # Sélection hétérogène, ou aucune proposition connue : recherche
+            # libre, bornée à la typologie du champ. Le cd_typo vient de la liste
+            # du serveur, jamais d'un numéro codé en dur.
             cd_typo = {nom: cd for cd, nom in self.contexte.typologies}.get(champ.cle)
             edit = HabrefLineEdit(
                 habref_search=self.contexte.habref_search, cd_typo=cd_typo,
@@ -742,6 +768,18 @@ class AppliquerDialog(QDialog):
             widget.setRange(0, 1_000_000)
             return widget
         return QLineEdit()
+
+    def _candidats_corresp(self, typologie):
+        """Correspondances proposables pour la sélection, ou [] si on ne peut pas.
+
+        Il faut que les lignes visées décrivent le MÊME habitat : proposer les
+        correspondances de l'un pour les appliquer à l'autre écrirait une donnée
+        fausse sur tout un lot.
+        """
+        if len(self._cd_habs) != 1:
+            return []
+        alliance = corresp.catalogue().par_determination(next(iter(self._cd_habs)))
+        return alliance.candidats(typologie) if alliance is not None else []
 
     def _combo_typologie(self, edit):
         """Menu de typologie qui cible la recherche HABREF de `edit`."""
@@ -811,7 +849,11 @@ class AppliquerDialog(QDialog):
         for cle, (case, widget, champ) in self._editeurs.items():
             if not case.isChecked():
                 continue
-            if champ.stockage == ch.CORRESP:
+            if champ.stockage == ch.CORRESP and isinstance(widget, QComboBox):
+                entree = widget.currentData()
+                valeur = ({"cd_hab": entree["cd_hab"], "code": entree.get("code"),
+                           "nom": entree.get("nom")} if entree else None)
+            elif champ.stockage == ch.CORRESP:
                 # Le triplet complet : le code identifie, le libellé nourrit la
                 # légende des cartes, le cd_hab fait autorité. Champ laissé vide
                 # = retirer la correspondance, ce que `champs.ecrire` sait faire.
@@ -1214,7 +1256,9 @@ class AttributeTableDialog(QDialog):
         if not lignes:
             QMessageBox.information(self, "OccHab", "Sélectionnez d'abord des lignes.")
             return
-        dialogue = AppliquerDialog(self.contexte, len(lignes), self)
+        cd_habs = {(ligne.habitat or {}).get("cd_hab") for ligne in lignes}
+        dialogue = AppliquerDialog(self.contexte, len(lignes), self,
+                                   cd_habs={c for c in cd_habs if c})
         if not dialogue.exec():
             return
         valeurs = dialogue.valeurs()

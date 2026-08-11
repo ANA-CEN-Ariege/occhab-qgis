@@ -292,3 +292,64 @@ def test_un_contexte_obtenu_sans_reseau_n_est_pas_mis_en_cache():
     form = _formulaire(habref_detail=None)
     _choisir_habref(form)
     assert 10521 not in hf._FICHES
+
+
+# ------------------- modifier les correspondances en masse depuis le tableau
+def test_l_edition_en_masse_propose_quand_la_selection_est_homogene():
+    """Trente polygones du même habitat : ses correspondances sont proposables.
+
+    Un champ de recherche vide y reproduirait le défaut corrigé au formulaire —
+    un botaniste connaît son alliance, pas son code EUNIS.
+    """
+    from qgis.PyQt.QtWidgets import QComboBox
+    from occhab.src.ui.attribute_table import AppliquerDialog, Contexte
+    from occhab.src.processing import champs as ch
+
+    contexte = Contexte(habref_search=lambda _q, cd_typo=None: [],
+                        typologies=[(cd, nom) for cd, nom in TYPOLOGIES])
+    cd_hab = co.catalogue().chercher("Luzulo luzuloidis")[0].cd_hab_a_poser
+
+    homogene = AppliquerDialog(contexte, 30, None, cd_habs={cd_hab})
+    _case, widget, _champ = homogene._editeurs[(ch.HABITAT, "EUNIS")]
+    assert isinstance(widget, QComboBox) and widget.count() > 1
+
+    # Sélection hétérogène : on ne propose RIEN. Une correspondance juste pour
+    # l'un serait fausse pour l'autre.
+    melange = AppliquerDialog(contexte, 30, None, cd_habs={cd_hab, 1261})
+    _case, widget, _champ = melange._editeurs[(ch.HABITAT, "EUNIS")]
+    assert not isinstance(widget, QComboBox)
+
+
+def test_l_edition_en_masse_rend_le_triplet_ou_le_retrait():
+    from qgis.PyQt.QtWidgets import QComboBox
+    from occhab.src.ui.attribute_table import AppliquerDialog, Contexte
+    from occhab.src.processing import champs as ch
+
+    contexte = Contexte(habref_search=lambda _q, cd_typo=None: [],
+                        typologies=[(cd, nom) for cd, nom in TYPOLOGIES])
+    cd_hab = co.catalogue().chercher("Luzulo luzuloidis")[0].cd_hab_a_poser
+    dialogue = AppliquerDialog(contexte, 30, None, cd_habs={cd_hab})
+    case, combo, _champ = dialogue._editeurs[(ch.HABITAT, "EUNIS")]
+    case.setChecked(True)
+
+    combo.setCurrentIndex(1)
+    valeur = dialogue.valeurs()[(ch.HABITAT, "EUNIS")]
+    assert valeur["cd_hab"] and valeur["code"] and valeur["nom"]
+    # Première entrée = retrait : seul moyen d'enlever en masse une
+    # correspondance posée par erreur.
+    combo.setCurrentIndex(0)
+    assert dialogue.valeurs()[(ch.HABITAT, "EUNIS")] is None
+
+
+def test_tous_les_champs_de_masse_ont_un_editeur():
+    """`_widget` avait été coupé en deux par une méthode insérée au milieu : les
+    branches suivantes devenaient inatteignables et rendaient None."""
+    from occhab.src.ui.attribute_table import AppliquerDialog, Contexte
+    from occhab.src.processing import champs as ch
+
+    contexte = Contexte(habref_search=lambda _q, cd_typo=None: [],
+                        typologies=[(cd, nom) for cd, nom in TYPOLOGIES])
+    dialogue = AppliquerDialog(contexte, 5, None, cd_habs=set())
+    for niveau in (ch.STATION, ch.HABITAT):
+        for champ in ch.modifiables_en_masse(niveau):
+            assert (niveau, champ.cle) in dialogue._editeurs, champ.cle
