@@ -252,7 +252,12 @@ GROUP BY h.cd_hab, typo.nom;
 CREATE UNIQUE INDEX ON gn_exports.mv_habref_equivalents (cd_hab, typologie);
 
 -- À REJOUER après une campagne de saisie ou une mise à jour de HABREF :
---     REFRESH MATERIALIZED VIEW gn_exports.mv_habref_equivalents;
+--     REFRESH MATERIALIZED VIEW CONCURRENTLY gn_exports.mv_habref_equivalents;
+-- CONCURRENTLY ne pose aucun verrou sur les lecteurs, grâce à l'index unique
+-- ci-dessus — un export en cours n'est pas interrompu. Il ne s'exécute PAS
+-- dans une transaction : `psql -c`, jamais un bloc DO. Mesuré 9 s sur la base
+-- de l'ANA. Le README §5 donne la tâche planifiée qui ne reconstruit que si un
+-- code nouveau est apparu.
 --
 -- CONTRÔLE — codes saisis absents de la table (donc sans correspondance) :
 --     SELECT DISTINCT h.cd_hab FROM pr_occhab.t_habitats h

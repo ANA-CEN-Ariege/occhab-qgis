@@ -1011,6 +1011,49 @@ montage, et la raison de ne le poser qu'en connaissance de cause.
 > À passer sur une base de test avant la production.
 
 
+##### Rafraîchir automatiquement
+
+La table se périme : elle est bâtie sur les `cd_hab` **présents dans
+`t_habitats`**, donc un habitat saisi avec un code nouveau ressort sans
+correspondance tant qu'elle n'a pas été reconstruite.
+
+L'index unique créé plus haut autorise le mode **`CONCURRENTLY`**, qui ne pose
+aucun verrou sur les lecteurs : un export en cours n'est pas interrompu.
+
+```
+*/30 * * * * /usr/bin/flock -n /tmp/mv_habref.lock /bin/bash -c '
+  psql -d geonature -tAqc "SELECT EXISTS (
+      SELECT 1 FROM pr_occhab.t_habitats h
+      WHERE h.cd_hab IS NOT NULL
+        AND NOT EXISTS (SELECT 1 FROM gn_exports.mv_habref_equivalents m
+                        WHERE m.cd_hab = h.cd_hab))" | grep -qx t &&
+  psql -d geonature -c "REFRESH MATERIALIZED VIEW CONCURRENTLY gn_exports.mv_habref_equivalents;"'
+```
+
+Trois points expliquent cette forme :
+
+- **`CONCURRENTLY` ne s'exécute pas dans une transaction.** Donc `psql -c`
+  directement, jamais un bloc `DO $$ … $$`, qui échouerait.
+- **Le test préalable** évite de reconstruire pour rien : une sonde d'index par
+  habitat, quelques millisecondes, là où la reconstruction coûte **9 s** (mesuré
+  sur la base de l'ANA, environ un millier de `cd_hab` distincts). La
+  quasi-totalité des passages ne fait donc rien, et l'intervalle de 30 minutes
+  représente 0,5 % du temps.
+- **`flock -n`** empêche deux passages de se chevaucher. À 9 s contre 30 minutes
+  ça ne devrait jamais arriver, mais deux `REFRESH` simultanés s'attendent, et
+  autant ne pas les laisser s'empiler.
+
+Le coût ne dépend **pas** du nombre de stations mais du nombre de `cd_hab`
+**distincts** : les botanistes réutilisant les mêmes codes, il croît beaucoup
+plus lentement que la saisie, et l'intervalle n'est pas à revoir à chaque
+campagne.
+
+> Une alternative supprime la péremption au lieu de la borner : une table
+> ordinaire alimentée par un **déclencheur** sur `t_habitats`, qui n'ajoute une
+> ligne que pour un `cd_hab` jamais vu. Les correspondances d'un code ne changent
+> jamais — sauf mise à jour de HABREF — donc il n'y a jamais rien à recalculer,
+> seulement à compléter. Coût au cas courant : une sonde d'index.
+
 ### Correspondances entre typologies (CORINE ↔ Cahiers d'habitats ↔ EUNIS)
 
 La saisie se fait dans **une** typologie (souvent CORINE biotopes), alors que le
