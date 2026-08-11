@@ -59,6 +59,7 @@ from qgis.PyQt.QtWidgets import (
 from ..api.payload import mesures_incoherentes
 from ..database.sqlite_local import BROUILLON, VALIDE
 from ..processing import champs as ch
+from ..processing import correspondances as corresp
 from ..processing.correspondances import Catalogue
 from ..processing.grille import Grille
 from ..processing.referentiels import label_for
@@ -561,6 +562,24 @@ class _ObservateursEdit(QListWidget):
         return retenus
 
 
+def _correspondance_choisie(edit):
+    """{cd_hab, code, nom} de la proposition retenue, ou None si le champ est vide.
+
+    None vaut RETRAIT : c'est le seul moyen d'enlever en masse une correspondance
+    posée par erreur. Un champ où l'on a tapé sans rien retenir dans la liste ne
+    vaut pas non plus une correspondance — un code sans `cd_hab` ne se raccorde à
+    rien.
+    """
+    item = edit.item_choisi or {}
+    if not edit.text().strip() or not item.get("cd_hab"):
+        return None
+    return {
+        "cd_hab": int(item["cd_hab"]),
+        "code": (item.get("lb_code") or "").strip(),
+        "nom": corresp.nom_habref(item.get("search_name")),
+    }
+
+
 class AppliquerDialog(QDialog):
     """Choisir les champs à modifier sur les lignes sélectionnées.
 
@@ -685,6 +704,17 @@ class AppliquerDialog(QDialog):
                 cd_typo=self.contexte.cd_typo,
                 catalogue=SANS_CATALOGUE,  # cf. `_creer_editeur`
             )
+        if champ.stockage == ch.CORRESP:
+            # Une correspondance se choisit DANS SA TYPOLOGIE : le champ EUNIS
+            # n'interroge que l'EUNIS. Le cd_typo vient de la liste du serveur,
+            # jamais d'un numéro codé en dur.
+            cd_typo = {nom: cd for cd, nom in self.contexte.typologies}.get(champ.cle)
+            edit = HabrefLineEdit(
+                habref_search=self.contexte.habref_search, cd_typo=cd_typo,
+                catalogue=SANS_CATALOGUE,
+            )
+            edit.setPlaceholderText("Tapez un nom ou un code… (vide = retirer)")
+            return edit
         if champ.type in (ch.CODE, ch.NOMENCLATURE, ch.JDD):
             widget = QComboBox()
             widget.addItem("— vider —", None)
@@ -781,7 +811,12 @@ class AppliquerDialog(QDialog):
         for cle, (case, widget, champ) in self._editeurs.items():
             if not case.isChecked():
                 continue
-            if isinstance(widget, _ObservateursEdit):
+            if champ.stockage == ch.CORRESP:
+                # Le triplet complet : le code identifie, le libellé nourrit la
+                # légende des cartes, le cd_hab fait autorité. Champ laissé vide
+                # = retirer la correspondance, ce que `champs.ecrire` sait faire.
+                valeur = _correspondance_choisie(widget)
+            elif isinstance(widget, _ObservateursEdit):
                 valeur = widget.valeur()
             elif isinstance(widget, QComboBox):
                 valeur = widget.currentData()

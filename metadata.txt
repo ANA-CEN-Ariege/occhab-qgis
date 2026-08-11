@@ -3,7 +3,7 @@ name=OccHab GeoNature
 qgisMinimumVersion=3.28
 qgisMaximumVersion=3.99
 description=Offline-first data entry for GeoNature's OccHab module (habitat stations) from QGIS, with local SQLite storage and synchronisation to the GeoNature REST API.
-version=0.9.1
+version=0.10.0
 author=Cédric Roy
 email=it@ariegenature.fr
 license=GPL-3.0-or-later
@@ -32,7 +32,18 @@ icon=resources/icons/occhab.svg
 experimental=True
 deprecated=False
 
-changelog=0.9.1 - Correction : la legende n'affichait que le code d'une
+changelog=0.10.0 - Modifier les correspondances en masse depuis le tableau.
+    Elles etaient reservees au formulaire, un habitat a la fois — intenable sur
+    une mosaique ou trente polygones voisins portent le meme habitat.
+    Les quatre typologies (CORINE, EUNIS, Natura 2000, Cahiers d'habitats)
+    apparaissent desormais en colonnes du tableau des stations ET dans
+    « Modifier les lignes selectionnees ». On choisit le code une fois, dans sa
+    typologie, et il est ecrit sur toutes les lignes retenues, marque « arbitre ».
+    Laisser le champ vide RETIRE la correspondance : c'est le seul moyen d'en
+    enlever une posee par erreur sur tout un lot.
+    Les autres typologies de la meme ligne ne sont jamais touchees — le bloc de
+    donnees les porte ensemble, et les omettre les effacerait.
+    0.9.1 - Correction : la legende n'affichait que le code d'une
     correspondance arbitree.
     Une carte chargee en EUNIS montrait « C1.32 » ou « E2.1 » tout court, la ou
     les habitats sans correspondance affichaient bien leur nom. Une carte

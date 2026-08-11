@@ -4,6 +4,7 @@
 """Tests du registre de champs (module pur `champs`)."""
 import champs as ch
 import eval_fields as ef
+import referentiels as ref
 
 
 # ------------------------------------------------------------- structure
@@ -223,3 +224,75 @@ def test_les_cles_structurees_ne_sont_pas_des_champs_saisissables():
     """Ni colonne ni éditeur : elles n'ont pas de forme scalaire à afficher."""
     for cle in ("determination", "corresp"):
         assert ch.par_cle(ch.HABITAT, cle) is None
+
+
+# ------------------------- correspondances modifiables en masse depuis le tableau
+def _corresp(cle):
+    return ch.par_cle(ch.HABITAT, cle)
+
+
+def test_les_quatre_typologies_sont_des_champs():
+    """Dérivés du référentiel : ajouter une typologie les fait apparaître seule."""
+    cles = [c.cle for c in ch.CHAMPS if c.stockage == ch.CORRESP]
+    assert cles == [cle for cle, _lib, _court in ref.TYPOLOGIES_CORRESPONDANCE]
+    assert all(c.niveau == ch.HABITAT and c.masse for c in ch.CHAMPS
+               if c.stockage == ch.CORRESP)
+
+
+def test_lire_une_correspondance_rend_son_code():
+    habitat = {"technical_precision": ef.encode_eval("", corresp={
+        "EUNIS": {"cd_hab": 1, "code": "E3.44", "nom": "Gazons inondés"}})}
+    assert ch.lire(habitat, _corresp("EUNIS")) == "E3.44"
+    assert ch.lire(habitat, _corresp("CORINE_biotopes")) is None
+
+
+def test_ecrire_une_correspondance_preserve_les_autres():
+    """`merge_eval` remplace la clé `corresp` en bloc : les omettre les effacerait.
+
+    C'est le piège de ce stockage — écrire l'EUNIS de trente lignes ne doit pas
+    faire disparaître leur CORINE.
+    """
+    habitat = {"technical_precision": ef.encode_eval(
+        "Relevé du 12 mai.", enjeu="fort",
+        corresp={"EUNIS": {"cd_hab": 1, "code": "E3.44", "src": "catalogue"}})}
+    ch.ecrire(habitat, _corresp("CORINE_biotopes"),
+              {"cd_hab": 9403, "code": "37.24", "nom": "Prairies à Agropyre"})
+    codes = ef.decode_eval(habitat["technical_precision"])
+    assert codes["corresp"]["EUNIS"]["code"] == "E3.44"
+    assert codes["corresp"]["CORINE_biotopes"]["code"] == "37.24"
+    assert codes["enjeu"] == "fort"
+    assert ef.strip_eval(habitat["technical_precision"]) == "Relevé du 12 mai."
+
+
+def test_une_correspondance_posee_par_le_tableau_est_arbitree():
+    """Choisir soi-même une correspondance, c'est l'arbitrer : `src` le dit."""
+    habitat = {}
+    ch.ecrire(habitat, _corresp("EUNIS"),
+              {"cd_hab": 1, "code": "E3.44", "nom": "Gazons inondés"})
+    entree = ef.decode_eval(habitat["technical_precision"])["corresp"]["EUNIS"]
+    assert entree["src"] == "manuel"
+
+
+def test_vider_une_correspondance_la_retire():
+    """Seul moyen d'enlever en masse une correspondance posée par erreur."""
+    habitat = {"technical_precision": ef.encode_eval("", enjeu="fort", corresp={
+        "EUNIS": {"cd_hab": 1, "code": "E3.44"},
+        "CORINE_biotopes": {"cd_hab": 2, "code": "37.24"}})}
+    ch.ecrire(habitat, _corresp("EUNIS"), None)
+    codes = ef.decode_eval(habitat["technical_precision"])
+    assert sorted(codes["corresp"]) == ["CORINE_biotopes"]
+    assert codes["enjeu"] == "fort"
+
+
+def test_retirer_la_derniere_correspondance_ne_laisse_pas_de_cle_vide():
+    habitat = {"technical_precision": ef.encode_eval("", enjeu="fort", corresp={
+        "EUNIS": {"cd_hab": 1, "code": "E3.44"}})}
+    ch.ecrire(habitat, _corresp("EUNIS"), None)
+    codes = ef.decode_eval(habitat["technical_precision"])
+    assert "corresp" not in codes
+    assert codes["enjeu"] == "fort"
+
+
+def test_l_ecriture_ne_touche_que_le_porteur_du_bloc():
+    """Contrepartie de `ecrire` : l'enregistrement ne réécrit que ces colonnes."""
+    assert ch.colonnes_touchees(_corresp("EUNIS")) == {"technical_precision"}

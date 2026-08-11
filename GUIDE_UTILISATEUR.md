@@ -552,6 +552,15 @@ décodés), chargée en **couche QGIS en lecture seule**.
    fin tombent dans l'intervalle.
 4. Choisissez la **typologie de la carte** — voir juste en dessous.
 
+> **Poser une correspondance sur trente polygones d'un coup.** Les quatre
+> typologies figurent dans le **tableau des stations** (colonnes « CORINE
+> biotopes (corresp.) », « EUNIS (corresp.) »…) et dans **« Modifier les lignes
+> sélectionnées… »**. Sélectionnez vos lignes, cochez la typologie, choisissez le
+> code une fois : il est écrit partout, marqué **arbitré**. Laisser le champ vide
+> **retire** la correspondance — c'est le seul moyen d'en enlever une posée par
+> erreur sur tout un lot. Les autres typologies de la même ligne ne sont jamais
+> touchées.
+
 #### Cartographier dans une autre typologie que celle de saisie
 
 Vous déterminez dans la typologie qui convient au terrain — souvent le

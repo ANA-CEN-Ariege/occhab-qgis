@@ -40,6 +40,11 @@ HABITAT = "habitat"
 # --- Stockages ----------------------------------------------------------------
 COLONNE = "colonne"
 EVAL = "eval"
+#: Une correspondance de la clé `corresp` du bloc, typologie par typologie. Elle
+#: ne tient pas dans `EVAL` : la valeur n'est pas un scalaire mais un triplet
+#: (cd_hab, code, libellé), et l'écrire demande de relire les autres typologies
+#: pour ne pas les effacer — `merge_eval` remplace la clé `corresp` entière.
+CORRESP = "corresp"
 DOUBLE = "double"
 TEXTE_LIBRE = "texte_libre"
 
@@ -210,6 +215,17 @@ CHAMPS = [
            TEXTE_LIBRE, G_HABITAT, masse=False, largeur=180),
 ]
 
+# Correspondances arbitrées, une par typologie, DÉRIVÉES du référentiel : ajouter
+# une typologie les fait apparaître d'un coup dans les colonnes du tableau ET
+# dans « modifier les lignes sélectionnées ». Elles étaient jusqu'ici réservées au
+# formulaire, un habitat à la fois — intenable sur une mosaïque où trente
+# polygones voisins portent le même habitat.
+CHAMPS += [
+    _champ(_cle, HABITAT, "%s (corresp.)" % _libelle, TEXTE, CORRESP, G_HABITAT,
+           largeur=120)
+    for _cle, _libelle, _court in ref.TYPOLOGIES_CORRESPONDANCE
+]
+
 
 # --- Sélection ----------------------------------------------------------------
 def du_niveau(niveau):
@@ -264,6 +280,11 @@ def lire(objet, champ):
     porteur = objet.get(PORTEUR[champ.niveau])
     if champ.stockage == TEXTE_LIBRE:
         return strip_eval(porteur) or None
+    if champ.stockage == CORRESP:
+        # Le CODE, pas le libellé : c'est lui qui identifie, et une colonne de
+        # tableau n'a pas la place du nom complet.
+        entree = (decode_eval(porteur).get("corresp") or {}).get(champ.cle) or {}
+        return entree.get("code") or None
     valeur = decode_eval(porteur).get(champ.cle)
     if champ.stockage == DOUBLE and valeur is None:
         # Repli sur la colonne native : une station venue du serveur peut porter
@@ -298,6 +319,17 @@ def ecrire(objet, champ, valeur):
     if champ.stockage == TEXTE_LIBRE:
         # Remplacer le texte humain SANS toucher au bloc qui le suit.
         objet[porteur] = encode_eval(valeur or "", **decode_eval(objet.get(porteur)))
+        return objet
+    if champ.stockage == CORRESP:
+        # `valeur` est un dict {cd_hab, code, nom} — ou None pour retirer la
+        # correspondance. On relit les autres typologies : `merge_eval` remplace
+        # la clé `corresp` en bloc, les omettre les effacerait.
+        corresp = dict((decode_eval(objet.get(porteur)) or {}).get("corresp") or {})
+        if valeur:
+            corresp[champ.cle] = dict(valeur, src="manuel")
+        else:
+            corresp.pop(champ.cle, None)
+        objet[porteur] = merge_eval(objet.get(porteur), corresp=corresp or None)
         return objet
     objet[porteur] = merge_eval(objet.get(porteur), **{champ.cle: valeur})
     if champ.stockage == DOUBLE:
