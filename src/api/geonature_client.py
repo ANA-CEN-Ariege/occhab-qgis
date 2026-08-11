@@ -20,13 +20,22 @@ import requests
 #: l'interface. 30 s y est confortable — au-delà, l'utilisateur croit déjà que
 #: l'extension a planté.
 DELAI_MAX = 30
-#: Limite des requêtes LOURDES : un export bâti sur `v_occhab_complet` fait
-#: travailler le serveur (jointures HABREF, correspondances) et une page de
-#: 1000 entités dépasse couramment la demi-minute. Leur appliquer le délai
-#: interactif faisait échouer un chargement qui n'avait besoin que de patienter —
-#: « Read timed out » là où rien n'était cassé. Une limite reste nécessaire : sans
-#: elle, un serveur muet gèle QGIS pour de bon.
-DELAI_LONG = 600
+#: Limite des requêtes LOURDES (export, liste des stations du serveur). Plus
+#: généreuse que l'interactive, mais PAS de plusieurs minutes : ces appels ont
+#: lieu dans le fil de l'interface, donc le délai est aussi la durée pendant
+#: laquelle QGIS reste figé. Et l'allonger ne sert de toute façon à rien — un
+#: reverse-proxy coupe avant (502) : ce qui n'a pas répondu en deux minutes ne
+#: répondra pas. La vraie réponse à un export trop lent est de le demander par
+#: plus petits morceaux (cf. `TAILLE_PAGE_EXPORT`) et de matérialiser les
+#: correspondances côté serveur (README §5), pas d'attendre plus longtemps.
+DELAI_LONG = 120
+
+#: Entités demandées par page d'export. 1000 fait travailler `v_occhab_complet`
+#: — jointures HABREF et correspondances — assez longtemps pour qu'un
+#: reverse-proxy rende un 502 avant la fin. Des pages plus courtes tiennent sous
+#: sa limite ; le nombre d'allers-retours augmente, mais un export qui aboutit
+#: vaut mieux qu'un export rapide en théorie.
+TAILLE_PAGE_EXPORT = 250
 
 
 class GeoNatureAPIError(Exception):
@@ -42,12 +51,30 @@ class GeoNatureAPIError(Exception):
         self.status_code = status_code
 
 
+#: Codes rendus par un reverse-proxy quand c'est LUI qui abandonne, et non
+#: GeoNature : le corps est alors une page HTML, illisible dans une boîte de
+#: dialogue, et surtout trompeuse — elle laisse croire à un défaut de l'extension
+#: alors que la requête est simplement trop lourde pour le serveur.
+_CODES_PROXY = {502: "réponse invalide", 504: "délai dépassé"}
+
+
 def _error_detail(response):
     """Extraire un message lisible du corps d'une réponse d'erreur."""
+    if response.status_code in _CODES_PROXY:
+        return (
+            "le serveur intermédiaire a abandonné (%s). La requête est trop "
+            "lourde ou trop longue pour lui : réduisez la période ou le jeu de "
+            "données demandé. Côté serveur, matérialiser les correspondances "
+            "(README §5) est ce qui change le plus."
+            % _CODES_PROXY[response.status_code]
+        )
     try:
         payload = response.json()
     except ValueError:
-        return (response.text or "").strip()[:300] or "réponse vide"
+        texte = (response.text or "").strip()
+        if texte[:200].lstrip().lower().startswith(("<!doctype", "<html")):
+            return "réponse HTML du serveur, pas une erreur GeoNature"
+        return texte[:300] or "réponse vide"
     if isinstance(payload, dict):
         for key in ("msg", "message", "description", "detail", "error"):
             if payload.get(key):
@@ -229,7 +256,8 @@ class GeoNatureAPIClient:
             result = result.get("items") or result.get("exports") or []
         return result if isinstance(result, list) else []
 
-    def get_export_page(self, id_export, limit=1000, offset=0, filters=None):
+    def get_export_page(self, id_export, limit=TAILLE_PAGE_EXPORT, offset=0,
+                        filters=None):
         """UNE page d'un export (`GET /exports/api/<id>`).
 
         ⚠ `offset` est un **numéro de page**, pas un décalage de lignes — c'est
@@ -245,7 +273,8 @@ class GeoNatureAPIClient:
         return self._make_request("GET", "exports/api/%s" % int(id_export),
                                   params=params, timeout=DELAI_LONG)
 
-    def iter_export_features(self, id_export, filters=None, limit=1000,
+    def iter_export_features(self, id_export, filters=None,
+                             limit=TAILLE_PAGE_EXPORT,
                              pages_max=500, on_progress=None):
         """Parcourir un export page par page.
 

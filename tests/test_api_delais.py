@@ -62,11 +62,55 @@ def test_une_requete_interactive_prend_le_delai_court():
 
 
 def test_une_page_d_export_prend_le_delai_long():
-    """L'export est bâti sur `v_occhab_complet` : jointures HABREF et
-    correspondances, 1000 entités par page. La demi-minute ne suffit pas."""
+    """L'export est bâti sur `v_occhab_complet` : la demi-minute ne suffit pas."""
     client = _client()
-    client.get_export_page(9, limit=1000, offset=0)
+    client.get_export_page(9, offset=0)
     assert client.session.dernier["timeout"] == gc.DELAI_LONG
+
+
+def test_le_delai_long_reste_supportable_pour_l_interface():
+    """L'appel a lieu dans le fil de l'interface : le délai EST la durée du gel.
+
+    L'allonger ne sert d'ailleurs à rien — un reverse-proxy rend un 502 bien
+    avant. Deux minutes est un plafond, pas une cible.
+    """
+    assert gc.DELAI_LONG <= 120
+
+
+def test_les_pages_d_export_sont_courtes():
+    """Une page de 1000 entités sur cette vue déclenche un 502 côté proxy."""
+    assert gc.TAILLE_PAGE_EXPORT <= 250
+    client = _client()
+    client.get_export_page(9)
+    assert client.session.dernier["params"]["limit"] == gc.TAILLE_PAGE_EXPORT
+
+
+def test_une_erreur_de_proxy_est_traduite():
+    """Le corps d'un 502 est une page HTML : l'afficher tel quel fait croire à un
+    défaut de l'extension, et ne dit pas quoi faire."""
+    class _Proxy:
+        status_code = 502
+        text = "<!DOCTYPE HTML><html><title>502 Proxy Error</title>"
+
+        @staticmethod
+        def json():
+            raise ValueError
+
+    detail = gc._error_detail(_Proxy())
+    assert "serveur intermédiaire" in detail
+    assert "<" not in detail
+
+
+def test_une_page_html_inattendue_n_est_pas_recopiee():
+    class _Html:
+        status_code = 500
+        text = "<html><body>Internal Server Error</body></html>"
+
+        @staticmethod
+        def json():
+            raise ValueError
+
+    assert "<" not in gc._error_detail(_Html())
 
 
 def test_les_stations_du_serveur_prennent_le_delai_long():
