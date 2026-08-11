@@ -30,12 +30,16 @@ DELAI_MAX = 30
 #: correspondances côté serveur (README §5), pas d'attendre plus longtemps.
 DELAI_LONG = 120
 
-#: Entités demandées par page d'export. 1000 fait travailler `v_occhab_complet`
-#: — jointures HABREF et correspondances — assez longtemps pour qu'un
-#: reverse-proxy rende un 502 avant la fin. Des pages plus courtes tiennent sous
-#: sa limite ; le nombre d'allers-retours augmente, mais un export qui aboutit
-#: vaut mieux qu'un export rapide en théorie.
-TAILLE_PAGE_EXPORT = 250
+#: Entités demandées par page d'export. MESURÉ sur le serveur de l'ANA : une
+#: page de 5 entités et une page de 250 coûtent le MÊME temps, environ 9
+#: secondes. Le coût est donc fixe par requête — construction de l'export,
+#: comptage, sérialisation — et non proportionnel au nombre de lignes.
+#:
+#: Il faut par conséquent des pages GRANDES, pas petites : réduire la taille ne
+#: fait que multiplier les allers-retours à 9 secondes, et comme le chargement
+#: est synchrone dans le fil de l'interface, chacun est autant de gel de QGIS.
+#: Une tentative à 250 avait quadruplé le temps total sans rien résoudre.
+TAILLE_PAGE_EXPORT = 1000
 
 
 class GeoNatureAPIError(Exception):

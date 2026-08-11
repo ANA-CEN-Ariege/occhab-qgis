@@ -77,9 +77,14 @@ def test_le_delai_long_reste_supportable_pour_l_interface():
     assert gc.DELAI_LONG <= 120
 
 
-def test_les_pages_d_export_sont_courtes():
-    """Une page de 1000 entités sur cette vue déclenche un 502 côté proxy."""
-    assert gc.TAILLE_PAGE_EXPORT <= 250
+def test_les_pages_d_export_sont_grandes():
+    """Le coût d'une requête d'export est FIXE, mesuré : 5 ou 250 entités, 9 s.
+
+    Réduire la taille de page ne fait donc que multiplier les allers-retours —
+    et chacun gèle l'interface, le chargement étant synchrone. La tentative à
+    250 avait quadruplé le temps total sans rien résoudre.
+    """
+    assert gc.TAILLE_PAGE_EXPORT >= 1000
     client = _client()
     client.get_export_page(9)
     assert client.session.dernier["params"]["limit"] == gc.TAILLE_PAGE_EXPORT
