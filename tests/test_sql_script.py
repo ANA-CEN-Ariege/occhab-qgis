@@ -75,3 +75,21 @@ def test_les_blocs_du_readme_sont_dans_le_script():
         if any(objet in bloc for objet in _OBJETS) and bloc.strip() not in script
     ]
     assert not manquants, [bloc.splitlines()[0] for bloc in manquants]
+
+
+def test_la_resolution_des_libelles_saisis_ne_joint_pas_habref_directement():
+    """`jsonb_each` sans cardinalité connue + jointure ordinaire = hachage.
+
+    PostgreSQL estime 100 lignes à une fonction à retour d'ensemble, choisit un
+    hachage, et construit une table de hachage sur `ref_habitats.habref` entière
+    à chaque invocation du LATERAL — donc à chaque habitat. L'export s'effondrait
+    et le proxy rendait un 502. Le LATERAL imbriqué ne laisse que la boucle
+    imbriquée avec parcours d'index.
+    """
+    code = _sans_commentaires(_lire(_SCRIPT))
+    bloc = code[code.index("jsonb_object_agg(c.cle"):]
+    bloc = bloc[: bloc.index("corresp_saisi ON true")]
+    assert "LEFT JOIN LATERAL" in bloc, "la résolution doit rester un LATERAL"
+    assert "JOIN ref_habitats.habref saisi" not in bloc, (
+        "jointure directe sur habref : le planificateur peut hacher la table entière"
+    )

@@ -32,7 +32,20 @@ icon=resources/icons/occhab.svg
 experimental=True
 deprecated=False
 
-changelog=0.8.1 - Correction : charger un export echouait au bout de 30
+changelog=0.8.1 - Correction : l'export ne se chargeait plus (502).
+    La vue d'export de la 0.8.0 joignait ref_habitats.habref pour resoudre le
+    libelle des correspondances saisies. jsonb_each etant une fonction a retour
+    d'ensemble, PostgreSQL en ignore la cardinalite, choisissait un hachage, et
+    construisait une table de hachage sur HABREF entiere a chaque habitat. La
+    requete s'effondrait et le reverse-proxy rendait un 502. La resolution passe
+    desormais par un LATERAL imbrique : boucle imbriquee sur la cle primaire, et
+    rien du tout quand l'habitat n'a pas de correspondance saisie.
+    A REDEPLOYER : psql -f sql/v_occhab_complet.sql
+    Cote extension : les pages d'export passent de 1000 a 250 entites, le delai
+    des requetes lourdes est ramene a 2 minutes (il vaut aussi duree de gel de
+    QGIS, et le proxy coupe avant de toute facon), et une erreur de proxy n'est
+    plus recopiee en HTML dans une boite de dialogue.
+    0.8.1 bis - Correction : charger un export echouait au bout de 30
     secondes.
     La 0.8.0 a donne une limite de temps a toutes les requetes — sans elle, un
     serveur qui n'acheve pas sa reponse figeait QGIS pour de bon. Mais la meme

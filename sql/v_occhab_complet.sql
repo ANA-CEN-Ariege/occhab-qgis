@@ -469,6 +469,18 @@ LEFT JOIN LATERAL (SELECT gn_exports.ana_eval_json(h.technical_precision) AS j) 
 -- d'une version à l'autre — le figer dans la donnée garderait un nom périmé à
 -- côté d'un code juste. Le cast n'a lieu que si la valeur est bien un entier :
 -- un bloc abîmé à la main ne doit pas faire échouer la vue entière.
+--
+-- ⚠ La résolution du libellé passe par un LATERAL IMBRIQUÉ, et non par un
+-- `LEFT JOIN ref_habitats.habref ON habref.cd_hab = …`. Ce n'est pas un détail
+-- de style : `jsonb_each` est une fonction à retour d'ensemble, dont PostgreSQL
+-- ignore la cardinalité (il en estime 100). Avec une jointure ordinaire, le
+-- planificateur choisit un hachage et construit une table de hachage sur
+-- `habref` ENTIÈRE — plusieurs centaines de milliers de lignes — à chaque
+-- invocation du LATERAL, donc à chaque habitat. L'export s'effondrait et le
+-- reverse-proxy rendait un 502. Sous cette forme, la seule stratégie possible
+-- est la boucle imbriquée avec parcours d'index sur la clé primaire, et le
+-- sous-requête n'est même pas exécutée quand l'habitat n'a pas de bloc
+-- `corresp` — c'est-à-dire presque toujours.
 LEFT JOIN LATERAL (
     SELECT jsonb_object_agg(c.cle, jsonb_build_object(
                'code', coalesce(saisi.lb_code, c.valeur ->> 'code'),
@@ -477,7 +489,10 @@ LEFT JOIN LATERAL (
            )) AS j
     FROM jsonb_each(CASE WHEN jsonb_typeof(eh.j -> 'corresp') = 'object'
                          THEN eh.j -> 'corresp' ELSE '{}'::jsonb END) AS c(cle, valeur)
-    LEFT JOIN ref_habitats.habref saisi
-           ON saisi.cd_hab = CASE WHEN c.valeur ->> 'cd_hab' ~ '^[0-9]+$'
-                                  THEN (c.valeur ->> 'cd_hab')::int END
+    LEFT JOIN LATERAL (
+        SELECT h.lb_code, h.lb_hab_fr
+        FROM ref_habitats.habref h
+        WHERE h.cd_hab = CASE WHEN c.valeur ->> 'cd_hab' ~ '^[0-9]+$'
+                              THEN (c.valeur ->> 'cd_hab')::int END
+    ) saisi ON true
 ) corresp_saisi ON true;
