@@ -1306,7 +1306,11 @@ class AttributeTableDialog(QDialog):
         dialogue = AppliquerDialog(
             self.contexte, len(lignes), self,
             cd_habs={h.get("cd_hab") for h in habitats if h.get("cd_hab")},
-            noms={h.get(ch.HABREF) or h.get("nom_cite") for h in habitats
+            # `nom_habref` sur les deux : le nom cité garde souvent le code
+            # de tête posé par l'autocomplétion (« 6.0.1.0.2 - … »), et le
+            # libellé peut venir d'un cache antérieur au nom répété.
+            noms={corresp.nom_habref(h.get(ch.HABREF) or h.get("nom_cite"))
+                  for h in habitats
                   if h.get(ch.HABREF) or h.get("nom_cite")},
         )
         if not dialogue.exec():

@@ -485,7 +485,7 @@ class HabitatForm(QWidget):
         """
         item = self.edit_nom_cite.item_choisi or {}
         return (nom_habref(item.get("search_name"))
-                or self.edit_nom_cite.text().strip())
+                or nom_habref(self.edit_nom_cite.text()))
 
     def _typologie_propre(self, fiche):
         """(typologie, code) de l'habitat lui-même, s'il est dans une typologie cible.

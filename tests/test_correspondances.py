@@ -359,15 +359,102 @@ def test_par_nom_approche_retrouve_l_alliance():
     assert catalogue.par_nom_approche(None) is None
 
 
-def test_par_nom_approche_ne_tranche_pas_entre_deux_homonymes():
-    """Deux alliances de même squelette : on rend la première, pas un mélange.
+def test_par_nom_approche_refuse_de_trancher_entre_deux_syntaxons():
+    """Même squelette, deux alliances : on ne propose RIEN.
 
-    Ce rapprochement sert à PROPOSER ; le botaniste garde la main sur ce qu'il
-    retient. Rendre les deux fusionnées inventerait une alliance inexistante.
+    « Rubo caesii-Populion nigrae » et « Rubo ulmifolii-Populion albae » se
+    réduisent tous deux à « rubo-populion ». En choisir un écrirait ses
+    correspondances sur l'autre — une erreur de donnée que rien ne signale.
+    Le catalogue livré en compte deux paires.
     """
     catalogue = co.Catalogue([
-        _alliance(ligne_xlsx="10", alliance="Caricion davallianae", cd_hab="1"),
-        _alliance(ligne_xlsx="11", alliance="Caricion davalliana", cd_hab="2"),
+        _alliance(ligne_xlsx="10", alliance="Rubo caesii-Populion nigrae", cd_hab="1"),
+        _alliance(ligne_xlsx="11", alliance="Rubo ulmifolii-Populion albae", cd_hab="2"),
     ])
-    trouve = catalogue.par_nom_approche("Caricion")
-    assert trouve is not None and trouve.ligne == 10
+    assert catalogue.par_nom_approche("Rubo-Populion") is None
+    # Sous son nom complet, chacune reste parfaitement identifiable.
+    assert catalogue.par_nom_approche("Rubo caesii-Populion nigrae").ligne == 10
+    assert catalogue.par_nom_approche("Rubo ulmifolii-Populion albae").ligne == 11
+
+
+def test_un_nom_simple_ne_perd_jamais_son_epithete():
+    """Le catalogue porte cinq « Salicion » et quatre « Caricion ».
+
+    Réduire « Salicion cinereae » à « Salicion » les confondait tous : la
+    première ligne venue emportait la mise, et ses correspondances partaient sur
+    quatre autres végétations. L'abréviation qu'on rattrape ne se produit que
+    sur les noms à deux genres.
+    """
+    assert co.squelette("Salicion cinereae") == "salicion cinereae"
+    assert co.squelette("Caricion gracilis") != co.squelette("Caricion remotae")
+    catalogue = co.Catalogue([
+        _alliance(ligne_xlsx="10", alliance="Caricion remotae", cd_hab="1"),
+        _alliance(ligne_xlsx="11", alliance="Caricion fuscae", cd_hab="2"),
+    ])
+    assert catalogue.par_nom_approche("Caricion gracilis") is None
+    assert catalogue.par_nom_approche("Caricion remotae").ligne == 10
+
+
+def test_le_catalogue_livre_n_a_aucun_squelette_ambigu_indexe():
+    """Garde-fou sur le VRAI fichier : deux paires s'y réduisent pareil."""
+    cat = co.catalogue()
+    par_squelette = {}
+    for alliance in cat.alliances:
+        par_squelette.setdefault(co.squelette(alliance.nom), set()).add(
+            co.normaliser(alliance.nom))
+    for sq, noms in par_squelette.items():
+        if len(noms) > 1:
+            assert cat.par_nom_approche(sq) is None, sq
+
+
+# --------------------------- nettoyer un libellé HABREF sans l'amputer
+def test_nom_habref_coupe_le_code_de_tete_et_le_doublon():
+    assert co.nom_habref(
+        "6.0.1.0.2 - Brachypodio rupestris-Centaureion nemoralis "
+        "Brachypodio rupestris-Centaureion nemoralis Br.-Bl. 1967"
+    ) == "Brachypodio rupestris-Centaureion nemoralis"
+    # Habitat sans code : le séparateur commence par l'espace de tête.
+    assert co.nom_habref(
+        " - Brachypodio-Centaureion nemoralis Brachypodio-Centaureion "
+        "nemoralis Br.-Bl. 1967"
+    ) == "Brachypodio-Centaureion nemoralis"
+
+
+def test_nom_habref_n_ampute_pas_un_syntaxon_a_tiret_espace():
+    """Certains noms portent un tiret ESPACÉ, comme le séparateur du code.
+
+    Couper au premier « - » venu rendait « Blackstonion perfoliatae » — la
+    moitié d'un nom d'alliance, parfaitement plausible et donc invisible.
+    """
+    for nom in ("Centaurio pulchelli - Blackstonion perfoliatae",
+                "Loto pedunculati - Filipenduletalia ulmariae",
+                "Mentho longifoliae - Juncion inflexi"):
+        assert co.nom_habref(nom) == nom
+
+
+def test_nom_habref_est_idempotente():
+    """C'est ce qui permet de rattraper un libellé déjà mis en cache."""
+    for brut in ("18.0.1.0.1 - Nitellion flexilis Nitellion flexilis Segal 1969",
+                 "Caricion gracilis Caricion gracilis Neuhäusl 1959",
+                 "Réseaux de transport et autres zones à surface dure",
+                 "Cynosurion cristati", "", None):
+        propre = co.nom_habref(brut)
+        assert co.nom_habref(propre) == propre
+
+
+def test_un_libelle_au_nom_repete_redevient_trouvable():
+    """Le cas réel : 12 libellés en cache portaient le nom répété.
+
+    Le squelette d'un tel libellé se termine par « Bl. 1967 » — plus rien d'un
+    syntaxon —, donc l'alliance restait introuvable et ses correspondances
+    avec elle.
+    """
+    brut = ("Brachypodio rupestris-Centaureion nemoralis Brachypodio "
+            "rupestris-Centaureion nemoralis Br.-Bl. 1967")
+    catalogue = co.Catalogue([
+        _alliance(alliance="Brachypodio rupestris-Centaureion nemorali",
+                  cd_hab="", ancre_cd_hab="4314",
+                  ancre_typologie="CORINE_biotopes", ancre_code="38.21"),
+    ])
+    assert catalogue.par_nom_approche(brut) is None
+    assert catalogue.par_nom_approche(co.nom_habref(brut)) is not None

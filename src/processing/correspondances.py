@@ -85,9 +85,15 @@ def squelette(nom):
     écritures. Réduites à leurs genres, les deux donnent
     « eleocharito-sagittarion » et se retrouvent.
 
-    Un nom qui ne se termine pas par un suffixe de syntaxon n'est pas réduit :
-    « Cultures et jardins maraîchers » n'est pas une nomenclature latine, et en
-    garder le premier mot de chaque membre n'aurait aucun sens.
+    **Seuls les noms COMPOSÉS sont réduits.** Retirer l'épithète d'un nom
+    simple détruirait le seul mot qui discrimine : le catalogue porte cinq
+    `Salicion` et quatre `Caricion`, et les confondre ferait écrire les
+    correspondances de l'un sur l'autre. L'abréviation qu'on cherche à rattraper
+    ne se produit d'ailleurs que sur les noms à deux genres.
+
+    Un nom qui ne se termine pas par un suffixe de syntaxon n'est pas réduit non
+    plus : « Cultures et jardins maraîchers » n'est pas une nomenclature latine,
+    et en garder le premier mot de chaque membre n'aurait aucun sens.
     """
     # `normaliser` remplace les tirets par des espaces — c'est ce qu'il faut pour
     # CHERCHER, pas pour découper : ici le tiret sépare les deux genres du nom
@@ -98,7 +104,7 @@ def squelette(nom):
                           if unicodedata.category(c) != "Mn")
     normalise = re.sub(r"\s+", " ", re.sub(r"[‐-―]", "-", sans_accent)).strip().lower()
     membres = [m for m in normalise.split("-") if m.strip()]
-    if not membres or not membres[-1].split():
+    if len(membres) < 2 or not membres[-1].split():
         return normalise
     if not membres[-1].split()[0].endswith(_SUFFIXES_SYNTAXON):
         return normalise
@@ -262,9 +268,28 @@ class Catalogue:
                 self._par_determination.setdefault(alliance.cd_hab, alliance)
         # Index par squelette de nom : c'est le seul moyen de retrouver une
         # alliance choisie sous sa forme HABREF abrégée (cf. `squelette`).
-        self._par_squelette = {}
+        #
+        # Un squelette que PLUSIEURS alliances se partagent est écarté : « Rubo
+        # caesii-Populion nigrae » et « Rubo ulmifolii-Populion albae » se
+        # réduisent tous deux à « rubo-populion », et rendre l'une pour l'autre
+        # écrirait des correspondances fausses sans que rien ne le signale.
+        # Mieux vaut ne rien proposer — le botaniste garde la recherche libre.
+        # Index par nom EXACT, consulté avant le squelette : une alliance dont
+        # le squelette est ambigu reste retrouvable sous son nom complet. Sans
+        # lui, écarter « rubo-populion » perdrait aussi « Rubo caesii-Populion
+        # nigrae », pourtant sans la moindre ambiguïté.
+        self._par_nom = {}
         for alliance in self.alliances:
-            self._par_squelette.setdefault(squelette(alliance.nom), alliance)
+            self._par_nom.setdefault(normaliser(alliance.nom), alliance)
+        candidats = {}
+        for alliance in self.alliances:
+            candidats.setdefault(squelette(alliance.nom), []).append(alliance)
+        self._par_squelette = {
+            sq: liste[0] for sq, liste in candidats.items()
+            # Les VARIANTES d'une même alliance (mêmes nom à la graphie près)
+            # ne sont pas une ambiguïté : c'est le même syntaxon.
+            if len({normaliser(a.nom) for a in liste}) == 1
+        }
 
     def __len__(self):
         return len(self.alliances)
@@ -280,10 +305,18 @@ class Catalogue:
         alliance choisie sous sa forme HABREF abrégée reste introuvable dans le
         catalogue — et ses correspondances avec elle.
 
-        Deux lignes de même squelette : on rend la PREMIÈRE et on ne prétend pas
-        trancher. Ce qui sort d'ici sert à PROPOSER, le botaniste garde la main.
+        Le nom exact d'abord, le squelette ensuite — et seulement s'il ne
+        désigne qu'une alliance (cf. `Catalogue.__init__`). Deux syntaxons de
+        même squelette ne se départagent pas, et en choisir un écrirait ses
+        correspondances sur l'autre. On ne propose alors rien : la recherche
+        libre reste ouverte, et le botaniste tranche.
         """
-        return self._par_squelette.get(squelette(nom)) if nom else None
+        if not nom:
+            return None
+        exacte = self._par_nom.get(normaliser(nom))
+        if exacte is not None:
+            return exacte
+        return self._par_squelette.get(squelette(nom))
 
     def chercher(self, texte, limite=20):
         """Alliances dont le nom ou la classe contient `texte`.
@@ -352,13 +385,36 @@ def candidats_habref(fiche, noms_typologies=None):
     return candidats
 
 
+#: Un code HABREF : chiffres, lettres et points, sans espace (« 6.0.1.0.2 »,
+#: « G1.62 »). Sert à distinguer « code - nom » d'un NOM qui contient lui-même
+#: un tiret espacé — « Centaurio pulchelli - Blackstonion perfoliatae ».
+_CODE_SEUL = re.compile(r"^[A-Za-z0-9][\w.]*$")
+
+
 def nom_habref(search_name):
     """Libellé lisible d'une proposition HABREF (« G1.62 - Hêtraies… » → le nom).
 
-    `search_name` vaut « code - nom nom auteurs » : le nom y figure deux fois,
-    une fois seul puis une fois suivi des auteurs. On coupe au doublon.
+    Deux nettoyages, et deux seulement :
+
+    1. le **code de tête**, quand il y en a un. On ne coupe qu'à un vrai code :
+       certains noms de syntaxons portent eux-mêmes un tiret espacé (« Centaurio
+       pulchelli - Blackstonion perfoliatae »), et couper au premier « - »
+       venu en amputerait la moitié ;
+    2. le **nom répété**. `search_name` vaut « code - nom nom auteurs » : le nom
+       y figure deux fois, une fois seul puis une fois suivi des auteurs.
+
+    Idempotent : appliquée à un nom déjà propre, la fonction le rend inchangé.
+    C'est ce qui permet de s'en servir aussi pour rattraper un libellé mal
+    découpé par une version antérieure.
     """
-    texte = (search_name or "").split(" - ", 1)[-1].strip()
+    # Découper AVANT de rogner : un habitat sans code donne « - nom nom
+    # auteurs », dont le séparateur commence par l'espace de tête.
+    texte = search_name or ""
+    tete, separateur, reste = texte.partition(" - ")
+    tete = tete.strip()
+    if separateur and (not tete or _CODE_SEUL.match(tete)):
+        texte = reste
+    texte = texte.strip()
     mots = texte.split()
     for taille in range(len(mots) // 2, 0, -1):
         if mots[:taille] == mots[taille:2 * taille]:

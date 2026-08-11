@@ -1208,6 +1208,13 @@ class OccHabDockWidget(QDockWidget):
         except Exception as exc:  # noqa: BLE001 - une colonne ne bloque pas la table
             self.logger.warning("Cache des libellés HABREF illisible : %s", exc)
             connus = {}
+        # Les libellés mis en cache par une version antérieure portent le nom
+        # RÉPÉTÉ (« Caricion gracilis Caricion gracilis Neuhäusl 1959 ») : elle
+        # ne retirait que le code de tête. Purger la table obligerait à tout
+        # redemander au serveur ; on rattrape à la lecture, et on réécrit une
+        # seule fois ce qui a changé. `nom_habref` est idempotente, donc un
+        # libellé déjà propre n'est pas touché.
+        connus = self._rattraper_libelles(connus)
         manquants = [c for c in sorted(codes) if c not in connus]
         if not manquants:
             return connus
@@ -1241,6 +1248,28 @@ class OccHabDockWidget(QDockWidget):
                 "prochaine ouverture de la table.", reste,
             )
         return connus
+
+    def _rattraper_libelles(self, connus):
+        """Couper le nom répété des libellés en cache, et le corriger en base.
+
+        Ce n'est pas qu'un défaut d'affichage : c'est sur ce libellé que
+        s'appuie le rapprochement avec le catalogue, et un nom répété ne
+        ressemble plus à un syntaxon — l'alliance devient introuvable et ses
+        correspondances avec elle.
+        """
+        propres = {cd: corresp.nom_habref(lb) for cd, lb in connus.items()}
+        changes = {cd: lb for cd, lb in propres.items()
+                   if lb and lb != connus[cd]}
+        if changes:
+            try:
+                self.db.enregistrer_libelles_habref(changes)
+                self.logger.info(
+                    "Libellés HABREF : %d nom(s) répété(s) corrigé(s) en cache.",
+                    len(changes))
+            except Exception as exc:  # noqa: BLE001 - l'affichage prime
+                self.logger.warning("Correction des libellés non enregistrée : %s",
+                                    exc)
+        return {cd: lb for cd, lb in propres.items() if lb}
 
     def _libelle_habref(self, cd_hab, nom_cite=None):
         """(libellé, raison de l'échec) pour un cd_hab.

@@ -158,3 +158,64 @@ def test_une_recherche_qui_echoue_ne_remonte_pas():
 
     libelle, raison = _dock(_Casse())._libelle_habref(16417, "Cynosurion cristati")
     assert libelle == "" and "réseau coupé" in raison
+
+
+# ------------------------------------- rattraper un cache écrit par une v. antérieure
+class _Base:
+    """Doublure de base locale : garde ce qu'on lui écrit."""
+
+    def __init__(self, libelles):
+        self.libelles = dict(libelles)
+        self.ecritures = []
+
+    def libelles_habref(self, cd_habs=None):
+        return dict(self.libelles)
+
+    def enregistrer_libelles_habref(self, valeurs):
+        self.ecritures.append(dict(valeurs))
+        self.libelles.update(valeurs)
+
+
+def _dock_avec_base(base, client=None):
+    objet = dw.OccHabDockWidget.__new__(dw.OccHabDockWidget)
+    objet.client = client or _Client()
+    objet.db = base
+    objet.logger = _Journal()
+    return objet
+
+
+def test_le_cache_au_nom_repete_est_corrige_et_reecrit():
+    """Douze libellés réels portaient le nom répété : le rapprochement échouait.
+
+    Les corriger seulement à l'affichage laisserait la base fausse ; les purger
+    obligerait à tout redemander au serveur. On rattrape et on réécrit.
+    """
+    base = _Base({
+        16415: ("Brachypodio rupestris-Centaureion nemoralis Brachypodio "
+                "rupestris-Centaureion nemoralis Br.-Bl. 1967"),
+        16508: "Caricion gracilis Caricion gracilis Neuhäusl 1959",
+        24912: "Bidentetalia",
+    })
+    propres = _dock_avec_base(base)._rattraper_libelles(base.libelles_habref())
+    assert propres[16415] == "Brachypodio rupestris-Centaureion nemoralis"
+    assert propres[16508] == "Caricion gracilis"
+    assert propres[24912] == "Bidentetalia"
+    assert base.ecritures and set(base.ecritures[0]) == {16415, 16508}
+
+
+def test_un_libelle_a_tiret_espace_n_est_pas_ampute():
+    """« Centaurio pulchelli - Blackstonion perfoliatae » est un nom entier."""
+    base = _Base({16694: "Centaurio pulchelli - Blackstonion perfoliatae"})
+    propres = _dock_avec_base(base)._rattraper_libelles(base.libelles_habref())
+    assert propres[16694] == "Centaurio pulchelli - Blackstonion perfoliatae"
+    assert base.ecritures == [], "rien n'a changé : rien à réécrire"
+
+
+def test_une_base_en_lecture_seule_n_empeche_pas_l_affichage():
+    class _Refuse(_Base):
+        def enregistrer_libelles_habref(self, valeurs):
+            raise RuntimeError("base verrouillée")
+
+    base = _Refuse({16508: "Caricion gracilis Caricion gracilis Neuhäusl 1959"})
+    propres = _dock_avec_base(base)._rattraper_libelles(base.libelles_habref())
+    assert propres[16508] == "Caricion gracilis"
