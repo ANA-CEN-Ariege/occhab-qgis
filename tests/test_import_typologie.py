@@ -177,3 +177,23 @@ def test_un_code_eunis_suivi_d_une_lettre_n_est_pas_tronque():
     """
     assert it.extraire_codes("E1.26a", "eunis") == ([], "E1.26a")
     assert it.extraire_codes("E1.26", "eunis") == (["E1.26"], "")
+
+
+def test_les_codes_eunis_a_lettres_sont_lus_entiers():
+    """EUNIS emploie des lettres aux niveaux profonds. Un motif qui ne lit que
+    des chiffres après le point tronquait quatorze codes du catalogue.
+
+    « G1.A41 » devenait « G1 » — cinq niveaux au-dessus, « Forêts de feuillus »
+    au lieu de « Forêts de ravin médio-européennes ». Le code tronqué existe dans
+    HABREF, donc il se résolvait : la correspondance fausse partait dans le
+    dictionnaire sans autre trace qu'une anomalie d'apparence anodine.
+    """
+    for code in ("C3.24A", "E1.B5", "G1.A41", "G3.4B1", "D2.2C11", "E1.262J",
+                 "D4.1N14", "G1.7B5", "A3.112", "C1.32"):
+        assert it.extraire_codes(code, "eunis") == ([code], ""), code
+
+
+def test_un_code_eunis_sans_point_reste_une_coquille():
+    """« G1A44 » n'existe pas ; « G1.A44 » oui. Le point manquant doit ressortir
+    en anomalie plutôt qu'en code tronqué « G1 »."""
+    assert it.extraire_codes("G1A44", "eunis") == ([], "G1A44")

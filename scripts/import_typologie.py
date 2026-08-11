@@ -100,7 +100,12 @@ TYPOS_ALLIANCE = ("PVF1", "PVF2")
 #: est du texte non codifiable (« pp », « uniquement si… »), conservé à part.
 MOTIF_CODE = {
     "corine": re.compile(r"\d+(?:\.\d+)*[A-Za-z]?"),
-    "eunis": re.compile(r"[A-Z]\d*(?:\.\d+)*"),
+    # EUNIS emploie des LETTRES aux niveaux profonds : « C3.24A », « G1.A41 »,
+    # « D2.2C11 », « E1.262J ». Un motif qui n'admet que des chiffres après le
+    # point tronquait quatorze codes du catalogue — « G1.A41 » devenait « G1 »,
+    # soit cinq niveaux au-dessus : une correspondance fausse, résoluble, donc
+    # invisible. C'est exactement ce que le fichier d'anomalies doit empêcher.
+    "eunis": re.compile(r"[A-Z]\d*(?:\.[0-9A-Z]+)*"),
     "n2000": re.compile(r"\d{4}(?:-\d+)?"),
 }
 #: Cellule vide au sens du catalogue (pas de correspondance connue).
