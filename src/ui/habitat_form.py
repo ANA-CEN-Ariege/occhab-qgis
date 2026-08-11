@@ -32,7 +32,11 @@ from ..processing.eval_fields import (
     select_combo_data,
     strip_eval,
 )
-from ..processing.correspondances import candidats_habref, catalogue
+from ..processing.correspondances import (
+    candidats_habref,
+    catalogue,
+    nom_habref,
+)
 from ..processing.referentiels import (
     DYNAMIQUES,
     RESTAURATIONS,
@@ -48,7 +52,10 @@ _SEPARATEUR_PEE = " ; "
 
 #: Fiches HABREF déjà obtenues, PARTAGÉES entre formulaires : chaque édition
 #: d'habitat construit un `HabitatForm` neuf, et un cache d'instance ne servirait
-#: donc jamais deux fois. Borné par le nombre de cd_hab distincts d'une session.
+#: donc jamais deux fois. Indexé par (cd_hab, nom) et non par le seul cd_hab :
+#: le rapprochement avec le catalogue passe AUSSI par le nom, et deux habitats de
+#: même code cité différemment n'ont pas le même contexte. Borné par le nombre de
+#: couples distincts d'une session.
 _FICHES = {}
 
 
@@ -403,13 +410,14 @@ class HabitatForm(QWidget):
         choisir » ne réapparaîtrait jamais) mais on ne touche pas à ce qui a été
         retenu.
         """
-        contexte = _FICHES.get(cd_hab) or self._contexte(cd_hab)
+        cle = (cd_hab, self._nom_cite_courant())
+        contexte = _FICHES.get(cle) or self._contexte(cd_hab)
         candidats, source, propre, identite, alliance, sur = contexte
         # Ne mettre en cache qu'un contexte OBTENU : sans réseau, `_contexte`
         # rend un contexte vide, et le retenir laisserait l'habitat sans
         # proposition pour le reste de la session, même une fois reconnecté.
         if sur:
-            _FICHES[cd_hab] = contexte
+            _FICHES[cle] = contexte
         self._contexte_propose = identite
         # Une ANCRE n'est pas une détermination : le code posé appartient bien à
         # CORINE, mais l'habitat n'est pas déterminé en CORINE. Verrouiller cette
@@ -444,6 +452,10 @@ class HabitatForm(QWidget):
         # que l'alliance qui l'emprunte. Lui attribuer les correspondances de
         # cette alliance ferait affirmer un syntaxon que personne n'a déterminé.
         alliance = catalogue().par_determination(cd_hab)
+        if alliance is None:
+            # HABREF abrège là où le catalogue développe : les deux formes se
+            # rejoignent sur les genres du syntaxon (cf. `par_nom_approche`).
+            alliance = catalogue().par_nom_approche(self._nom_cite_courant())
         if alliance is not None:
             candidats = {
                 cle: alliance.candidats(cle)
@@ -462,6 +474,18 @@ class HabitatForm(QWidget):
             return vide
         return (candidats_habref(fiche, dict(self._typologies)), "habref",
                 self._typologie_propre(fiche), ("habref", cd_hab), None, True)
+
+    def _nom_cite_courant(self):
+        """Nom sur lequel rapprocher l'habitat du catalogue.
+
+        Le libellé HABREF de la proposition retenue s'il y en a une, sinon le
+        texte du champ : `item_choisi` est vide à la RELECTURE, où rien n'a été
+        choisi dans la liste, et sans ce repli un habitat rouvert perdrait les
+        propositions qu'il avait à la saisie.
+        """
+        item = self.edit_nom_cite.item_choisi or {}
+        return (nom_habref(item.get("search_name"))
+                or self.edit_nom_cite.text().strip())
 
     def _typologie_propre(self, fiche):
         """(typologie, code) de l'habitat lui-même, s'il est dans une typologie cible.

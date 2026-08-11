@@ -72,6 +72,39 @@ def normaliser(texte):
     return re.sub(r"\s+", " ", texte).strip().lower()
 
 
+#: Suffixes qui font d'un dernier mot une ÉPITHÈTE et non un genre : le squelette
+#: s'arrête aux genres, pour que la forme abrégée rejoigne la complète.
+_SUFFIXES_SYNTAXON = ("etea", "etalia", "ion", "enion", "etum", "enalia")
+
+
+def squelette(nom):
+    """Genres d'un syntaxon, pour rapprocher ses formes abrégée et complète.
+
+    HABREF porte « Eleocharito-Sagittarion » là où le catalogue écrit
+    « Eleocharito palustris-Sagittarion sagittifoliae » : même végétation, deux
+    écritures. Réduites à leurs genres, les deux donnent
+    « eleocharito-sagittarion » et se retrouvent.
+
+    Un nom qui ne se termine pas par un suffixe de syntaxon n'est pas réduit :
+    « Cultures et jardins maraîchers » n'est pas une nomenclature latine, et en
+    garder le premier mot de chaque membre n'aurait aucun sens.
+    """
+    # `normaliser` remplace les tirets par des espaces — c'est ce qu'il faut pour
+    # CHERCHER, pas pour découper : ici le tiret sépare les deux genres du nom
+    # composé, et il doit survivre. On unifie donc ses variantes au lieu de les
+    # effacer.
+    sans_accent = unicodedata.normalize("NFD", nom or "")
+    sans_accent = "".join(c for c in sans_accent
+                          if unicodedata.category(c) != "Mn")
+    normalise = re.sub(r"\s+", " ", re.sub(r"[‐-―]", "-", sans_accent)).strip().lower()
+    membres = [m for m in normalise.split("-") if m.strip()]
+    if not membres or not membres[-1].split():
+        return normalise
+    if not membres[-1].split()[0].endswith(_SUFFIXES_SYNTAXON):
+        return normalise
+    return "-".join(membre.split()[0] for membre in membres)
+
+
 def _entier(valeur):
     try:
         return int(valeur)
@@ -227,6 +260,11 @@ class Catalogue:
         for alliance in self.alliances:
             if alliance.cd_hab is not None:
                 self._par_determination.setdefault(alliance.cd_hab, alliance)
+        # Index par squelette de nom : c'est le seul moyen de retrouver une
+        # alliance choisie sous sa forme HABREF abrégée (cf. `squelette`).
+        self._par_squelette = {}
+        for alliance in self.alliances:
+            self._par_squelette.setdefault(squelette(alliance.nom), alliance)
 
     def __len__(self):
         return len(self.alliances)
@@ -234,6 +272,18 @@ class Catalogue:
     def par_determination(self, cd_hab):
         """Alliance dont le `cd_hab` EST la détermination (jamais une ancre)."""
         return self._par_determination.get(_entier(cd_hab))
+
+    def par_nom_approche(self, nom):
+        """Alliance portant ce nom, quelle qu'en soit l'écriture.
+
+        Le rapprochement se fait sur les GENRES (cf. `squelette`), sans quoi une
+        alliance choisie sous sa forme HABREF abrégée reste introuvable dans le
+        catalogue — et ses correspondances avec elle.
+
+        Deux lignes de même squelette : on rend la PREMIÈRE et on ne prétend pas
+        trancher. Ce qui sort d'ici sert à PROPOSER, le botaniste garde la main.
+        """
+        return self._par_squelette.get(squelette(nom)) if nom else None
 
     def chercher(self, texte, limite=20):
         """Alliances dont le nom ou la classe contient `texte`.

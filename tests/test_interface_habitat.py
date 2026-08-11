@@ -353,3 +353,91 @@ def test_tous_les_champs_de_masse_ont_un_editeur():
     for niveau in (ch.STATION, ch.HABITAT):
         for champ in ch.modifiables_en_masse(niveau):
             assert (niveau, champ.cle) in dialogue._editeurs, champ.cle
+
+
+def test_une_alliance_abregee_retrouve_ses_correspondances():
+    """`Eleocharito-Sagittarion` : HABREF l'abrège, le catalogue la développe.
+
+    Six polygones réels ne recevaient aucune proposition — HABREF ne connaît
+    aucune correspondance pour ce cd_hab, et le catalogue restait hors d'atteinte
+    faute de rapprocher les deux écritures du nom.
+    """
+    from qgis.PyQt.QtWidgets import QComboBox
+    from occhab.src.ui.attribute_table import AppliquerDialog, Contexte
+    from occhab.src.processing import champs as ch
+
+    contexte = Contexte(
+        habref_search=lambda _q, cd_typo=None: [],
+        habref_detail=lambda cd: {"cd_hab": cd, "correspondances": []},
+        typologies=[(cd, nom) for cd, nom in TYPOLOGIES],
+    )
+    dialogue = AppliquerDialog(contexte, 6, None, cd_habs={25570},
+                               noms={"Eleocharito-Sagittarion"})
+    _case, widget, _champ = dialogue._editeurs[(ch.HABITAT, "EUNIS")]
+    assert isinstance(widget, QComboBox)
+    assert any("C3.24A" in widget.itemText(i) for i in range(widget.count()))
+
+    # Les deux écritures de la MÊME alliance dans une sélection : c'est
+    # précisément le cas qui amène ici, et comparer les chaînes brutes le
+    # ferait échouer.
+    deux_ecritures = AppliquerDialog(
+        contexte, 6, None, cd_habs={25570},
+        noms={"Eleocharito-Sagittarion",
+              "Eleocharito palustris-Sagittarion sagittifoliae"})
+    _case, widget, _champ = deux_ecritures._editeurs[(ch.HABITAT, "EUNIS")]
+    assert isinstance(widget, QComboBox)
+
+    # Deux alliances différentes : on ne propose rien. Une correspondance juste
+    # pour l'une serait fausse pour l'autre.
+    melange = AppliquerDialog(contexte, 6, None, cd_habs={25570},
+                              noms={"Eleocharito-Sagittarion", "Nardion strictae"})
+    _case, widget, _champ = melange._editeurs[(ch.HABITAT, "EUNIS")]
+    assert not isinstance(widget, QComboBox)
+
+
+def test_le_formulaire_retrouve_une_alliance_citee_sous_sa_forme_abregee():
+    """Rouvrir un habitat dont le nom cité est la forme HABREF abrégée.
+
+    `item_choisi` est vide à la relecture : sans repli sur le nom cité, un
+    habitat rouvert perdrait les propositions qu'il avait à la saisie.
+    """
+    hf._FICHES.clear()
+    form = _formulaire(habref_detail=lambda cd: {"cd_hab": cd, "correspondances": []})
+    form.set_data({"cd_hab": 25570, "nom_cite": "Eleocharito-Sagittarion",
+                   "technical_precision": ""})
+    ligne = form.corresp_edit._lignes["EUNIS"]
+    assert any("C3.24A" in ligne.choix.itemText(i)
+               for i in range(ligne.choix.count())), "le catalogue doit proposer"
+
+
+def test_le_cache_de_fiches_distingue_deux_noms_pour_un_meme_code():
+    """`_FICHES` indexé par le seul cd_hab servait le contexte du premier venu.
+
+    Le rapprochement avec le catalogue passe par le NOM : deux habitats de même
+    code cités différemment n'ont pas les mêmes propositions, et le second aurait
+    hérité de celles du premier.
+    """
+    hf._FICHES.clear()
+    detail = lambda cd: {"cd_hab": cd, "correspondances": []}  # noqa: E731
+
+    connu = _formulaire(habref_detail=detail)
+    connu.set_data({"cd_hab": 25570, "nom_cite": "Eleocharito-Sagittarion",
+                    "technical_precision": ""})
+    autre = _formulaire(habref_detail=detail)
+    autre.set_data({"cd_hab": 25570, "nom_cite": "Relevé non déterminé",
+                    "technical_precision": ""})
+    def propositions(form):
+        """Ce que la liste offre VRAIMENT : « aucune » et « Autre… » y figurent
+        toujours, et les compter ferait passer une ligne vide pour garnie. Une
+        vraie proposition, elle, porte le code et le libellé d'un habitat."""
+        ligne = form.corresp_edit._lignes["EUNIS"]
+        return [ligne.choix.itemText(i) for i in range(ligne.choix.count())
+                if isinstance(ligne.choix.itemData(i), dict)]
+
+    assert any("C3.24A" in p for p in propositions(connu))
+    assert propositions(autre) == []
+    # Et ça se voit : la ligne sans proposition bascule en recherche libre.
+    assert autre.corresp_edit._lignes["EUNIS"].pile.currentIndex() == 1
+    assert set(hf._FICHES) == {(25570, "Eleocharito-Sagittarion"),
+                               (25570, "Relevé non déterminé")}
+    hf._FICHES.clear()

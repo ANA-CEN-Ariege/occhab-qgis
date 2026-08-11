@@ -606,7 +606,8 @@ class AppliquerDialog(QDialog):
     saisie groupée du syntaxon paraissait ne pas fonctionner.
     """
 
-    def __init__(self, contexte, nb_lignes, parent=None, cd_habs=None):
+    def __init__(self, contexte, nb_lignes, parent=None, cd_habs=None,
+                 noms=None):
         super().__init__(parent)
         self.setWindowTitle("Modifier les lignes sélectionnées")
         self.contexte = contexte
@@ -617,6 +618,9 @@ class AppliquerDialog(QDialog):
         # propose rien, car une correspondance juste pour l'un serait
         # fausse pour l'autre.
         self._cd_habs = set(cd_habs or ())
+        # Nom HABREF des habitats visés : c'est par LUI qu'on retrouve une
+        # alliance du catalogue choisie sous sa forme abrégée.
+        self._noms = set(noms or ())
         self._candidats = None  # résolus à la demande, une seule fois
         self._editeurs = {}  # (niveau, cle) -> (case, widget, champ)
 
@@ -798,6 +802,20 @@ class AppliquerDialog(QDialog):
     def _resoudre_candidats(self, cd_hab):
         """{typologie: [candidats]} pour cet habitat. Un seul appel réseau."""
         alliance = corresp.catalogue().par_determination(cd_hab)
+        if alliance is None and self._noms:
+            # HABREF abrège là où le catalogue développe : « Eleocharito-
+            # Sagittarion » contre « Eleocharito palustris-Sagittarion
+            # sagittifoliae ». Sans ce rapprochement, une alliance du catalogue
+            # reste introuvable dès qu'elle a été choisie sous sa forme courte —
+            # et ses correspondances avec elle.
+            #
+            # Sur les SQUELETTES et non sur les noms bruts : c'est justement
+            # parce que la même alliance s'écrit de plusieurs façons qu'on est
+            # ici, et comparer les chaînes ferait échouer le rapprochement dès
+            # que la sélection mêle les deux écritures.
+            if len({corresp.squelette(nom) for nom in self._noms}) == 1:
+                alliance = corresp.catalogue().par_nom_approche(
+                    next(iter(self._noms)))
         if alliance is not None:
             return {cle: alliance.candidats(cle)
                     for cle, _lib, _court in TYPOLOGIES_CORRESPONDANCE}
@@ -1284,9 +1302,13 @@ class AttributeTableDialog(QDialog):
         if not lignes:
             QMessageBox.information(self, "OccHab", "Sélectionnez d'abord des lignes.")
             return
-        cd_habs = {(ligne.habitat or {}).get("cd_hab") for ligne in lignes}
-        dialogue = AppliquerDialog(self.contexte, len(lignes), self,
-                                   cd_habs={c for c in cd_habs if c})
+        habitats = [ligne.habitat or {} for ligne in lignes]
+        dialogue = AppliquerDialog(
+            self.contexte, len(lignes), self,
+            cd_habs={h.get("cd_hab") for h in habitats if h.get("cd_hab")},
+            noms={h.get(ch.HABREF) or h.get("nom_cite") for h in habitats
+                  if h.get(ch.HABREF) or h.get("nom_cite")},
+        )
         if not dialogue.exec():
             return
         valeurs = dialogue.valeurs()

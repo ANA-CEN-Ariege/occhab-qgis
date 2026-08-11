@@ -309,3 +309,65 @@ def test_rien_a_completer_ne_reecrit_rien():
     synchroniser pour rien."""
     bloc = _bloc(EUNIS={"cd_hab": 1778, "code": "F9.1", "nom": "Déjà", "src": "manuel"})
     assert co.completer_libelles(bloc, {1778: "Autre"}.get) is None
+
+
+# --------------------------- rapprocher une forme abrégée de sa forme complète
+def test_squelette_reduit_aux_genres():
+    """HABREF abrège, le catalogue développe : les deux doivent se rejoindre.
+
+    `Eleocharito-Sagittarion` (HABREF) et `Eleocharito palustris-Sagittarion
+    sagittifoliae` (catalogue) sont la même végétation. Sans ce rapprochement,
+    ses correspondances restaient introuvables dès qu'elle était choisie sous sa
+    forme courte — six polygones sans aucune proposition, sur le terrain.
+    """
+    assert co.squelette("Eleocharito-Sagittarion") == "eleocharito-sagittarion"
+    assert co.squelette("Eleocharito palustris-Sagittarion sagittifoliae") == \
+        "eleocharito-sagittarion"
+    assert co.squelette("Brachypodio-Centaureion nemoralis") == \
+        co.squelette("Brachypodio rupestris-Centaureion nemorali")
+
+
+def test_squelette_epargne_ce_qui_n_est_pas_un_syntaxon():
+    """Un intitulé français n'est pas une nomenclature latine : le réduire à son
+    premier mot rapprocherait n'importe quoi de n'importe quoi."""
+    assert co.squelette("Cultures et jardins maraîchers") == \
+        "cultures et jardins maraichers"
+    assert co.squelette("") == ""
+    assert co.squelette(None) == ""
+
+
+def test_squelette_ne_coupe_que_sur_un_suffixe_de_syntaxon():
+    """C'est le DERNIER membre qui décide : lui seul porte le rang du syntaxon."""
+    assert co.squelette("Alno glutinosae-Salicion cinereae") == "alno-salicion"
+    # Pas de suffixe reconnu en fin de nom → aucune réduction.
+    assert co.squelette("Carex rostrata Stokes") == "carex rostrata stokes"
+
+
+def test_par_nom_approche_retrouve_l_alliance():
+    catalogue = co.Catalogue([
+        _alliance(alliance="Eleocharito palustris-Sagittarion sagittifoliae",
+                  cd_hab="", ancre_cd_hab="1204",
+                  ancre_typologie="CORINE_biotopes", ancre_code="53.14A"),
+        _alliance(alliance="Cultures et jardins maraîchers", cd_hab="17000"),
+    ])
+    assert catalogue.par_nom_approche("Eleocharito-Sagittarion").nom == \
+        "Eleocharito palustris-Sagittarion sagittifoliae"
+    # Identité exacte : elle passe par le même index, sans traitement à part.
+    assert catalogue.par_nom_approche("Cultures et jardins maraîchers") is not None
+    assert catalogue.par_nom_approche("Nardion strictae") is None
+    assert catalogue.par_nom_approche("") is None
+    assert catalogue.par_nom_approche(None) is None
+
+
+def test_par_nom_approche_ne_tranche_pas_entre_deux_homonymes():
+    """Deux alliances de même squelette : on rend la première, pas un mélange.
+
+    Ce rapprochement sert à PROPOSER ; le botaniste garde la main sur ce qu'il
+    retient. Rendre les deux fusionnées inventerait une alliance inexistante.
+    """
+    catalogue = co.Catalogue([
+        _alliance(ligne_xlsx="10", alliance="Caricion davallianae", cd_hab="1"),
+        _alliance(ligne_xlsx="11", alliance="Caricion davalliana", cd_hab="2"),
+    ])
+    trouve = catalogue.par_nom_approche("Caricion")
+    assert trouve is not None and trouve.ligne == 10
