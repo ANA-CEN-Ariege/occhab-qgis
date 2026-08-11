@@ -8,6 +8,7 @@ import re
 from qgis.PyQt.QtCore import QItemSelection, QItemSelectionModel, Qt, QUrl
 from qgis.PyQt.QtGui import QDesktopServices
 from qgis.PyQt.QtWidgets import (
+    QApplication,
     QCheckBox,
     QComboBox,
     QCompleter,
@@ -31,6 +32,7 @@ from qgis.PyQt.QtWidgets import (
 )
 
 from ..database.sqlite_local import BROUILLON, VALIDE, OccHabDatabase
+from ..processing import correspondances as corresp
 from ..processing.duplicate import habitat_reprise, paste_fields, station_template
 from ..processing.geometry import CrsIndetermine, wkt_en_degres_plausibles
 from .connection_dialog import ConnectionDialog
@@ -422,6 +424,16 @@ class OccHabDockWidget(QDockWidget):
         menu.addAction(
             "Nettoyer les stations synchronisées anciennes…",
             self._purge_old_synced_stations,
+        )
+        action_libelles = menu.addAction(
+            "Compléter les libellés de correspondance…",
+            self._completer_libelles_correspondance,
+        )
+        action_libelles.setToolTip(
+            "Les correspondances arbitrées avant la 0.9.1 n'ont que leur code : "
+            "une carte chargée dans cette typologie affiche « C1.32 » au lieu du "
+            "nom de l'habitat. Cette action demande les libellés manquants au "
+            "référentiel et les inscrit dans les habitats concernés."
         )
         action_habref = menu.addAction(
             "Recharger les libellés HABREF", self._recharger_libelles_habref
@@ -1083,6 +1095,94 @@ class OccHabDockWidget(QDockWidget):
             self, "OccHab",
             "%d libellé(s) oublié(s). Ils seront redemandés au référentiel à "
             "la prochaine ouverture du tableau." % connus,
+        )
+
+    def _completer_libelles_correspondance(self):
+        """Inscrire les libellés manquants des correspondances déjà arbitrées.
+
+        Les correspondances enregistrées avant la 0.9.1 ne portent que leur code :
+        une carte chargée dans cette typologie affiche « C1.32 » là où une carte
+        d'habitats se lit par ses noms. Plutôt que de faire résoudre ce libellé
+        par la vue à chaque requête — ce qui avait fait s'effondrer l'export —
+        on complète la donnée UNE fois.
+
+        Passe par le chemin normal : les stations touchées repassent « à
+        synchroniser », donc la correction remonte au serveur comme une saisie.
+        """
+        if self.client is None or not self.client.is_authenticated:
+            QMessageBox.information(
+                self, "OccHab",
+                "Connectez-vous d'abord : les libellés viennent du référentiel "
+                "HABREF, qui est côté serveur.")
+            return
+
+        stations = self.db.get_all_stations() or []
+        a_faire = [
+            (station, habitat)
+            for station in stations
+            for habitat in (station.get("habitats") or [])
+            if corresp.libelles_manquants(habitat.get("technical_precision"))
+        ]
+        if not a_faire:
+            QMessageBox.information(
+                self, "OccHab", "Aucun libellé manquant : rien à compléter.")
+            return
+        if QMessageBox.question(
+            self, "OccHab",
+            "%d habitat(s) portent une correspondance sans libellé.\n\n"
+            "Les compléter depuis HABREF et marquer leurs stations « à "
+            "synchroniser » ?" % len(a_faire),
+        ) != QMessageBox.StandardButton.Yes:
+            return
+
+        cache = {}
+
+        def libelle_de(cd_hab):
+            # Un cd_hab non résolu est laissé tel quel : mieux vaut un code nu
+            # qu'un libellé inventé, et l'opération reste rejouable.
+            if cd_hab not in cache:
+                try:
+                    fiche = self.client.get_habref(cd_hab) or {}
+                except Exception as exc:  # noqa: BLE001
+                    self.logger.warning("Libellé HABREF %s non résolu : %s", cd_hab, exc)
+                    fiche = {}
+                cache[cd_hab] = (fiche.get("lb_hab_fr") or "").strip() or None
+            return cache[cd_hab]
+
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        completes, touchees = 0, set()
+        try:
+            for station, habitat in a_faire:
+                neuf = corresp.completer_libelles(
+                    habitat.get("technical_precision"), libelle_de)
+                if not neuf:
+                    continue
+                habitat["technical_precision"] = neuf
+                touchees.add(station["id"])
+                completes += 1
+            for id_station in touchees:
+                station = next(s for s in stations if s["id"] == id_station)
+                self.db.replace_habitats(id_station, station.get("habitats") or [])
+                self.db.update_station(id_station, sync_status="pending")
+        except Exception as exc:  # noqa: BLE001
+            QApplication.restoreOverrideCursor()
+            self.logger.error("Complétion des libellés échouée : %s", exc)
+            QMessageBox.warning(self, "OccHab", "Complétion interrompue : %s" % exc)
+            return
+        finally:
+            QApplication.restoreOverrideCursor()
+
+        self.logger.info("Libellés de correspondance complétés : %d habitat(s), "
+                         "%d station(s)", completes, len(touchees))
+        self.refresh_stations()
+        QMessageBox.information(
+            self, "OccHab",
+            "%d habitat(s) complété(s) sur %d, dans %d station(s).\n\n"
+            "%sSynchronisez pour que la correction parte sur GeoNature."
+            % (completes, len(a_faire), len(touchees),
+               "" if completes == len(a_faire) else
+               "Les autres n'ont pas été résolus par HABREF et gardent leur "
+               "code seul ; l'opération est rejouable.\n\n"),
         )
 
     def _libelles_habref(self, stations):

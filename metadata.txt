@@ -42,9 +42,12 @@ changelog=0.9.1 - Correction : la legende n'affichait que le code d'une
     donnee, pas pour la carte. Il est desormais enregistre avec le code, et la
     vue le restitue (une extraction du bloc, aucune table interrogee).
     A REDEPLOYER : psql -d geonature -f sql/v_occhab_complet.sql
-    Les correspondances enregistrees AVANT cette version n'ont pas de libelle
-    stocke : elles continuent d'afficher leur seul code jusqu'a reenregistrement
-    de l'habitat.
+    Pour les correspondances enregistrees AVANT cette version, « Base locale…
+    -> Completer les libelles de correspondance » demande les libelles manquants
+    au referentiel et les inscrit dans les habitats concernes. Les stations
+    touchees repassent « a synchroniser » : la correction remonte au serveur
+    comme une saisie. Un cd_hab que HABREF ne resout pas garde son code seul, et
+    l'operation se rejoue.
     0.9.0 - Cartographier dans une autre typologie que celle de saisie.
     On determine dans la typologie qui convient au terrain — souvent le Prodrome
     des vegetations, a l'alliance, ou CORINE biotopes. Une restitution Natura

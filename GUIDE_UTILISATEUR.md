@@ -581,6 +581,14 @@ export deux fois, dans deux typologies, et de les comparer.
 > Le Prodrome n'est pas dans la liste : vos déterminations y sont déjà, donc
 > **« Habitat saisi »** donne exactement cette carte-là.
 
+> **Une légende qui n'affiche qu'un code ?** Les correspondances arbitrées avant
+> la version 0.9.1 n'ont pas de libellé enregistré : la carte montre alors
+> « C1.32 » au lieu du nom de l'habitat. **« Base locale… → Compléter les
+> libellés de correspondance »** demande les libellés manquants au référentiel et
+> les inscrit. Les stations touchées repassent **« à synchroniser »** —
+> synchronisez pour que la correction parte sur GeoNature, puis rechargez
+> l'export.
+
 #### Les couleurs de la couche
 
 Elle arrive avec **une couleur par habitat**, chaque teinte restant dans le **ton

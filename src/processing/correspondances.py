@@ -47,8 +47,10 @@ CHEMIN_DEFAUT = os.path.join(
 
 try:  # importable dans le paquet (plugin) comme en isolation (tests)
     from . import referentiels as ref
+    from .eval_fields import decode_eval, merge_eval
 except ImportError:  # pragma: no cover - repli hors paquet
     import referentiels as ref
+    from eval_fields import decode_eval, merge_eval
 
 #: (clé HABREF, libellé, préfixe des colonnes du CSV). Les trois viennent de
 #: `referentiels` : la liste des typologies et leurs noms courts y sont définis
@@ -349,3 +351,41 @@ def charger(chemin=None):
         Alliance(ligne) for ligne in lignes
         if (ligne.get("alliance") or "").strip()
     )
+
+
+def libelles_manquants(technical_precision):
+    """`cd_hab` des correspondances enregistrées SANS libellé, dans un bloc.
+
+    Les correspondances arbitrées avant la 0.9.1 ne portent que leur code : le
+    libellé n'était pas enregistré. Une carte chargée dans cette typologie
+    affiche alors « C1.32 » tout court, là où une carte d'habitats se lit par ses
+    noms. Ce sont ces `cd_hab` qu'il faut résoudre pour compléter la donnée.
+    """
+    corresp = (decode_eval(technical_precision) or {}).get("corresp") or {}
+    return sorted({
+        valeurs["cd_hab"] for valeurs in corresp.values()
+        if valeurs.get("cd_hab") and not valeurs.get("nom")
+    })
+
+
+def completer_libelles(technical_precision, libelle_de):
+    """Bloc complété de ses libellés manquants, ou None s'il n'y a rien à faire.
+
+    `libelle_de(cd_hab)` rend le nom HABREF, ou None si le référentiel ne répond
+    pas. Un `cd_hab` non résolu est LAISSÉ TEL QUEL — mieux vaut un code nu qu'un
+    libellé inventé, et l'opération reste rejouable.
+
+    Rien d'autre du bloc n'est touché : `merge_eval` réécrit la seule clé
+    `corresp`, le texte humain et les autres champs sont préservés.
+    """
+    corresp = (decode_eval(technical_precision) or {}).get("corresp") or {}
+    complete, change = {}, False
+    for typologie, valeurs in corresp.items():
+        entree = dict(valeurs)
+        if entree.get("cd_hab") and not entree.get("nom"):
+            nom = libelle_de(entree["cd_hab"])
+            if nom:
+                entree["nom"] = nom
+                change = True
+        complete[typologie] = entree
+    return merge_eval(technical_precision, corresp=complete) if change else None

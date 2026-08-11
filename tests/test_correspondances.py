@@ -263,3 +263,49 @@ def test_par_determination_ignore_les_ancres():
     ])
     assert catalogue.par_determination(1204) is None
     assert catalogue.par_determination(16480).nom == "Nitellion flexilis"
+
+
+# ------------------- compléter les libellés des correspondances déjà arbitrées
+def _bloc(**corresp):
+    import eval_fields as ef
+    return ef.encode_eval("Relevé du 12 mai.", enjeu="fort", corresp=corresp)
+
+
+def test_reperer_les_correspondances_sans_libelle():
+    """Celles arbitrées avant la 0.9.1 n'ont que leur code."""
+    bloc = _bloc(EUNIS={"cd_hab": 1778, "code": "F9.1", "src": "manuel"},
+                 CORINE_biotopes={"cd_hab": 1378, "code": "44.1",
+                                  "nom": "Formations riveraines de Saules",
+                                  "src": "catalogue"})
+    assert co.libelles_manquants(bloc) == [1778]
+    assert co.libelles_manquants("") == []
+
+
+def test_completer_n_ecrase_que_les_libelles_manquants():
+    import eval_fields as ef
+    bloc = _bloc(EUNIS={"cd_hab": 1778, "code": "F9.1", "src": "manuel"},
+                 CORINE_biotopes={"cd_hab": 1378, "code": "44.1",
+                                  "nom": "Déjà là", "src": "catalogue"})
+    codes = ef.decode_eval(co.completer_libelles(bloc, {1778: "Fourrés ripicoles"}.get))
+    assert codes["corresp"]["EUNIS"]["nom"] == "Fourrés ripicoles"
+    assert codes["corresp"]["CORINE_biotopes"]["nom"] == "Déjà là"
+    # Le reste du bloc est intact : c'est une complétion, pas une réécriture.
+    assert codes["enjeu"] == "fort"
+    assert ef.strip_eval(co.completer_libelles(bloc, {1778: "X"}.get)) == "Relevé du 12 mai."
+    assert codes["corresp"]["EUNIS"]["src"] == "manuel"
+
+
+def test_un_cd_hab_non_resolu_est_laisse_tel_quel():
+    """Mieux vaut un code nu qu'un libellé inventé — et l'opération se rejoue."""
+    import eval_fields as ef
+    bloc = _bloc(EUNIS={"cd_hab": 1778, "code": "F9.1", "src": "manuel"})
+    assert co.completer_libelles(bloc, lambda _cd: None) is None
+    complete = co.completer_libelles(bloc, {1778: "Fourrés ripicoles"}.get)
+    assert ef.decode_eval(complete)["corresp"]["EUNIS"]["nom"] == "Fourrés ripicoles"
+
+
+def test_rien_a_completer_ne_reecrit_rien():
+    """Sans changement, on ne touche pas au bloc : pas de station marquée à
+    synchroniser pour rien."""
+    bloc = _bloc(EUNIS={"cd_hab": 1778, "code": "F9.1", "nom": "Déjà", "src": "manuel"})
+    assert co.completer_libelles(bloc, {1778: "Autre"}.get) is None
