@@ -43,6 +43,38 @@ changelog=0.10.0 - Modifier les correspondances en masse depuis le tableau.
     enlever une posee par erreur sur tout un lot.
     Les autres typologies de la meme ligne ne sont jamais touchees — le bloc de
     donnees les porte ensemble, et les omettre les effacerait.
+    Le classeur des botanistes (0_Typologie.xlsx) entre dans le depot, sous
+    resources/typologie/. Il fait autorite sur le catalogue et en etait la seule
+    source non versionnee : le dictionnaire livre n'etait plus reproductible.
+    Deux alliances y sont ajoutees, Prunetalia spinosae et Tetragonolobo
+    maritimi-Bromenion erecti. Le classeur n'est pas embarque dans le paquet
+    installe : c'est une source, pas une ressource d'execution.
+    Correction : une alliance citee sous sa forme HABREF abregee ne retrouvait
+    pas ses correspondances.
+    HABREF ecrit « Eleocharito-Sagittarion » la ou le catalogue developpe
+    « Eleocharito palustris-Sagittarion sagittifoliae » : meme vegetation, deux
+    ecritures qui ne se rencontraient jamais. Six polygones se retrouvaient
+    devant un champ de recherche vide alors que la reponse etait livree avec
+    l'extension. Les noms composes sont desormais rapproches sur leurs genres.
+    Les noms SIMPLES ne le sont pas : le catalogue porte cinq Salicion et quatre
+    Caricion, et retirer l'epithete les confondrait. Un squelette que plusieurs
+    alliances se partagent est ecarte — on ne propose rien plutot que de
+    trancher, et la recherche libre reste ouverte.
+    Correction : la colonne « Habitat (HABREF) » restait vide, ou affichait le
+    nom repete.
+    Sur l'instance de l'ANA, la fiche HABREF d'un habitat repond 500 pour 87 des
+    181 alliances du catalogue — un defaut du SERVEUR, dans pypn_habref_api, qui
+    dereference une correspondance pointant vers un cd_hab absent. L'extension
+    se rabattait alors sur l'autocompletion, mais seulement si le nom cite
+    portait un code en tete : une alliance du Prodrome n'en a pas, et le repli
+    ne servait jamais la ou il aurait le plus servi. Elle cherche desormais sur
+    le nom a defaut de code.
+    Le nom repete de l'autocompletion (« Caricion gracilis Caricion gracilis
+    Neuhausl 1959 ») est coupe, y compris pour les libelles deja mis en cache,
+    corriges a la lecture et reecrits une fois. Le decoupage ne se fait plus au
+    premier « - » venu mais au seul code de tete : certains noms portent
+    eux-memes un tiret espace (« Centaurio pulchelli - Blackstonion
+    perfoliatae ») et se voyaient amputes de moitie.
     0.9.1 - Correction : la legende n'affichait que le code d'une
     correspondance arbitree.
     Une carte chargee en EUNIS montrait « C1.32 » ou « E2.1 » tout court, la ou
