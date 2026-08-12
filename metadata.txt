@@ -3,7 +3,7 @@ name=OccHab GeoNature
 qgisMinimumVersion=3.28
 qgisMaximumVersion=3.99
 description=Offline-first data entry for GeoNature's OccHab module (habitat stations) from QGIS, with local SQLite storage and synchronisation to the GeoNature REST API.
-version=0.10.0
+version=0.10.1
 author=Cédric Roy
 email=it@ariegenature.fr
 license=GPL-3.0-or-later
@@ -32,7 +32,21 @@ icon=resources/icons/occhab.svg
 experimental=True
 deprecated=False
 
-changelog=0.10.0 - Modifier les correspondances en masse depuis le tableau.
+changelog=0.10.1 - Correction : « Completer les libelles de correspondance »
+    ne lisait aucun habitat.
+    L'action annoncait « Aucun libelle manquant : rien a completer » quel que
+    soit l'etat de la base : elle lisait les stations sans leurs habitats, et
+    parcourait donc toujours une liste vide. Elle n'a jamais rien complete
+    depuis son ajout en 0.9.1.
+    Consequence visible : une carte chargee en EUNIS ou en CORINE affichait
+    « C1.32 », « C3.24A » ou « F3.112 » tout court dans sa legende, la ou les
+    autres habitats donnaient leur nom. Les correspondances arbitrees avant la
+    0.9.1 ne portent que leur code, et c'est cette action qui devait les
+    completer.
+    Marche a suivre : « Base locale… » > « Completer les libelles de
+    correspondance… », puis synchroniser, puis recharger la carte — la vue lit
+    le libelle dans la donnee.
+    0.10.0 - Modifier les correspondances en masse depuis le tableau.
     Elles etaient reservees au formulaire, un habitat a la fois — intenable sur
     une mosaique ou trente polygones voisins portent le meme habitat.
     Les quatre typologies (CORINE, EUNIS, Natura 2000, Cahiers d'habitats)
