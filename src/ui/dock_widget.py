@@ -1112,13 +1112,7 @@ class OccHabDockWidget(QDockWidget):
                 "HABREF, qui est côté serveur.")
             return
 
-        stations = self.db.get_all_stations() or []
-        a_faire = [
-            (station, habitat)
-            for station in stations
-            for habitat in (station.get("habitats") or [])
-            if corresp.libelles_manquants(habitat.get("technical_precision"))
-        ]
+        stations, a_faire = self._correspondances_sans_libelle()
         if not a_faire:
             QMessageBox.information(
                 self, "OccHab", "Aucun libellé manquant : rien à compléter.")
@@ -1248,6 +1242,27 @@ class OccHabDockWidget(QDockWidget):
                 "prochaine ouverture de la table.", reste,
             )
         return connus
+
+    def _correspondances_sans_libelle(self):
+        """(stations, [(station, habitat)]) dont une correspondance n'a que son code.
+
+        `get_stations_full` et NON `get_all_stations` : ce dernier ne rend que
+        les lignes de `t_stations`, sans leurs habitats. La recherche portait
+        donc toujours sur une liste vide, et l'action annonçait « rien à
+        compléter » quel que soit l'état de la base — les tests du repérage
+        étaient au vert, mais rien ne les reliait à la donnée.
+
+        Les stations sont rendues avec, parce que la suite en a besoin pour
+        réécrire les habitats de celles qui ont changé.
+        """
+        stations = self.db.get_stations_full() or []
+        a_faire = [
+            (station, habitat)
+            for station in stations
+            for habitat in (station.get("habitats") or [])
+            if corresp.libelles_manquants(habitat.get("technical_precision"))
+        ]
+        return stations, a_faire
 
     def _rattraper_libelles(self, connus):
         """Couper le nom répété des libellés en cache, et le corriger en base.

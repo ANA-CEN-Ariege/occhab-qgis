@@ -219,3 +219,59 @@ def test_une_base_en_lecture_seule_n_empeche_pas_l_affichage():
     base = _Refuse({16508: "Caricion gracilis Caricion gracilis Neuhäusl 1959"})
     propres = _dock_avec_base(base)._rattraper_libelles(base.libelles_habref())
     assert propres[16508] == "Caricion gracilis"
+
+
+# --------------------- repérer les correspondances arbitrées sans leur libellé
+def _bloc_sans_libelle():
+    from occhab.src.processing.eval_fields import encode_eval
+    return encode_eval("", corresp={"EUNIS": {"cd_hab": 4841, "code": "C1.32",
+                                              "src": "manuel"}})
+
+
+class _BaseStations:
+    """Doublure reproduisant la DIFFÉRENCE entre les deux lectures de la base.
+
+    `get_all_stations` ne rend que les lignes de `t_stations` — sans habitats —,
+    `get_stations_full` les rend avec. C'est exactement ce piège qui rendait
+    l'action inopérante.
+    """
+
+    def __init__(self, stations):
+        self._stations = stations
+
+    def get_all_stations(self, sync_status=None, id_dataset=None):
+        return [{k: v for k, v in s.items() if k != "habitats"}
+                for s in self._stations]
+
+    def get_stations_full(self, id_dataset=None):
+        return [dict(s, habitats=list(s.get("habitats") or []))
+                for s in self._stations]
+
+
+def test_les_correspondances_sans_libelle_sont_bien_trouvees():
+    """L'action annonçait « rien à compléter » sur une base qui en avait vingt.
+
+    Les tests du repérage étaient au vert : ils portaient sur `libelles_manquants`
+    seul, et rien ne vérifiait que la donnée lui parvenait.
+    """
+    base = _BaseStations([
+        {"id": 1, "habitats": [{"cd_hab": 4841, "nom_cite": "Lemnion minoris",
+                                "technical_precision": _bloc_sans_libelle()}]},
+        {"id": 2, "habitats": [{"cd_hab": 651, "nom_cite": "Cultures",
+                                "technical_precision": ""}]},
+    ])
+    stations, a_faire = _dock_avec_base(base)._correspondances_sans_libelle()
+    assert len(a_faire) == 1
+    station, habitat = a_faire[0]
+    assert station["id"] == 1 and habitat["cd_hab"] == 4841
+    # Les stations sont rendues AVEC leurs habitats : la réécriture en a besoin.
+    assert stations[0]["habitats"], "sans habitats, rien ne pourrait être réécrit"
+
+
+def test_une_base_sans_correspondance_a_completer_ne_rend_rien():
+    base = _BaseStations([
+        {"id": 1, "habitats": [{"cd_hab": 651, "nom_cite": "Cultures",
+                                "technical_precision": ""}]},
+    ])
+    _stations, a_faire = _dock_avec_base(base)._correspondances_sans_libelle()
+    assert a_faire == []
