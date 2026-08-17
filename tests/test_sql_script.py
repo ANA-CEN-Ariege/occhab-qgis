@@ -78,8 +78,8 @@ def test_les_blocs_du_readme_sont_dans_le_script():
     assert not manquants, [bloc.splitlines()[0] for bloc in manquants]
 
 
-def test_les_correspondances_saisies_ne_coutent_aucune_jointure():
-    """La 0.8.0 a cassé l'export : plus jamais de table pour lire le bloc.
+def test_les_correspondances_saisies_ne_lisent_habref_que_par_cle_primaire():
+    """La 0.8.0 a cassé l'export : jamais de cardinalité inconnue sur HABREF.
 
     Pour résoudre le libellé d'une correspondance saisie, la vue joignait
     `ref_habitats.habref` depuis un `jsonb_each`. PostgreSQL ignore la
@@ -87,10 +87,16 @@ def test_les_correspondances_saisies_ne_coutent_aucune_jointure():
     construisait une table de hachage sur HABREF entière à chaque habitat.
     L'export s'effondrait et le reverse-proxy rendait un 502.
 
-    La vue ne lit donc plus QUE ce que le bloc contient déjà. Ce test compare
-    l'arbre de jointures à celui de la version qui fonctionnait : il doit être
-    identique. Aucun test fonctionnel ne peut voir cette propriété, et elle se
-    reperd à la première relecture distraite.
+    C'est la FONCTION À RETOUR D'ENSEMBLE qui était en cause, pas la jointure.
+    Depuis la 0.11.0 le bloc ne porte plus que le `cd_hab` — code et libellé
+    l'auraient fait dépasser les 500 caractères du champ —, donc la vue doit
+    bien relire HABREF pour les rendre. Elle le fait sur une expression
+    SCALAIRE (`->> 'cd_hab'`)::int : le planificateur y voit une égalité sur
+    clé primaire et boucle sur l'index, ce qu'un `jsonb_each` lui interdisait.
+
+    Ce test garde donc la propriété qui compte — aucune lecture de HABREF dont
+    le planificateur ne sache la cardinalité — au lieu d'un décompte de
+    jointures qui interdisait aussi les jointures sûres.
     """
     code = _sans_commentaires(_lire(_SCRIPT))
     vue = code[code.index("CREATE OR REPLACE VIEW gn_exports.v_occhab_complet"):]
@@ -98,13 +104,20 @@ def test_les_correspondances_saisies_ne_coutent_aucune_jointure():
         "fonction à retour d'ensemble dans la vue : cardinalité inconnue du "
         "planificateur, donc hachage possible sur la table jointe"
     )
-    # Les seules occurrences de `ref_habitats` admises sont celles de la version
-    # qui fonctionnait : les jointures `hab` et `t_hab` sur le cd_hab de
-    # l'habitat lui-même.
-    assert vue.count("ref_habitats.habref") == 1, (
-        "une seule lecture de habref dans la vue, celle de l'habitat"
-    )
     assert "eh.j -> 'corresp'" in vue, "les correspondances saisies se lisent dans le bloc"
+    # Toute jointure sur HABREF porte sur `cd_hab`, sa clé primaire — jamais sur
+    # un libellé ni une expression que le planificateur ne saurait estimer.
+    for ligne in vue.splitlines():
+        if "ref_habitats.habref" in ligne:
+            # espaces normalisés : le script aligne ses ON en colonnes
+            assert ".cd_hab =" in re.sub(r"\s+", " ", ligne), (
+                "jointure HABREF hors clé primaire : %s" % ligne.strip()
+            )
+    # Les correspondances saisies se résolvent par le cd_hab, seule clé que le
+    # bloc porte encore. Chercher 'code' ne les trouverait plus.
+    assert "->> 'cd_hab' IS NOT NULL" in vue, (
+        "l'arbitrage se reconnaît au cd_hab du bloc depuis la 0.11.0"
+    )
 
 
 def test_le_bloc_ana_eval_est_decode_une_seule_fois_par_ligne():

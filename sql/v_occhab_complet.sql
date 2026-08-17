@@ -363,32 +363,32 @@ SELECT
     -- de plus qu'en 0.7.1. Les correspondances enregistrées AVANT la 0.9.1 n'ont
     -- pas de libellé stocké et ressortent avec leur seul code jusqu'à
     -- réenregistrement de l'habitat.
-    CASE WHEN eh.j -> 'corresp' -> 'CORINE_biotopes' ->> 'code' IS NOT NULL THEN eh.j -> 'corresp' -> 'CORINE_biotopes' ->> 'code'
+    CASE WHEN eh.j -> 'corresp' -> 'CORINE_biotopes' ->> 'cd_hab' IS NOT NULL THEN coalesce(c_corine.lb_code, eh.j -> 'corresp' -> 'CORINE_biotopes' ->> 'code')
          WHEN t_hab.lb_nom_typo = 'CORINE_biotopes' THEN hab.lb_code
          ELSE corine.codes END                                    AS habitat_code_corine,
-    CASE WHEN eh.j -> 'corresp' -> 'CORINE_biotopes' ->> 'code' IS NOT NULL THEN eh.j -> 'corresp' -> 'CORINE_biotopes' ->> 'nom'
+    CASE WHEN eh.j -> 'corresp' -> 'CORINE_biotopes' ->> 'cd_hab' IS NOT NULL THEN coalesce(c_corine.lb_hab_fr, eh.j -> 'corresp' -> 'CORINE_biotopes' ->> 'nom')
          WHEN t_hab.lb_nom_typo = 'CORINE_biotopes' THEN hab.lb_hab_fr
          ELSE corine.noms END                                     AS habitat_nom_corine,
-    CASE WHEN eh.j -> 'corresp' -> 'CORINE_biotopes' ->> 'code' IS NOT NULL
+    CASE WHEN eh.j -> 'corresp' -> 'CORINE_biotopes' ->> 'cd_hab' IS NOT NULL
               THEN coalesce(eh.j -> 'corresp' -> 'CORINE_biotopes' ->> 'src', 'saisi')
          WHEN t_hab.lb_nom_typo = 'CORINE_biotopes' THEN 'determination'
          WHEN corine.codes IS NOT NULL THEN 'habref'
     END                                                         AS habitat_corine_source,
-    CASE WHEN eh.j -> 'corresp' -> 'CORINE_biotopes' ->> 'code' IS NOT NULL THEN NULL
+    CASE WHEN eh.j -> 'corresp' -> 'CORINE_biotopes' ->> 'cd_hab' IS NOT NULL THEN NULL
          WHEN t_hab.lb_nom_typo = 'CORINE_biotopes' THEN 0
          ELSE corine.rang END                                     AS habitat_corine_rang,
-    CASE WHEN eh.j -> 'corresp' -> 'EUNIS' ->> 'code' IS NOT NULL THEN eh.j -> 'corresp' -> 'EUNIS' ->> 'code'
+    CASE WHEN eh.j -> 'corresp' -> 'EUNIS' ->> 'cd_hab' IS NOT NULL THEN coalesce(c_eunis.lb_code, eh.j -> 'corresp' -> 'EUNIS' ->> 'code')
          WHEN t_hab.lb_nom_typo = 'EUNIS' THEN hab.lb_code
          ELSE eunis.codes END                                    AS habitat_code_eunis,
-    CASE WHEN eh.j -> 'corresp' -> 'EUNIS' ->> 'code' IS NOT NULL THEN eh.j -> 'corresp' -> 'EUNIS' ->> 'nom'
+    CASE WHEN eh.j -> 'corresp' -> 'EUNIS' ->> 'cd_hab' IS NOT NULL THEN coalesce(c_eunis.lb_hab_fr, eh.j -> 'corresp' -> 'EUNIS' ->> 'nom')
          WHEN t_hab.lb_nom_typo = 'EUNIS' THEN hab.lb_hab_fr
          ELSE eunis.noms END                                     AS habitat_nom_eunis,
-    CASE WHEN eh.j -> 'corresp' -> 'EUNIS' ->> 'code' IS NOT NULL
+    CASE WHEN eh.j -> 'corresp' -> 'EUNIS' ->> 'cd_hab' IS NOT NULL
               THEN coalesce(eh.j -> 'corresp' -> 'EUNIS' ->> 'src', 'saisi')
          WHEN t_hab.lb_nom_typo = 'EUNIS' THEN 'determination'
          WHEN eunis.codes IS NOT NULL THEN 'habref'
     END                                                         AS habitat_eunis_source,
-    CASE WHEN eh.j -> 'corresp' -> 'EUNIS' ->> 'code' IS NOT NULL THEN NULL
+    CASE WHEN eh.j -> 'corresp' -> 'EUNIS' ->> 'cd_hab' IS NOT NULL THEN NULL
          WHEN t_hab.lb_nom_typo = 'EUNIS' THEN 0
          ELSE eunis.rang END                                     AS habitat_eunis_rang,
     -- Natura 2000. Deux typologies, que « N2000 » confond souvent : le code de
@@ -400,32 +400,32 @@ SELECT
     -- deux codes N2000 ? » en fin de section correspondances. À croiser avec
     -- `interet_communautaire` plus bas, qui est la nomenclature SAISIE : un
     -- désaccord entre les deux signale une erreur ou un cas à regarder.
-    CASE WHEN eh.j -> 'corresp' -> 'Habitats_d''intérêt_communautaire' ->> 'code' IS NOT NULL THEN eh.j -> 'corresp' -> 'Habitats_d''intérêt_communautaire' ->> 'code'
+    CASE WHEN eh.j -> 'corresp' -> 'Habitats_d''intérêt_communautaire' ->> 'cd_hab' IS NOT NULL THEN coalesce(c_n2000.lb_code, eh.j -> 'corresp' -> 'Habitats_d''intérêt_communautaire' ->> 'code')
          WHEN t_hab.lb_nom_typo = 'Habitats_d''intérêt_communautaire' THEN hab.lb_code
          ELSE n2000.codes END                                    AS habitat_code_n2000,
-    CASE WHEN eh.j -> 'corresp' -> 'Habitats_d''intérêt_communautaire' ->> 'code' IS NOT NULL THEN eh.j -> 'corresp' -> 'Habitats_d''intérêt_communautaire' ->> 'nom'
+    CASE WHEN eh.j -> 'corresp' -> 'Habitats_d''intérêt_communautaire' ->> 'cd_hab' IS NOT NULL THEN coalesce(c_n2000.lb_hab_fr, eh.j -> 'corresp' -> 'Habitats_d''intérêt_communautaire' ->> 'nom')
          WHEN t_hab.lb_nom_typo = 'Habitats_d''intérêt_communautaire' THEN hab.lb_hab_fr
          ELSE n2000.noms END                                     AS habitat_nom_n2000,
-    CASE WHEN eh.j -> 'corresp' -> 'Habitats_d''intérêt_communautaire' ->> 'code' IS NOT NULL
+    CASE WHEN eh.j -> 'corresp' -> 'Habitats_d''intérêt_communautaire' ->> 'cd_hab' IS NOT NULL
               THEN coalesce(eh.j -> 'corresp' -> 'Habitats_d''intérêt_communautaire' ->> 'src', 'saisi')
          WHEN t_hab.lb_nom_typo = 'Habitats_d''intérêt_communautaire' THEN 'determination'
          WHEN n2000.codes IS NOT NULL THEN 'habref'
     END                                                         AS habitat_n2000_source,
-    CASE WHEN eh.j -> 'corresp' -> 'Habitats_d''intérêt_communautaire' ->> 'code' IS NOT NULL THEN NULL
+    CASE WHEN eh.j -> 'corresp' -> 'Habitats_d''intérêt_communautaire' ->> 'cd_hab' IS NOT NULL THEN NULL
          WHEN t_hab.lb_nom_typo = 'Habitats_d''intérêt_communautaire' THEN 0
          ELSE n2000.rang END                                     AS habitat_n2000_rang,
-    CASE WHEN eh.j -> 'corresp' -> 'Cahiers_d''habitats' ->> 'code' IS NOT NULL THEN eh.j -> 'corresp' -> 'Cahiers_d''habitats' ->> 'code'
+    CASE WHEN eh.j -> 'corresp' -> 'Cahiers_d''habitats' ->> 'cd_hab' IS NOT NULL THEN coalesce(c_cahiers.lb_code, eh.j -> 'corresp' -> 'Cahiers_d''habitats' ->> 'code')
          WHEN t_hab.lb_nom_typo = 'Cahiers_d''habitats' THEN hab.lb_code
          ELSE cahiers.codes END                                    AS habitat_code_cahiers,
-    CASE WHEN eh.j -> 'corresp' -> 'Cahiers_d''habitats' ->> 'code' IS NOT NULL THEN eh.j -> 'corresp' -> 'Cahiers_d''habitats' ->> 'nom'
+    CASE WHEN eh.j -> 'corresp' -> 'Cahiers_d''habitats' ->> 'cd_hab' IS NOT NULL THEN coalesce(c_cahiers.lb_hab_fr, eh.j -> 'corresp' -> 'Cahiers_d''habitats' ->> 'nom')
          WHEN t_hab.lb_nom_typo = 'Cahiers_d''habitats' THEN hab.lb_hab_fr
          ELSE cahiers.noms END                                     AS habitat_nom_cahiers,
-    CASE WHEN eh.j -> 'corresp' -> 'Cahiers_d''habitats' ->> 'code' IS NOT NULL
+    CASE WHEN eh.j -> 'corresp' -> 'Cahiers_d''habitats' ->> 'cd_hab' IS NOT NULL
               THEN coalesce(eh.j -> 'corresp' -> 'Cahiers_d''habitats' ->> 'src', 'saisi')
          WHEN t_hab.lb_nom_typo = 'Cahiers_d''habitats' THEN 'determination'
          WHEN cahiers.codes IS NOT NULL THEN 'habref'
     END                                                         AS habitat_cahiers_source,
-    CASE WHEN eh.j -> 'corresp' -> 'Cahiers_d''habitats' ->> 'code' IS NOT NULL THEN NULL
+    CASE WHEN eh.j -> 'corresp' -> 'Cahiers_d''habitats' ->> 'cd_hab' IS NOT NULL THEN NULL
          WHEN t_hab.lb_nom_typo = 'Cahiers_d''habitats' THEN 0
          ELSE cahiers.rang END                                     AS habitat_cahiers_rang,
     h.determiner                                                AS determinateur,
@@ -525,4 +525,16 @@ LEFT JOIN LATERAL (
 ) es ON true
 LEFT JOIN LATERAL (
     SELECT gn_exports.ana_eval_json(h.technical_precision) AS j OFFSET 0
-) eh ON true;
+) eh ON true
+-- Code et libellé d'une correspondance ARBITRÉE. Depuis la 0.11.0 le bloc ne
+-- porte plus que le `cd_hab` : il dépassait les 500 caractères de
+-- `technical_precision`, et GeoNature refusait la station entière. C'est donc
+-- HABREF qui rend code et nom, par jointure sur la clé primaire `cd_hab` — une
+-- par typologie, index unique, sans fonction à retour d'ensemble : ce n'est pas
+-- la résolution par habitat qui avait fait s'effondrer l'export en 0.8.0.
+-- Les blocs écrits avant la 0.11.0 portent encore code et nom ; le `coalesce`
+-- ci-dessus les laisse sortir tant qu'ils n'ont pas été réenregistrés.
+LEFT JOIN ref_habitats.habref c_corine  ON c_corine.cd_hab = (eh.j -> 'corresp' -> 'CORINE_biotopes' ->> 'cd_hab')::int
+LEFT JOIN ref_habitats.habref c_eunis   ON c_eunis.cd_hab = (eh.j -> 'corresp' -> 'EUNIS' ->> 'cd_hab')::int
+LEFT JOIN ref_habitats.habref c_n2000   ON c_n2000.cd_hab = (eh.j -> 'corresp' -> 'Habitats_d''intérêt_communautaire' ->> 'cd_hab')::int
+LEFT JOIN ref_habitats.habref c_cahiers ON c_cahiers.cd_hab = (eh.j -> 'corresp' -> 'Cahiers_d''habitats' ->> 'cd_hab')::int;
