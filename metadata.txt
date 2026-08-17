@@ -3,7 +3,7 @@ name=OccHab GeoNature
 qgisMinimumVersion=3.28
 qgisMaximumVersion=3.99
 description=Offline-first data entry for GeoNature's OccHab module (habitat stations) from QGIS, with local SQLite storage and synchronisation to the GeoNature REST API.
-version=0.10.1
+version=0.11.0
 author=Cédric Roy
 email=it@ariegenature.fr
 license=GPL-3.0-or-later
@@ -32,7 +32,26 @@ icon=resources/icons/occhab.svg
 experimental=True
 deprecated=False
 
-changelog=0.10.1 - Correction : « Completer les libelles de correspondance »
+changelog=0.11.0 - Correction : GeoNature refusait la station entiere quand
+    ses correspondances etaient trop longues.
+    Enregistrer une station remontait une erreur 500 (« valeur trop longue pour
+    le type character varying(500) ») : chaque correspondance recopiait son
+    code ET son libelle, et a quatre typologies le bloc atteignait 590
+    caracteres sur un champ qui en accepte 500 — texte libre du botaniste
+    compris. Vingt-six habitats etaient deja bloques sur une base de terrain.
+    Seul le cd_hab est desormais enregistre : le meme bloc tombe a 281
+    caracteres. Le code et le libelle sont retrouves A LA LECTURE — le
+    catalogue livre les rend hors ligne (97,7 % des cas sur une base reelle),
+    HABREF ne sert que de repli. Rien n'est perdu, ni en donnee ni a l'export.
+    Marche a suivre pour les stations deja bloquees : « Base locale… » >
+    « Alleger les correspondances anciennes… », puis synchroniser. L'action
+    remplace « Completer les libelles de correspondance… », devenue sans objet.
+    Elle fonctionne hors ligne.
+    Nouveau : l'allegement et la synchronisation acceptent une SELECTION —
+    « Selection seulement » au dialogue, « Synchroniser cette station » au clic
+    droit sur le tableau. De quoi eprouver une correction sur une seule station
+    avant d'engager toute la base.
+    0.10.1 - Correction : « Completer les libelles de correspondance »
     ne lisait aucun habitat.
     L'action annoncait « Aucun libelle manquant : rien a completer » quel que
     soit l'etat de la base : elle lisait les stations sans leurs habitats, et
