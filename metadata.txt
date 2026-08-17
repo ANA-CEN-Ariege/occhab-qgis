@@ -3,7 +3,7 @@ name=OccHab GeoNature
 qgisMinimumVersion=3.28
 qgisMaximumVersion=3.99
 description=Offline-first data entry for GeoNature's OccHab module (habitat stations) from QGIS, with local SQLite storage and synchronisation to the GeoNature REST API.
-version=0.11.0
+version=0.11.1
 author=Cédric Roy
 email=it@ariegenature.fr
 license=GPL-3.0-or-later
@@ -32,7 +32,23 @@ icon=resources/icons/occhab.svg
 experimental=True
 deprecated=False
 
-changelog=0.11.0 - Correction : GeoNature refusait la station entiere quand
+changelog=0.11.1 - Correction : la vue d'export ignorait les correspondances
+    arbitrees, et le changelog de la 0.11.0 cassait l'analyse du paquet.
+    La vue reconnaissait un arbitrage a la cle « code » du bloc. La 0.11.0 ne
+    l'enregistre plus — seul le cd_hab subsiste —, donc la vue retombait sur le
+    calcul HABREF et l'arbitrage du botaniste disparaissait de l'export. Un
+    Prunetalia spinosae arbitre en EUNIS F3.112 ressortait sans correspondance,
+    HABREF n'en proposant aucune pour ce code.
+    La vue lit desormais le cd_hab et joint HABREF sur sa cle primaire, une fois
+    par typologie. Ce n'est pas ce qui avait fait s'effondrer l'export en 0.8.0 :
+    c'etait un jsonb_each, dont le planificateur ignore la cardinalite. Ici
+    l'expression est scalaire, donc boucle indexee. Les blocs ecrits avant la
+    0.11.0 gardent leur code et leur libelle : ils continuent de sortir.
+    ⚠ Redeployer sql/v_occhab_complet.sql : sans cela l'export reste muet sur
+    les correspondances arbitrees.
+    Le changelog de la 0.11.0 contenait un « %% » simple, que configparser
+    interprete — l'analyse du paquet echouait. Meme piege qu'en 0.7.0.
+    0.11.0 - Correction : GeoNature refusait la station entiere quand
     ses correspondances etaient trop longues.
     Enregistrer une station remontait une erreur 500 (« valeur trop longue pour
     le type character varying(500) ») : chaque correspondance recopiait son
@@ -41,7 +57,7 @@ changelog=0.11.0 - Correction : GeoNature refusait la station entiere quand
     compris. Vingt-six habitats etaient deja bloques sur une base de terrain.
     Seul le cd_hab est desormais enregistre : le meme bloc tombe a 281
     caracteres. Le code et le libelle sont retrouves A LA LECTURE — le
-    catalogue livre les rend hors ligne (97,7 % des cas sur une base reelle),
+    catalogue livre les rend hors ligne (97,7 %% des cas sur une base reelle),
     HABREF ne sert que de repli. Rien n'est perdu, ni en donnee ni a l'export.
     Marche a suivre pour les stations deja bloquees : « Base locale… » >
     « Alleger les correspondances anciennes… », puis synchroniser. L'action
