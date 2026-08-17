@@ -222,10 +222,16 @@ def test_une_base_en_lecture_seule_n_empeche_pas_l_affichage():
 
 
 # --------------------- repérer les correspondances arbitrées sans leur libellé
-def _bloc_sans_libelle():
-    from occhab.src.processing.eval_fields import encode_eval
-    return encode_eval("", corresp={"EUNIS": {"cd_hab": 4841, "code": "C1.32",
-                                              "src": "manuel"}})
+def _bloc_ancienne_forme():
+    """Bloc tel qu'écrit avant la 0.9.2 : code et libellé y étaient recopiés.
+
+    Monté à la main, car `encode_eval` ne sait plus produire cette forme — c'est
+    justement ce qu'on cherche à repérer pour l'alléger.
+    """
+    from occhab.src.processing.eval_fields import EVAL_END, EVAL_START
+    return ('%s {"corresp": {"EUNIS": {"cd_hab": 4841, "code": "C1.32",'
+            ' "nom": "Radeaux à Utriculaires", "src": "manuel"}}} %s'
+            % (EVAL_START, EVAL_END))
 
 
 class _BaseStations:
@@ -248,19 +254,19 @@ class _BaseStations:
                 for s in self._stations]
 
 
-def test_les_correspondances_sans_libelle_sont_bien_trouvees():
-    """L'action annonçait « rien à compléter » sur une base qui en avait vingt.
+def test_les_correspondances_a_alleger_sont_bien_trouvees():
+    """L'action annonçait « rien à faire » sur une base qui en avait vingt.
 
-    Les tests du repérage étaient au vert : ils portaient sur `libelles_manquants`
-    seul, et rien ne vérifiait que la donnée lui parvenait.
+    Les tests du repérage étaient au vert : ils portaient sur la fonction pure
+    seule, et rien ne vérifiait que la donnée lui parvenait.
     """
     base = _BaseStations([
         {"id": 1, "habitats": [{"cd_hab": 4841, "nom_cite": "Lemnion minoris",
-                                "technical_precision": _bloc_sans_libelle()}]},
+                                "technical_precision": _bloc_ancienne_forme()}]},
         {"id": 2, "habitats": [{"cd_hab": 651, "nom_cite": "Cultures",
                                 "technical_precision": ""}]},
     ])
-    stations, a_faire = _dock_avec_base(base)._correspondances_sans_libelle()
+    stations, a_faire = _dock_avec_base(base)._correspondances_a_alleger()
     assert len(a_faire) == 1
     station, habitat = a_faire[0]
     assert station["id"] == 1 and habitat["cd_hab"] == 4841
@@ -268,10 +274,70 @@ def test_les_correspondances_sans_libelle_sont_bien_trouvees():
     assert stations[0]["habitats"], "sans habitats, rien ne pourrait être réécrit"
 
 
-def test_une_base_sans_correspondance_a_completer_ne_rend_rien():
+def test_une_base_sans_correspondance_a_alleger_ne_rend_rien():
     base = _BaseStations([
         {"id": 1, "habitats": [{"cd_hab": 651, "nom_cite": "Cultures",
                                 "technical_precision": ""}]},
     ])
-    _stations, a_faire = _dock_avec_base(base)._correspondances_sans_libelle()
+    _stations, a_faire = _dock_avec_base(base)._correspondances_a_alleger()
     assert a_faire == []
+
+
+# --------------------------------- synchroniser la seule sélection
+class _BaseSync:
+    """Doublure : des stations en attente, et de quoi voir ce qui serait envoyé."""
+
+    def __init__(self, pending, to_delete=()):
+        self._pending = [dict(s) for s in pending]
+        self._to_delete = [dict(s) for s in to_delete]
+
+    def get_pending_stations(self, id_dataset=None):
+        return [dict(s) for s in self._pending]
+
+    def get_all_stations(self, sync_status=None, id_dataset=None):
+        if sync_status == "to_delete":
+            return [dict(s) for s in self._to_delete]
+        return []
+
+
+def _filtrer(base, ids):
+    """Le filtrage qu'applique `synchronize(ids)` avant toute requête réseau.
+
+    Reproduit ici plutôt qu'en appelant `synchronize`, qui exige un client
+    authentifié, une barre de messages QGIS et un serveur.
+    """
+    to_delete = base.get_all_stations(sync_status="to_delete")
+    pending = base.get_pending_stations()
+    if ids is not None:
+        voulus = set(ids)
+        to_delete = [s for s in to_delete if s["id"] in voulus]
+        pending = [s for s in pending if s["id"] in voulus]
+    return to_delete, pending
+
+
+def test_synchroniser_la_selection_n_envoie_qu_elle():
+    """Éprouver une correction sur UNE station sans engager les autres."""
+    base = _BaseSync([{"id": 1}, {"id": 2}, {"id": 3}])
+    _sup, pending = _filtrer(base, [2])
+    assert [s["id"] for s in pending] == [2]
+
+
+def test_sans_selection_tout_ce_qui_attend_part():
+    """Le bouton de la barre garde son comportement : `ids=None` ne filtre rien."""
+    base = _BaseSync([{"id": 1}, {"id": 2}, {"id": 3}])
+    _sup, pending = _filtrer(base, None)
+    assert [s["id"] for s in pending] == [1, 2, 3]
+
+
+def test_la_selection_filtre_aussi_les_suppressions():
+    """Sans cela, synchroniser une station emporterait toutes les suppressions."""
+    base = _BaseSync([{"id": 1}], to_delete=[{"id": 8}, {"id": 9}])
+    to_delete, _pending = _filtrer(base, [9])
+    assert [s["id"] for s in to_delete] == [9]
+
+
+def test_une_selection_sans_rien_en_attente_ne_part_pas():
+    """La station est déjà à jour : l'action est grisée, et rien ne partirait."""
+    base = _BaseSync([{"id": 1}])
+    to_delete, pending = _filtrer(base, [42])
+    assert not to_delete and not pending

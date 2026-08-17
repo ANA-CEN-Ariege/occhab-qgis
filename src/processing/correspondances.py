@@ -47,10 +47,10 @@ CHEMIN_DEFAUT = os.path.join(
 
 try:  # importable dans le paquet (plugin) comme en isolation (tests)
     from . import referentiels as ref
-    from .eval_fields import decode_eval, merge_eval
+    from .eval_fields import bloc_brut, decode_eval, encode_eval
 except ImportError:  # pragma: no cover - repli hors paquet
     import referentiels as ref
-    from eval_fields import decode_eval, merge_eval
+    from eval_fields import bloc_brut, decode_eval, encode_eval
 
 #: (clé HABREF, libellé, préfixe des colonnes du CSV). Les trois viennent de
 #: `referentiels` : la liste des typologies et leurs noms courts y sont définis
@@ -290,6 +290,17 @@ class Catalogue:
             # ne sont pas une ambiguïté : c'est le même syntaxon.
             if len({normaliser(a.nom) for a in liste}) == 1
         }
+        # Index cd_hab → {code, nom} de TOUTES les correspondances du catalogue.
+        # Depuis la 0.9.2 la donnée ne porte plus que le `cd_hab` : c'est ici que
+        # l'export retrouve code et libellé, hors ligne et sans interroger HABREF
+        # code par code — ce qui l'avait fait s'effondrer.
+        self._fiches_corresp = {}
+        for alliance in self.alliances:
+            for entree in alliance._corresp.values():
+                fiche = self._fiches_corresp.setdefault(entree["cd_hab"], {})
+                for cle in ("code", "nom"):
+                    if entree.get(cle) and not fiche.get(cle):
+                        fiche[cle] = entree[cle]
 
     def __len__(self):
         return len(self.alliances)
@@ -297,6 +308,15 @@ class Catalogue:
     def par_determination(self, cd_hab):
         """Alliance dont le `cd_hab` EST la détermination (jamais une ancre)."""
         return self._par_determination.get(_entier(cd_hab))
+
+    def fiche_correspondance(self, cd_hab):
+        """{'code': …, 'nom': …} d'un cd_hab de correspondance, ou None.
+
+        Ne connaît que les correspondances DU CATALOGUE. Une correspondance
+        arbitrée hors catalogue (recherche HABREF « Autre… ») n'y est pas :
+        l'appelant doit prévoir un repli sur HABREF.
+        """
+        return self._fiches_corresp.get(_entier(cd_hab))
 
     def par_nom_approche(self, nom):
         """Alliance portant ce nom, quelle qu'en soit l'écriture.
@@ -459,39 +479,38 @@ def charger(chemin=None):
     )
 
 
-def libelles_manquants(technical_precision):
-    """`cd_hab` des correspondances enregistrées SANS libellé, dans un bloc.
+def correspondances_a_alleger(technical_precision):
+    """Le bloc porte-t-il encore `code` ou `nom` dans ses correspondances ?
 
-    Les correspondances arbitrées avant la 0.9.1 ne portent que leur code : le
-    libellé n'était pas enregistré. Une carte chargée dans cette typologie
-    affiche alors « C1.32 » tout court, là où une carte d'habitats se lit par ses
-    noms. Ce sont ces `cd_hab` qu'il faut résoudre pour compléter la donnée.
+    Jusqu'à la 0.9.2, chaque correspondance enregistrait son code ET son libellé.
+    À quatre typologies, le bloc dépassait les 500 caractères de
+    `technical_precision` et GeoNature refusait l'enregistrement de la station
+    entière. Seul le `cd_hab` est désormais écrit ; code et libellé se retrouvent
+    à la lecture (catalogue, puis HABREF).
+
+    Repérer ces blocs permet de les réécrire AVANT qu'une saisie ne bute dessus.
+
+    La lecture se fait sur le bloc BRUT : `decode_eval` écarte déjà code et
+    libellé — ils ne font plus partie du format — et ne peut donc pas servir à
+    constater leur présence.
     """
-    corresp = (decode_eval(technical_precision) or {}).get("corresp") or {}
-    return sorted({
-        valeurs["cd_hab"] for valeurs in corresp.values()
-        if valeurs.get("cd_hab") and not valeurs.get("nom")
-    })
+    corresp = (bloc_brut(technical_precision) or {}).get("corresp") or {}
+    if not isinstance(corresp, dict):
+        return False
+    return any(isinstance(v, dict) and (v.get("code") or v.get("nom"))
+               for v in corresp.values())
 
 
-def completer_libelles(technical_precision, libelle_de):
-    """Bloc complété de ses libellés manquants, ou None s'il n'y a rien à faire.
+def alleger_correspondances(technical_precision):
+    """Bloc réécrit sans les `code`/`nom` des correspondances, ou None.
 
-    `libelle_de(cd_hab)` rend le nom HABREF, ou None si le référentiel ne répond
-    pas. Un `cd_hab` non résolu est LAISSÉ TEL QUEL — mieux vaut un code nu qu'un
-    libellé inventé, et l'opération reste rejouable.
+    None signifie « rien à faire » : sans lui, chaque passage marquerait toutes
+    les stations « à synchroniser » pour une réécriture identique.
 
-    Rien d'autre du bloc n'est touché : `merge_eval` réécrit la seule clé
-    `corresp`, le texte humain et les autres champs sont préservés.
+    `decode_eval` écarte déjà code et libellé — ils ne font plus partie du format.
+    Il suffit donc de réencoder ce qu'il rend : le texte humain, les autres
+    champs et le `src` de chaque correspondance sont conservés.
     """
-    corresp = (decode_eval(technical_precision) or {}).get("corresp") or {}
-    complete, change = {}, False
-    for typologie, valeurs in corresp.items():
-        entree = dict(valeurs)
-        if entree.get("cd_hab") and not entree.get("nom"):
-            nom = libelle_de(entree["cd_hab"])
-            if nom:
-                entree["nom"] = nom
-                change = True
-        complete[typologie] = entree
-    return merge_eval(technical_precision, corresp=complete) if change else None
+    if not correspondances_a_alleger(technical_precision):
+        return None
+    return encode_eval(technical_precision, **decode_eval(technical_precision))

@@ -60,8 +60,7 @@ _LIST_FIELDS = {"pee": 3}  # plantes exotiques envahissantes : 3 taxons au plus
 # Deux clés STRUCTURÉES, seules de leur espèce dans le bloc :
 #
 #   "determination": {"nom": "Salicion pyrenaicae", "ancre": "CORINE_biotopes"}
-#   "corresp": {"EUNIS": {"cd_hab": 5678, "code": "F9.12",
-#                         "nom": "Fourrés ripicoles", "src": "manuel"}}
+#   "corresp": {"EUNIS": {"cd_hab": 5678, "src": "manuel"}}
 #
 # `determination` n'apparaît que lorsque le `cd_hab` de l'habitat est une ANCRE
 # — un code emprunté à CORINE ou EUNIS parce que HABREF ne connaît pas
@@ -174,12 +173,12 @@ def _clean_determination(value):
 
 
 def _clean_corresp(value):
-    """{typologie: {'cd_hab': int, 'code': str, 'src': str}} — validé typologie
-    par typologie.
+    """{typologie: {'cd_hab': int, 'src': str}} — validé typologie par
+    typologie. Code et libellé sont retrouvés depuis HABREF à la lecture/export.
 
     Une typologie inconnue est écartée (le bloc reste normalisé) ; une entrée
     sans `cd_hab` exploitable aussi, car c'est le `cd_hab` qui fait la
-    correspondance — le code seul ne se raccorde à rien.
+    correspondance.
     """
     if not isinstance(value, dict):
         return None
@@ -197,16 +196,6 @@ def _clean_corresp(value):
         if cd_hab <= 0:
             continue
         entree = {"cd_hab": cd_hab}
-        code = _texte(detail.get("code"))
-        if code:
-            entree["code"] = code
-        # Le LIBELLÉ, enregistré avec le code. HABREF fait foi et peut le
-        # corriger d'une version à l'autre — mais une carte a besoin d'un nom :
-        # sans lui la légende affiche « C1.32 » tout court, et une carte
-        # d'habitats se lit par ses noms, pas par ses codes.
-        nom = _texte(detail.get("nom"))
-        if nom:
-            entree["nom"] = nom
         if detail.get("src") in ref.SOURCES_CORRESPONDANCE:
             entree["src"] = detail["src"]
         propre[typologie] = entree
@@ -228,6 +217,24 @@ def _parse_legacy(raw):
             if value:
                 result[key] = value
     return result
+
+
+def bloc_brut(text):
+    """Contenu du bloc TEL QU'ÉCRIT, sans validation ni normalisation. {} si aucun.
+
+    `decode_eval` est la lecture normale : elle rend la donnée conforme au format
+    courant, et écarte donc ce qui n'en fait plus partie. Constater qu'un bloc
+    porte encore un champ abandonné — pour le réécrire — demande de voir ce qui
+    est réellement stocké, d'où cette lecture-ci.
+    """
+    raw = _raw_block(text)
+    if raw is None:
+        return {}
+    try:
+        data = json.loads(raw)
+    except ValueError:
+        return {}
+    return data if isinstance(data, dict) else {}
 
 
 def decode_eval(text):

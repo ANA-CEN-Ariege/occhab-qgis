@@ -271,44 +271,85 @@ def _bloc(**corresp):
     return ef.encode_eval("Relevé du 12 mai.", enjeu="fort", corresp=corresp)
 
 
-def test_reperer_les_correspondances_sans_libelle():
-    """Celles arbitrées avant la 0.9.1 n'ont que leur code."""
-    bloc = _bloc(EUNIS={"cd_hab": 1778, "code": "F9.1", "src": "manuel"},
-                 CORINE_biotopes={"cd_hab": 1378, "code": "44.1",
-                                  "nom": "Formations riveraines de Saules",
-                                  "src": "catalogue"})
-    assert co.libelles_manquants(bloc) == [1778]
-    assert co.libelles_manquants("") == []
+def _bloc_ancien(**corresp):
+    """Bloc à la forme d'avant la 0.9.2, monté à la main.
 
-
-def test_completer_n_ecrase_que_les_libelles_manquants():
+    `encode_eval` ne sait plus produire cette forme — code et libellé ne font
+    plus partie du format. Or c'est exactement ce qui dort dans les bases : il
+    faut donc l'écrire ici pour avoir quoi alléger.
+    """
+    import json
     import eval_fields as ef
-    bloc = _bloc(EUNIS={"cd_hab": 1778, "code": "F9.1", "src": "manuel"},
-                 CORINE_biotopes={"cd_hab": 1378, "code": "44.1",
-                                  "nom": "Déjà là", "src": "catalogue"})
-    codes = ef.decode_eval(co.completer_libelles(bloc, {1778: "Fourrés ripicoles"}.get))
-    assert codes["corresp"]["EUNIS"]["nom"] == "Fourrés ripicoles"
-    assert codes["corresp"]["CORINE_biotopes"]["nom"] == "Déjà là"
-    # Le reste du bloc est intact : c'est une complétion, pas une réécriture.
-    assert codes["enjeu"] == "fort"
-    assert ef.strip_eval(co.completer_libelles(bloc, {1778: "X"}.get)) == "Relevé du 12 mai."
-    assert codes["corresp"]["EUNIS"]["src"] == "manuel"
+    contenu = json.dumps({"enjeu": "fort", "corresp": corresp}, ensure_ascii=False,
+                         sort_keys=True)
+    return "Relevé du 12 mai.\n\n%s %s %s" % (ef.EVAL_START, contenu, ef.EVAL_END)
 
 
-def test_un_cd_hab_non_resolu_est_laisse_tel_quel():
-    """Mieux vaut un code nu qu'un libellé inventé — et l'opération se rejoue."""
+def test_reperer_les_correspondances_a_alleger():
+    """Celles d'avant la 0.9.2 recopient code et libellé."""
+    ancien = _bloc_ancien(
+        EUNIS={"cd_hab": 1778, "code": "F9.1", "src": "manuel"},
+        CORINE_biotopes={"cd_hab": 1378, "code": "44.1",
+                         "nom": "Formations riveraines de Saules",
+                         "src": "catalogue"})
+    assert co.correspondances_a_alleger(ancien)
+    assert not co.correspondances_a_alleger("")
+    # Un bloc déjà court n'est pas à reprendre : sans quoi chaque passage
+    # marquerait toutes les stations « à synchroniser » pour rien.
+    assert not co.correspondances_a_alleger(
+        _bloc(EUNIS={"cd_hab": 1778, "src": "manuel"}))
+
+
+def test_alleger_ne_perd_que_le_code_et_le_libelle():
     import eval_fields as ef
-    bloc = _bloc(EUNIS={"cd_hab": 1778, "code": "F9.1", "src": "manuel"})
-    assert co.completer_libelles(bloc, lambda _cd: None) is None
-    complete = co.completer_libelles(bloc, {1778: "Fourrés ripicoles"}.get)
-    assert ef.decode_eval(complete)["corresp"]["EUNIS"]["nom"] == "Fourrés ripicoles"
+    ancien = _bloc_ancien(
+        EUNIS={"cd_hab": 1778, "code": "F9.1", "src": "manuel"},
+        CORINE_biotopes={"cd_hab": 1378, "code": "44.1", "nom": "Déjà là",
+                         "src": "catalogue"})
+    court = co.alleger_correspondances(ancien)
+    assert len(court) < len(ancien)
+    lu = ef.decode_eval(court)
+    # Ce qui fait la correspondance survit : le cd_hab, et d'où elle vient.
+    assert lu["corresp"]["EUNIS"] == {"cd_hab": 1778, "src": "manuel"}
+    assert lu["corresp"]["CORINE_biotopes"] == {"cd_hab": 1378, "src": "catalogue"}
+    # Le reste du bloc est intact : c'est un allègement, pas une réécriture.
+    assert lu["enjeu"] == "fort"
+    assert ef.strip_eval(court) == "Relevé du 12 mai."
 
 
-def test_rien_a_completer_ne_reecrit_rien():
+def test_alleger_ramene_un_bloc_sous_la_limite_du_champ():
+    """C'est tout l'objet : GeoNature refuse la station entière au-delà de 500."""
+    quatre = {
+        "CORINE_biotopes": {"cd_hab": 3972, "code": "22.41",
+                            "nom": "Végétations flottant librement", "src": "manuel"},
+        "EUNIS": {"cd_hab": 5273, "code": "E3.44",
+                  "nom": "Gazons inondés et communautés apparentées", "src": "manuel"},
+        "Cahiers_d'habitats": {
+            "cd_hab": 1234, "code": "3150-1",
+            "nom": "Plans d'eau eutrophes avec dominance de macrophytes libres flottants",
+            "src": "manuel"},
+        "Habitats_d'intérêt_communautaire": {
+            "cd_hab": 4321, "code": "3150",
+            "nom": "Lacs eutrophes naturels avec végétation du Magnopotamion",
+            "src": "manuel"},
+    }
+    ancien = _bloc_ancien(**quatre)
+    assert len(ancien) > 500
+    court = co.alleger_correspondances(ancien)
+    assert len(court) <= 500
+    # Les quatre correspondances sont toutes encore là.
+    import eval_fields as ef
+    assert len(ef.decode_eval(court)["corresp"]) == 4
+
+
+def test_rien_a_alleger_ne_reecrit_rien():
     """Sans changement, on ne touche pas au bloc : pas de station marquée à
-    synchroniser pour rien."""
-    bloc = _bloc(EUNIS={"cd_hab": 1778, "code": "F9.1", "nom": "Déjà", "src": "manuel"})
-    assert co.completer_libelles(bloc, {1778: "Autre"}.get) is None
+    synchroniser pour rien. L'opération est donc idempotente."""
+    ancien = _bloc_ancien(EUNIS={"cd_hab": 1778, "code": "F9.1", "src": "manuel"})
+    court = co.alleger_correspondances(ancien)
+    assert court is not None
+    assert co.alleger_correspondances(court) is None
+    assert co.alleger_correspondances("") is None
 
 
 # --------------------------- rapprocher une forme abrégée de sa forme complète

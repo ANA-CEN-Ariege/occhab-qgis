@@ -305,10 +305,10 @@ def test_zone_humide_dans_le_referentiel():
 def test_correspondance_arbitree_survit_a_l_aller_retour():
     """Le cœur de la fonctionnalité : ce que le botaniste tranche est conservé."""
     texte = ef.encode_eval(
-        "", corresp={"EUNIS": {"cd_hab": 5678, "code": "F9.12", "src": "manuel"}}
+        "", corresp={"EUNIS": {"cd_hab": 5678, "src": "manuel"}}
     )
     assert ef.decode_eval(texte)["corresp"] == {
-        "EUNIS": {"cd_hab": 5678, "code": "F9.12", "src": "manuel"}
+        "EUNIS": {"cd_hab": 5678, "src": "manuel"}
     }
 
 
@@ -373,22 +373,23 @@ def test_merge_efface_les_correspondances_sans_toucher_au_reste():
     assert apres == {"enjeu": "fort"}
 
 
-def test_le_libelle_d_une_correspondance_est_conserve():
-    """Sans lui, la légende d'une carte affiche « C1.32 » tout court.
+def test_code_et_libelle_ne_sont_plus_enregistres():
+    """Ils faisaient déborder les 500 caractères de `technical_precision`.
 
-    Une première version ne l'enregistrait pas — HABREF fait foi et peut le
-    corriger d'une version à l'autre. L'argument vaut pour la donnée, pas pour
-    la carte : un libellé légèrement daté vaut mieux qu'un code nu.
+    À quatre typologies, le bloc dépassait la taille du champ et GeoNature
+    refusait la station ENTIÈRE. Le `cd_hab` suffit à faire la correspondance ;
+    code et libellé se retrouvent à la lecture (catalogue, puis HABREF).
     """
     texte = ef.encode_eval("", corresp={"EUNIS": {
         "cd_hab": 1778, "code": "F9.1", "nom": "Fourrés ripicoles", "src": "manuel"}})
     assert ef.decode_eval(texte)["corresp"]["EUNIS"] == {
-        "cd_hab": 1778, "code": "F9.1", "nom": "Fourrés ripicoles", "src": "manuel"}
+        "cd_hab": 1778, "src": "manuel"}
+    assert "F9.1" not in texte and "Fourrés ripicoles" not in texte
 
 
-def test_une_correspondance_sans_libelle_reste_valide():
-    """Les correspondances enregistrées avant la 0.9.1 n'en ont pas."""
-    codes = ef.decode_eval(ef.encode_eval("", corresp={
-        "EUNIS": {"cd_hab": 1778, "code": "F9.1", "src": "manuel"}}))
-    assert "nom" not in codes["corresp"]["EUNIS"]
-    assert codes["corresp"]["EUNIS"]["code"] == "F9.1"
+def test_une_correspondance_ancienne_se_relit_allegee():
+    """Les blocs déjà en base portent code et libellé : ils restent lisibles."""
+    codes = ef.decode_eval(
+        '[ANA-EVAL] {"corresp": {"EUNIS": {"cd_hab": 1778, "code": "F9.1",'
+        ' "nom": "Fourrés ripicoles", "src": "manuel"}}} [/ANA-EVAL]')
+    assert codes["corresp"]["EUNIS"] == {"cd_hab": 1778, "src": "manuel"}

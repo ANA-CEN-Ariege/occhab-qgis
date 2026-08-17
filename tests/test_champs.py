@@ -207,7 +207,7 @@ def test_editer_un_champ_du_bloc_preserve_les_correspondances():
     codes = ef.decode_eval(habitat["technical_precision"])
     assert codes["enjeu"] == "faible"
     assert codes["determination"]["nom"] == "Subularion aquaticae"
-    assert codes["corresp"]["EUNIS"] == {"cd_hab": 1672, "code": "C3.4", "src": "manuel"}
+    assert codes["corresp"]["EUNIS"] == {"cd_hab": 1672, "src": "manuel"}
 
 
 def test_editer_le_texte_libre_preserve_les_correspondances():
@@ -240,10 +240,19 @@ def test_les_quatre_typologies_sont_des_champs():
 
 
 def test_lire_une_correspondance_rend_son_code():
+    """Le code n'est plus stocké : il vient du catalogue, via le `cd_hab`."""
+    connu = 9403  # Tapis de Nitella, 22.442 — présent au catalogue livré
     habitat = {"technical_precision": ef.encode_eval("", corresp={
-        "EUNIS": {"cd_hab": 1, "code": "E3.44", "nom": "Gazons inondés"}})}
-    assert ch.lire(habitat, _corresp("EUNIS")) == "E3.44"
+        "EUNIS": {"cd_hab": connu}})}
+    assert ch.lire(habitat, _corresp("EUNIS")) == "22.442"
     assert ch.lire(habitat, _corresp("CORINE_biotopes")) is None
+
+
+def test_lire_une_correspondance_hors_catalogue_rend_le_cd_hab():
+    """Mieux vaut le `cd_hab` nu qu'une case vide : la correspondance existe."""
+    habitat = {"technical_precision": ef.encode_eval("", corresp={
+        "EUNIS": {"cd_hab": 999999}})}
+    assert ch.lire(habitat, _corresp("EUNIS")) == "999999"
 
 
 def test_ecrire_une_correspondance_preserve_les_autres():
@@ -254,12 +263,12 @@ def test_ecrire_une_correspondance_preserve_les_autres():
     """
     habitat = {"technical_precision": ef.encode_eval(
         "Relevé du 12 mai.", enjeu="fort",
-        corresp={"EUNIS": {"cd_hab": 1, "code": "E3.44", "src": "catalogue"}})}
+        corresp={"EUNIS": {"cd_hab": 1, "src": "catalogue"}})}
     ch.ecrire(habitat, _corresp("CORINE_biotopes"),
               {"cd_hab": 9403, "code": "37.24", "nom": "Prairies à Agropyre"})
     codes = ef.decode_eval(habitat["technical_precision"])
-    assert codes["corresp"]["EUNIS"]["code"] == "E3.44"
-    assert codes["corresp"]["CORINE_biotopes"]["code"] == "37.24"
+    assert codes["corresp"]["EUNIS"]["cd_hab"] == 1
+    assert codes["corresp"]["CORINE_biotopes"]["cd_hab"] == 9403
     assert codes["enjeu"] == "fort"
     assert ef.strip_eval(habitat["technical_precision"]) == "Relevé du 12 mai."
 

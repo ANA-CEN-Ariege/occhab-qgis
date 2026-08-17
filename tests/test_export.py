@@ -126,15 +126,26 @@ def test_export_sort_l_alliance_et_son_ancre():
 
 
 def test_export_sort_les_correspondances_inscrites():
+    """Le code n'est plus stocké : `code_corresp` le résout depuis le cd_hab."""
     bloc = ef.encode_eval("", corresp={
-        "EUNIS": {"cd_hab": 1672, "code": "C3.4", "src": "manuel"},
-        "CORINE_biotopes": {"cd_hab": 1204, "code": "22.3", "src": "catalogue"},
+        "EUNIS": {"cd_hab": 1672, "src": "manuel"},
+        "CORINE_biotopes": {"cd_hab": 1204, "src": "catalogue"},
     })
-    row = ex.flatten_cartography(_station_avec_bloc(bloc))[0]
+    codes = {1672: "C3.4", 1204: "22.3"}
+    row = ex.flatten_cartography(_station_avec_bloc(bloc),
+                                 code_corresp=codes.get)[0]
     assert row["eunis_cite"] == "C3.4"
     assert row["corine_cite"] == "22.3"
     # Seul l'arbitrage humain est signalé : le reste n'atteste de rien.
     assert row["corresp_manu"] == "EUNIS"
+
+
+def test_export_montre_le_cd_hab_d_une_correspondance_non_resolue():
+    """Hors ligne ou fiche HABREF en erreur : le cd_hab nu plutôt qu'une case
+    vide, pour que la correspondance reste traçable."""
+    bloc = ef.encode_eval("", corresp={"EUNIS": {"cd_hab": 1672, "src": "manuel"}})
+    row = ex.flatten_cartography(_station_avec_bloc(bloc))[0]
+    assert row["eunis_cite"] == "1672"
 
 
 def test_export_sans_catalogue_laisse_les_colonnes_vides():

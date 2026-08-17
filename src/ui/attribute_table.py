@@ -569,13 +569,16 @@ class _ObservateursEdit(QListWidget):
 
 def _libelle_corresp(entree):
     """« 41.112 — Hêtraies montagnardes à Luzule », ou le code seul."""
-    code = entree.get("code") or "?"
+    # Depuis la 0.9.2 ni le code ni le nom ne sont stockés : à défaut on montre
+    # le cd_hab, qui reste ce qui identifie la correspondance.
+    code = entree.get("code") or entree.get("cd_hab")
     nom = entree.get("nom")
-    return "%s — %s" % (code, nom) if nom else code
+    libelle = str(code) if code else "?"
+    return "%s — %s" % (libelle, nom) if nom else libelle
 
 
 def _correspondance_choisie(edit):
-    """{cd_hab, code, nom} de la proposition retenue, ou None si le champ est vide.
+    """{cd_hab} de la proposition retenue, ou None si le champ est vide.
 
     None vaut RETRAIT : c'est le seul moyen d'enlever en masse une correspondance
     posée par erreur. Un champ où l'on a tapé sans rien retenir dans la liste ne
@@ -585,11 +588,7 @@ def _correspondance_choisie(edit):
     item = edit.item_choisi or {}
     if not edit.text().strip() or not item.get("cd_hab"):
         return None
-    return {
-        "cd_hab": int(item["cd_hab"]),
-        "code": (item.get("lb_code") or "").strip(),
-        "nom": corresp.nom_habref(item.get("search_name")),
-    }
+    return {"cd_hab": int(item["cd_hab"])}
 
 
 class AppliquerDialog(QDialog):
@@ -897,12 +896,16 @@ class AppliquerDialog(QDialog):
                 continue
             if champ.stockage == ch.CORRESP and isinstance(widget, QComboBox):
                 entree = widget.currentData()
-                valeur = ({"cd_hab": entree["cd_hab"], "code": entree.get("code"),
-                           "nom": entree.get("nom")} if entree else None)
+                if entree:
+                    valeur = {"cd_hab": entree["cd_hab"]}
+                    if entree.get("src"):
+                        valeur["src"] = entree["src"]
+                else:
+                    valeur = None
             elif champ.stockage == ch.CORRESP:
-                # Le triplet complet : le code identifie, le libellé nourrit la
-                # légende des cartes, le cd_hab fait autorité. Champ laissé vide
-                # = retirer la correspondance, ce que `champs.ecrire` sait faire.
+                # Le `cd_hab` fait autorité et suffit : code et libellé se
+                # retrouvent à la lecture. Champ laissé vide = retirer la
+                # correspondance, ce que `champs.ecrire` sait faire.
                 valeur = _correspondance_choisie(widget)
             elif isinstance(widget, _ObservateursEdit):
                 valeur = widget.valeur()

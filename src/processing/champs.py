@@ -41,9 +41,9 @@ HABITAT = "habitat"
 COLONNE = "colonne"
 EVAL = "eval"
 #: Une correspondance de la clé `corresp` du bloc, typologie par typologie. Elle
-#: ne tient pas dans `EVAL` : la valeur n'est pas un scalaire mais un triplet
-#: (cd_hab, code, libellé), et l'écrire demande de relire les autres typologies
-#: pour ne pas les effacer — `merge_eval` remplace la clé `corresp` entière.
+#: ne tient pas dans `EVAL` : la valeur n'est pas un scalaire mais un dict porté
+#: par le `cd_hab`, et l'écrire demande de relire les autres typologies pour ne
+#: pas les effacer — `merge_eval` remplace la clé `corresp` entière.
 CORRESP = "corresp"
 DOUBLE = "double"
 TEXTE_LIBRE = "texte_libre"
@@ -278,6 +278,17 @@ def groupes(champs=None):
 
 
 # --- Accès aux valeurs --------------------------------------------------------
+def _catalogue():
+    """Le catalogue partagé. Import différé : `correspondances` lit un CSV au
+    premier appel, et rien ne doit le charger pour un module qui ne s'en sert pas.
+    """
+    try:
+        from . import correspondances
+    except ImportError:  # pragma: no cover - repli hors paquet
+        import correspondances
+    return correspondances.catalogue()
+
+
 def lire(objet, champ):
     """Valeur d'un champ dans un dict station ou habitat (None si absente)."""
     objet = objet or {}
@@ -288,9 +299,15 @@ def lire(objet, champ):
         return strip_eval(porteur) or None
     if champ.stockage == CORRESP:
         # Le CODE, pas le libellé : c'est lui qui identifie, et une colonne de
-        # tableau n'a pas la place du nom complet.
+        # tableau n'a pas la place du nom complet. Depuis la 0.9.2 il n'est plus
+        # stocké — le catalogue le rend — et à défaut on montre le `cd_hab` nu
+        # plutôt que rien, pour que la correspondance reste visible.
         entree = (decode_eval(porteur).get("corresp") or {}).get(champ.cle) or {}
-        return entree.get("code") or None
+        cd_hab = entree.get("cd_hab")
+        if not cd_hab:
+            return None
+        fiche = _catalogue().fiche_correspondance(cd_hab) or {}
+        return fiche.get("code") or str(cd_hab)
     valeur = decode_eval(porteur).get(champ.cle)
     if champ.stockage == DOUBLE and valeur is None:
         # Repli sur la colonne native : une station venue du serveur peut porter
@@ -327,12 +344,14 @@ def ecrire(objet, champ, valeur):
         objet[porteur] = encode_eval(valeur or "", **decode_eval(objet.get(porteur)))
         return objet
     if champ.stockage == CORRESP:
-        # `valeur` est un dict {cd_hab, code, nom} — ou None pour retirer la
-        # correspondance. On relit les autres typologies : `merge_eval` remplace
-        # la clé `corresp` en bloc, les omettre les effacerait.
+        # `valeur` est un dict portant au moins {cd_hab} — ou None pour retirer
+        # la correspondance. On relit les autres typologies : `merge_eval`
+        # remplace la clé `corresp` en bloc, les omettre les effacerait.
         corresp = dict((decode_eval(objet.get(porteur)) or {}).get("corresp") or {})
         if valeur:
-            corresp[champ.cle] = dict(valeur, src="manuel")
+            # Seul le `cd_hab` est retenu (`_clean_corresp` écarte le reste) :
+            # le bloc doit tenir dans les 500 caractères du champ porteur.
+            corresp[champ.cle] = {"cd_hab": valeur["cd_hab"], "src": "manuel"}
         else:
             corresp.pop(champ.cle, None)
         objet[porteur] = merge_eval(objet.get(porteur), corresp=corresp or None)

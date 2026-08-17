@@ -320,7 +320,7 @@ def test_l_edition_en_masse_propose_quand_la_selection_est_homogene():
     assert not isinstance(widget, QComboBox)
 
 
-def test_l_edition_en_masse_rend_le_triplet_ou_le_retrait():
+def test_l_edition_en_masse_rend_le_cd_hab_ou_le_retrait():
     from qgis.PyQt.QtWidgets import QComboBox
     from occhab.src.ui.attribute_table import AppliquerDialog, Contexte
     from occhab.src.processing import champs as ch
@@ -334,7 +334,10 @@ def test_l_edition_en_masse_rend_le_triplet_ou_le_retrait():
 
     combo.setCurrentIndex(1)
     valeur = dialogue.valeurs()[(ch.HABITAT, "EUNIS")]
-    assert valeur["cd_hab"] and valeur["code"] and valeur["nom"]
+    # Depuis la 0.9.2 seul le cd_hab est posé : code et libellé faisaient
+    # déborder les 500 caractères de `technical_precision`.
+    assert valeur["cd_hab"]
+    assert "code" not in valeur and "nom" not in valeur
     # Première entrée = retrait : seul moyen d'enlever en masse une
     # correspondance posée par erreur.
     combo.setCurrentIndex(0)

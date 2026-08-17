@@ -66,13 +66,16 @@ def _to_float(value):
         return None
 
 
-def _colonnes_catalogue(hab_eval):
+def _colonnes_catalogue(hab_eval, code_corresp=None):
     """Détermination hors HABREF et correspondances inscrites, à plat.
 
     `corresp_manu` liste les seules typologies **arbitrées à la main**. C'est la
     colonne qui compte à la relecture : tout le reste peut venir du catalogue
     repris tel quel, et n'atteste alors d'aucune vérification.
     """
+    # Sans résolveur, le cd_hab tient lieu de code : la colonne est du texte, et
+    # une correspondance non résolue reste plus parlante qu'une case vide.
+    resoudre = code_corresp or (lambda cd: str(cd))
     determination = hab_eval.get("determination") or {}
     corresp = hab_eval.get("corresp") or {}
     colonnes = {
@@ -84,12 +87,13 @@ def _colonnes_catalogue(hab_eval):
         )) or None,
     }
     for typologie, colonne in _COLONNES_CORRESP:
-        colonnes[colonne] = (corresp.get(typologie) or {}).get("code")
+        cd_hab = (corresp.get(typologie) or {}).get("cd_hab")
+        colonnes[colonne] = resoudre(cd_hab) if cd_hab else None
     return colonnes
 
 
 def flatten_cartography(stations, nomenclature_label=None, jdd_name=None,
-                        role_label=None, habref_label=None):
+                        role_label=None, habref_label=None, code_corresp=None):
     """Renvoyer une liste de lignes (dicts) — une par habitat.
 
     Args:
@@ -98,6 +102,10 @@ def flatten_cartography(stations, nomenclature_label=None, jdd_name=None,
         nomenclature_label: callable ``id_nomenclature -> libellé`` (ou None).
         jdd_name: libellé du jeu de données.
         role_label: callable ``id_role -> nom`` (numérisateur).
+        code_corresp: callable ``cd_hab -> code`` pour les correspondances, qui
+            rend le ``cd_hab`` tel quel s'il ne le résout pas. Depuis la 0.9.2 la
+            donnée ne porte plus que le ``cd_hab`` (le bloc dépassait les 500
+            caractères du champ) : le code se retrouve à la lecture.
 
     Chaque dict contient toutes les clés de ``FIELDS`` (habitat à None si la
     station n'a pas d'habitat) plus ``_geom`` (WKT) et ``_geom_type``.
@@ -180,7 +188,7 @@ def flatten_cartography(stations, nomenclature_label=None, jdd_name=None,
                     "pee": " ; ".join(hab_eval.get("pee") or []) or None,
                     "remarque": hab_eval.get("remarque"),
                 })
-                row.update(_colonnes_catalogue(hab_eval))
+                row.update(_colonnes_catalogue(hab_eval, code_corresp))
             row["_geom"] = station.get("geom")
             row["_geom_type"] = station.get("geom_type")
             rows.append(row)

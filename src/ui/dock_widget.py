@@ -376,7 +376,9 @@ class OccHabDockWidget(QDockWidget):
         self.btn_sync.setToolTip(
             "Envoyer vos créations / modifications / suppressions vers GeoNature."
         )
-        self.btn_sync.clicked.connect(self.synchronize)
+        # `clicked` émet un booléen : le brancher directement passerait `False`
+        # comme `ids` et ne synchroniserait plus rien.
+        self.btn_sync.clicked.connect(lambda _checked=False: self.synchronize())
         self.btn_refresh = QPushButton("Rafraîchir")
         self.btn_refresh.setToolTip("Recharger les stations locales et le contexte serveur.")
         self.btn_refresh.clicked.connect(self.refresh)
@@ -422,14 +424,15 @@ class OccHabDockWidget(QDockWidget):
             self._purge_old_synced_stations,
         )
         action_libelles = menu.addAction(
-            "Compléter les libellés de correspondance…",
-            self._completer_libelles_correspondance,
+            "Alléger les correspondances anciennes…",
+            self._alleger_correspondances,
         )
         action_libelles.setToolTip(
-            "Les correspondances arbitrées avant la 0.9.1 n'ont que leur code : "
-            "une carte chargée dans cette typologie affiche « C1.32 » au lieu du "
-            "nom de l'habitat. Cette action demande les libellés manquants au "
-            "référentiel et les inscrit dans les habitats concernés."
+            "Les correspondances enregistrées avant la 0.9.2 recopiaient le code "
+            "et le libellé de chaque typologie. À quatre typologies, le bloc "
+            "dépassait la taille du champ et GeoNature refusait la station "
+            "entière. Cette action les réécrit à leur forme courte ; code et "
+            "libellé sont retrouvés à la lecture."
         )
         action_habref = menu.addAction(
             "Recharger les libellés HABREF", self._recharger_libelles_habref
@@ -601,6 +604,32 @@ class OccHabDockWidget(QDockWidget):
             button.setIcon(icon)
         return button
 
+    def _action_sync_selection(self, menu):
+        """« Synchroniser cette station », grisée si elle n'attend rien.
+
+        Le bouton de la barre envoie TOUT ce qui est en attente. Éprouver une
+        correction sur une station demandait donc de neutraliser les autres à la
+        main, ce qui n'est pas une manœuvre à faire faire à un botaniste.
+        """
+        selection = self._selected_station_ids()
+        en_attente = [
+            s["id"] for s in (self.db.get_pending_stations() or [])
+            if s["id"] in set(selection)
+        ]
+        libelle = ("Synchroniser cette station" if len(selection) <= 1
+                   else "Synchroniser ces %d stations" % len(selection))
+        action = menu.addAction(
+            libelle, lambda: self.synchronize(self._selected_station_ids())
+        )
+        action.setEnabled(bool(en_attente))
+        action.setToolTip(
+            "N'envoie que la sélection (%d en attente). Le bouton « Synchroniser » "
+            "de la barre envoie tout ce qui attend." % len(en_attente)
+            if en_attente else
+            "Rien à envoyer dans cette sélection : ces stations sont déjà à jour."
+        )
+        return action
+
     def _table_context_menu(self, pos):
         """Menu clic-droit sur une station (mêmes actions que la barre)."""
         index = self.table.indexAt(pos)
@@ -616,6 +645,8 @@ class OccHabDockWidget(QDockWidget):
         menu.setToolTipsVisible(True)
         menu.addAction("Éditer", self.edit_station)
         menu.addAction("Dupliquer", self.duplicate_station)
+        menu.addSeparator()
+        self._action_sync_selection(menu)
         menu.addSeparator()
         copier = menu.addAction("Copier les renseignements", self.copy_station_fields)
         copier.setToolTip(
@@ -1093,86 +1124,103 @@ class OccHabDockWidget(QDockWidget):
             "la prochaine ouverture du tableau." % connus,
         )
 
-    def _completer_libelles_correspondance(self):
-        """Inscrire les libellés manquants des correspondances déjà arbitrées.
+    def _alleger_correspondances(self):
+        """Réécrire les correspondances anciennes à leur forme courte.
 
-        Les correspondances enregistrées avant la 0.9.1 ne portent que leur code :
-        une carte chargée dans cette typologie affiche « C1.32 » là où une carte
-        d'habitats se lit par ses noms. Plutôt que de faire résoudre ce libellé
-        par la vue à chaque requête — ce qui avait fait s'effondrer l'export —
-        on complète la donnée UNE fois.
+        Jusqu'à la 0.9.2, chaque correspondance recopiait son code ET son libellé.
+        À quatre typologies le bloc dépassait les 500 caractères de
+        `technical_precision`, et GeoNature refusait la station ENTIÈRE — pas
+        seulement l'habitat fautif. Réécrire le stock désamorce ces refus au lieu
+        d'attendre que le botaniste bute dessus en enregistrant.
+
+        Purement local : code et libellé se retrouvant à la lecture (catalogue
+        puis HABREF), il n'y a rien à demander au serveur. Marche donc hors ligne.
 
         Passe par le chemin normal : les stations touchées repassent « à
-        synchroniser », donc la correction remonte au serveur comme une saisie.
-        """
-        if self.client is None or not self.client.is_authenticated:
-            QMessageBox.information(
-                self, "OccHab",
-                "Connectez-vous d'abord : les libellés viennent du référentiel "
-                "HABREF, qui est côté serveur.")
-            return
+        synchroniser », donc la correction remonte comme une saisie.
 
-        stations, a_faire = self._correspondances_sans_libelle()
+        Quand des lignes sont sélectionnées, l'essai sur elles seules est
+        proposé : on veut pouvoir réécrire UNE station, la synchroniser et voir
+        GeoNature l'accepter avant d'engager toute la base.
+        """
+        stations, a_faire = self._correspondances_a_alleger()
         if not a_faire:
             QMessageBox.information(
-                self, "OccHab", "Aucun libellé manquant : rien à compléter.")
+                self, "OccHab",
+                "Aucune correspondance à alléger : elles sont déjà toutes à leur "
+                "forme courte.")
             return
+
+        selection = self._selected_station_ids()
+        _sel_stations, sel_a_faire = (
+            self._correspondances_a_alleger(selection) if selection else ([], [])
+        )
+        if sel_a_faire and len(sel_a_faire) < len(a_faire):
+            boite = QMessageBox(self)
+            boite.setWindowTitle("OccHab")
+            boite.setText(
+                "%d habitat(s) sont à alléger dans toute la base, dont %d dans "
+                "les %d station(s) sélectionnée(s).\n\n"
+                "Commencer par la sélection permet de vérifier que GeoNature "
+                "accepte la station corrigée avant d'engager le reste."
+                % (len(a_faire), len(sel_a_faire), len(selection))
+            )
+            b_sel = boite.addButton("Sélection seulement", QMessageBox.ButtonRole.YesRole)
+            boite.addButton("Toute la base", QMessageBox.ButtonRole.YesRole)
+            boite.addButton(QMessageBox.StandardButton.Cancel)
+            boite.exec()
+            clique = boite.clickedButton()
+            if clique is None or clique == boite.button(QMessageBox.StandardButton.Cancel):
+                return
+            if clique is b_sel:
+                stations, a_faire = self._correspondances_a_alleger(selection)
+
+        bloquants = sum(
+            1 for _s, h in a_faire if len(h.get("technical_precision") or "") > 500
+        )
         if QMessageBox.question(
             self, "OccHab",
-            "%d habitat(s) portent une correspondance sans libellé.\n\n"
-            "Les compléter depuis HABREF et marquer leurs stations « à "
-            "synchroniser » ?" % len(a_faire),
+            "%d habitat(s) portent des correspondances à l'ancienne forme%s.\n\n"
+            "Les réécrire et marquer leurs stations « à synchroniser » ?\n\n"
+            "Aucune information n'est perdue : le code et le libellé sont "
+            "retrouvés à la lecture."
+            % (len(a_faire),
+               ", dont %d que GeoNature refuse déjà (champ trop long)" % bloquants
+               if bloquants else ""),
         ) != QMessageBox.StandardButton.Yes:
             return
 
-        cache = {}
-
-        def libelle_de(cd_hab):
-            # Un cd_hab non résolu est laissé tel quel : mieux vaut un code nu
-            # qu'un libellé inventé, et l'opération reste rejouable.
-            if cd_hab not in cache:
-                try:
-                    fiche = self.client.get_habref(cd_hab) or {}
-                except Exception as exc:  # noqa: BLE001
-                    self.logger.warning("Libellé HABREF %s non résolu : %s", cd_hab, exc)
-                    fiche = {}
-                cache[cd_hab] = (fiche.get("lb_hab_fr") or "").strip() or None
-            return cache[cd_hab]
-
         QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
-        completes, touchees = 0, set()
+        allages, touchees = 0, set()
         try:
             for station, habitat in a_faire:
-                neuf = corresp.completer_libelles(
-                    habitat.get("technical_precision"), libelle_de)
+                neuf = corresp.alleger_correspondances(
+                    habitat.get("technical_precision"))
                 if not neuf:
                     continue
                 habitat["technical_precision"] = neuf
                 touchees.add(station["id"])
-                completes += 1
+                allages += 1
             for id_station in touchees:
                 station = next(s for s in stations if s["id"] == id_station)
                 self.db.replace_habitats(id_station, station.get("habitats") or [])
                 self.db.update_station(id_station, sync_status="pending")
         except Exception as exc:  # noqa: BLE001
             QApplication.restoreOverrideCursor()
-            self.logger.error("Complétion des libellés échouée : %s", exc)
-            QMessageBox.warning(self, "OccHab", "Complétion interrompue : %s" % exc)
+            self.logger.error("Allègement des correspondances échoué : %s", exc)
+            QMessageBox.warning(self, "OccHab", "Allègement interrompu : %s" % exc)
             return
         finally:
             QApplication.restoreOverrideCursor()
 
-        self.logger.info("Libellés de correspondance complétés : %d habitat(s), "
-                         "%d station(s)", completes, len(touchees))
-        self.refresh_stations()
+        self.logger.info("Correspondances allégées : %d habitat(s), %d station(s)",
+                         allages, len(touchees))
+        self.refresh()
         QMessageBox.information(
             self, "OccHab",
-            "%d habitat(s) complété(s) sur %d, dans %d station(s).\n\n"
-            "%sSynchronisez pour que la correction parte sur GeoNature."
-            % (completes, len(a_faire), len(touchees),
-               "" if completes == len(a_faire) else
-               "Les autres n'ont pas été résolus par HABREF et gardent leur "
-               "code seul ; l'opération est rejouable.\n\n"),
+            "%d habitat(s) allégé(s) dans %d station(s).\n\n"
+            "Synchronisez pour que la correction parte sur GeoNature."
+            % (allages, len(touchees)),
         )
 
     def _libelles_habref(self, stations):
@@ -1243,24 +1291,33 @@ class OccHabDockWidget(QDockWidget):
             )
         return connus
 
-    def _correspondances_sans_libelle(self):
-        """(stations, [(station, habitat)]) dont une correspondance n'a que son code.
+    def _correspondances_a_alleger(self, ids=None):
+        """(stations, [(station, habitat)]) dont les correspondances sont à l'ancienne forme.
+
+        `ids` restreint la recherche à ces stations. C'est ce qui permet
+        d'éprouver la réécriture sur UNE station — la réécrire, la synchroniser,
+        vérifier que GeoNature l'accepte — avant de la lancer sur toute la base.
+        Une correction en masse qu'on ne peut pas essayer d'abord se tente en
+        aveugle.
 
         `get_stations_full` et NON `get_all_stations` : ce dernier ne rend que
         les lignes de `t_stations`, sans leurs habitats. La recherche portait
         donc toujours sur une liste vide, et l'action annonçait « rien à
-        compléter » quel que soit l'état de la base — les tests du repérage
+        faire » quel que soit l'état de la base — les tests du repérage
         étaient au vert, mais rien ne les reliait à la donnée.
 
         Les stations sont rendues avec, parce que la suite en a besoin pour
         réécrire les habitats de celles qui ont changé.
         """
         stations = self.db.get_stations_full() or []
+        if ids is not None:
+            voulus = set(ids)
+            stations = [s for s in stations if s["id"] in voulus]
         a_faire = [
             (station, habitat)
             for station in stations
             for habitat in (station.get("habitats") or [])
-            if corresp.libelles_manquants(habitat.get("technical_precision"))
+            if corresp.correspondances_a_alleger(habitat.get("technical_precision"))
         ]
         return stations, a_faire
 
@@ -3067,12 +3124,25 @@ class OccHabDockWidget(QDockWidget):
                     habref_cache[cd_hab] = None
             return habref_cache[cd_hab]
 
+        catalogue = corresp.charger()
+
+        def code_corresp(cd_hab):
+            # Le catalogue résout hors ligne les correspondances qui en viennent
+            # — le cas courant, la liste ne propose que ça. HABREF n'est sollicité
+            # que pour celles arbitrées via « Autre… », et une seule fois chacune.
+            fiche = catalogue.fiche_correspondance(cd_hab)
+            code = (fiche or {}).get("code") or (habref_label(cd_hab) or {}).get("code")
+            # Non résolu (hors ligne, ou fiche en 500) : le cd_hab nu plutôt que
+            # rien, pour que la correspondance reste traçable dans l'export.
+            return code or str(cd_hab)
+
         rows = flatten_cartography(
             parsed,
             nomenclature_label=nomenclature_map.get,
             jdd_name=self.combo_jdd.currentText(),
             role_label=role_map.get,
             habref_label=habref_label,
+            code_corresp=code_corresp,
         )
         try:
             written = self._write_cartography(target, rows)
@@ -3325,7 +3395,14 @@ class OccHabDockWidget(QDockWidget):
     # ----------------------------------------------------- synchronisation
     _DELETE_THRESHOLD = 3  # au-delà : confirmation renforcée
 
-    def synchronize(self):
+    def synchronize(self, ids=None):
+        """Envoyer les stations en attente ; `ids` restreint à celles-là.
+
+        Le bouton synchronise tout ; le menu contextuel ne vise que la
+        sélection. C'est ce qui permet d'éprouver une correction sur UNE station
+        — la voir acceptée par GeoNature — avant d'engager le reste, sans avoir à
+        neutraliser à la main les autres stations en attente.
+        """
         if self.client is None or not self.client.is_authenticated:
             QMessageBox.information(
                 self, "OccHab", "Connectez-vous à GeoNature avant de synchroniser."
@@ -3343,8 +3420,16 @@ class OccHabDockWidget(QDockWidget):
 
         to_delete = self.db.get_all_stations(sync_status="to_delete")
         pending = self.db.get_pending_stations()
+        if ids is not None:
+            voulus = set(ids)
+            to_delete = [s for s in to_delete if s["id"] in voulus]
+            pending = [s for s in pending if s["id"] in voulus]
         if not to_delete and not pending:
-            self.iface.messageBar().pushInfo("OccHab", "Rien à synchroniser.")
+            self.iface.messageBar().pushInfo(
+                "OccHab",
+                "Rien à synchroniser dans la sélection." if ids is not None
+                else "Rien à synchroniser.",
+            )
             return
 
         # --- Suppressions (avec garde-fous) ---

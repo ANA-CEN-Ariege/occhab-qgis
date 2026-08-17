@@ -70,9 +70,12 @@ _Ligne = namedtuple("_Ligne", "pile choix edit propre retour mention")
 
 def _libelle_choix(entree):
     """« 41.112 — Hêtraies montagnardes à Luzule », ou le code seul."""
-    code = entree.get("code") or "?"
+    # Depuis la 0.9.2 ni le code ni le nom ne sont stockés : à défaut on montre
+    # le cd_hab, qui reste ce qui identifie la correspondance.
+    code = entree.get("code") or entree.get("cd_hab")
     nom = entree.get("nom")
-    return "%s — %s" % (code, nom) if nom else code
+    libelle = str(code) if code else "?"
+    return "%s — %s" % (libelle, nom) if nom else libelle
 
 
 class CorrespondancesEdit(QWidget):
@@ -314,22 +317,15 @@ class CorrespondancesEdit(QWidget):
             self._rafraichir(cle)
 
     def get_data(self):
-        """{typologie: {cd_hab, code, nom, src}} — None si rien n'est renseigné.
+        """{typologie: {cd_hab, src}} — None si rien n'est renseigné.
 
-        Le libellé EST enregistré, contrairement à ce qu'une première version
-        avait décidé. L'argument — HABREF fait foi et peut le corriger d'une
-        version à l'autre — vaut pour la donnée, pas pour la carte : sans nom
-        stocké, la légende d'un export affichait « C1.32 » tout court, et une
-        carte d'habitats se lit par ses noms. Un libellé légèrement daté vaut
-        mieux qu'un code nu. Le `cd_hab` reste ce qui fait autorité.
+        Depuis 0.9.2, seul `cd_hab` et `src` sont enregistrés. Le code et libellé
+        sont retrouvés depuis HABREF à la relecture/export. Le `cd_hab` reste ce
+        qui fait autorité.
         """
         propre = {}
         for cle, valeurs in self._valeurs.items():
             entree = {"cd_hab": valeurs["cd_hab"]}
-            if valeurs.get("code"):
-                entree["code"] = valeurs["code"]
-            if valeurs.get("nom"):
-                entree["nom"] = valeurs["nom"]
             if valeurs.get("src") in SOURCES_CORRESPONDANCE:
                 entree["src"] = valeurs["src"]
             propre[cle] = entree
@@ -348,7 +344,7 @@ class CorrespondancesEdit(QWidget):
         """« CORINE biotopes 41.112 (repris du catalogue), EUNIS G1.62 (arbitré ici) »."""
         return ", ".join(
             "%s %s%s" % (
-                libelle, self._valeurs[cle].get("code") or "?",
+                libelle, self._valeurs[cle].get("cd_hab") or "?",
                 " (%s)" % _MENTION[self._valeurs[cle]["src"]]
                 if self._valeurs[cle].get("src") in _MENTION else "",
             )
