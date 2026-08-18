@@ -3,7 +3,7 @@ name=OccHab GeoNature
 qgisMinimumVersion=3.28
 qgisMaximumVersion=3.99
 description=Offline-first data entry for GeoNature's OccHab module (habitat stations) from QGIS, with local SQLite storage and synchronisation to the GeoNature REST API.
-version=0.11.2
+version=0.11.3
 author=Cédric Roy
 email=it@ariegenature.fr
 license=GPL-3.0-or-later
@@ -32,7 +32,22 @@ icon=resources/icons/occhab.svg
 experimental=True
 deprecated=False
 
-changelog=0.11.2 - Un habitat garde son nom quand sa fiche HABREF est illisible.
+changelog=0.11.3 - Correction : un cd_hab s'affichait a la place du code.
+    La colonne « CORINE biotopes (corresp.) » montrait « 17228 », l'EUNIS
+    « 17730 » : ce sont des cd_hab, pas des codes. Un nombre dans une colonne
+    de codes se lit comme un code faux, et rien ne signalait qu'il n'en etait
+    pas un.
+    La 0.11.0 a cesse d'enregistrer le code dans le bloc. La lecture le
+    demandait donc au catalogue, et retombait sur le cd_hab quand il l'ignorait
+    — le cas des correspondances arbitrees hors catalogue.
+    Or le code etait dans la donnee : les blocs ecrits AVANT la 0.11.0 le
+    portent encore. Il est desormais relu la, entre le catalogue et le repli
+    sur le cd_hab. Sur une base de terrain, les 514 cellules de correspondance
+    affichent un vrai code ; aucune ne retombe sur un cd_hab.
+    Meme correction cote export.
+    Le repli s'eteint de lui-meme : un bloc allege n'a plus de code a relire,
+    et c'est alors le catalogue qui repond.
+    0.11.2 - Un habitat garde son nom quand sa fiche HABREF est illisible.
     Sur l'instance de l'ANA, 894 lignes de correspondances HABREF portent une
     cible vide (cd_hab_sortie NULL). La route de fiche du module habref les
     dereference sans les tester, et 541 fiches repondent en erreur 500. Le
