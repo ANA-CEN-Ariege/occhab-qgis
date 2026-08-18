@@ -1346,7 +1346,7 @@ class OccHabDockWidget(QDockWidget):
     def _libelle_habref(self, cd_hab, nom_cite=None):
         """(libellé, raison de l'échec) pour un cd_hab.
 
-        Deux chemins, parce que le premier ne suffit pas :
+        Trois chemins, parce que les deux premiers ne suffisent pas :
 
         1. `GET habref/habitat/<cd_hab>`, la fiche directe ;
         2. à défaut, l'**autocomplétion** sur le code lu dans le nom cité. Un
@@ -1355,6 +1355,17 @@ class OccHabDockWidget(QDockWidget):
            peut le refuser. C'est le cas relevé sur le `Brachypodio
            rupestris-Centaureion nemoralis` (cd_hab 16415), dont la base porte
            bien `lb_hab_fr` alors que la colonne restait vide.
+        3. à défaut encore, le **catalogue livré**, hors ligne.
+
+        Le troisième chemin existe parce que le serveur peut être hors d'état de
+        répondre pour un code parfaitement valide : sur l'instance de l'ANA, 894
+        lignes de `habref_corresp_hab` portent un `cd_hab_sortie` NULL, et la
+        route de fiche les déréférence sans les tester — 541 fiches tombent en
+        500. L'autocomplétion ne rattrape pas toutes celles-là. Le catalogue,
+        lui, nomme 184 de ces alliances sans rien demander à personne.
+
+        HABREF reste interrogé D'ABORD : il fait foi, et peut corriger un libellé
+        d'une version à l'autre. Le catalogue ne parle que lorsqu'il se tait.
 
         HABREF ne remplit d'ailleurs pas toujours le même champ selon la
         typologie : on prend le premier renseigné plutôt que d'exiger
@@ -1375,18 +1386,35 @@ class OccHabDockWidget(QDockWidget):
         # un code laissait la colonne vide pour toute une classe d'habitats
         # alors que l'autocomplétion, elle, répond.
         terme = _code_habref(nom_cite) or (nom_cite or "").strip()
-        if not terme:
-            return "", " puis ".join(raisons) or "aucun libellé"
+        if terme:
+            try:
+                for item in self.client.search_habref(terme) or []:
+                    if item.get("cd_hab") == cd_hab:
+                        libelle = _libelle_de_fiche(item)
+                        if libelle:
+                            return libelle, ""
+                raisons.append("absent de la recherche sur « %s »" % terme)
+            except Exception as exc:  # noqa: BLE001
+                raisons.append("recherche « %s » : %s" % (terme, str(exc)[:40]))
+
+        libelle = self._libelle_catalogue(cd_hab)
+        if libelle:
+            return libelle, ""
+        return "", " puis ".join(raisons) or "aucun libellé"
+
+    @staticmethod
+    def _libelle_catalogue(cd_hab):
+        """Nom d'alliance du catalogue pour ce `cd_hab`, ou "" s'il l'ignore.
+
+        Seules les DÉTERMINATIONS sont consultées, jamais les ancres : une ancre
+        est un code CORINE emprunté, partagé par plusieurs alliances, et le nom
+        rendu ne serait pas celui de cet habitat-là.
+        """
         try:
-            for item in self.client.search_habref(terme) or []:
-                if item.get("cd_hab") == cd_hab:
-                    libelle = _libelle_de_fiche(item)
-                    if libelle:
-                        return libelle, ""
-            raisons.append("absent de la recherche sur « %s »" % terme)
-        except Exception as exc:  # noqa: BLE001
-            raisons.append("recherche « %s » : %s" % (terme, str(exc)[:40]))
-        return "", " puis ".join(raisons)
+            alliance = corresp.catalogue().par_determination(cd_hab)
+        except Exception:  # noqa: BLE001 - catalogue illisible : on n'a rien de plus
+            return ""
+        return (alliance.nom or "").strip() if alliance is not None else ""
 
     def _habref_search_fn(self):
         """Callable de recherche HABREF (avec filtre typologie) si connecté, sinon None."""

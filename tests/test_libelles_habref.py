@@ -47,6 +47,13 @@ AUTOCOMPLETE_PVF1 = {
 }
 
 
+#: `cd_hab` que le catalogue livré ne nomme pas. Les tests de la RECHERCHE s'en
+#: servent pour rester sur leur sujet : depuis que `_libelle_habref` retombe sur
+#: le catalogue, un code qu'il connaît rendrait un libellé même recherche muette,
+#: et l'assertion ne dirait plus rien du chemin qu'elle vise.
+HORS_CATALOGUE = 9900417
+
+
 class _Client:
     """Doublure : la fiche tombe, l'autocomplétion répond — le cas réel."""
 
@@ -138,14 +145,14 @@ def test_un_autre_habitat_dans_la_recherche_n_est_pas_retenu():
     voisin = dict(AUTOCOMPLETE_PVF1, cd_hab=16418,
                   search_name="6.0.2.0.2 - Poion alpinae Poion alpinae Ellmauer")
     client = _Client(items=[voisin])
-    libelle, raison = _dock(client)._libelle_habref(16417, "Cynosurion cristati")
+    libelle, raison = _dock(client)._libelle_habref(HORS_CATALOGUE, "Cynosurion cristati")
     assert libelle == ""
     assert "absent de la recherche" in raison
 
 
 def test_sans_nom_ni_code_on_renonce_sans_appeler():
     client = _Client(items=[AUTOCOMPLETE_PVF1])
-    libelle, raison = _dock(client)._libelle_habref(16417, "")
+    libelle, raison = _dock(client)._libelle_habref(HORS_CATALOGUE, "")
     assert libelle == "" and raison
     assert client.recherches == []
 
@@ -156,7 +163,8 @@ def test_une_recherche_qui_echoue_ne_remonte_pas():
         def search_habref(self, terme, cd_typo=None, limit=20):
             raise RuntimeError("réseau coupé")
 
-    libelle, raison = _dock(_Casse())._libelle_habref(16417, "Cynosurion cristati")
+    libelle, raison = _dock(_Casse())._libelle_habref(HORS_CATALOGUE,
+                                                      "Cynosurion cristati")
     assert libelle == "" and "réseau coupé" in raison
 
 
@@ -341,3 +349,50 @@ def test_une_selection_sans_rien_en_attente_ne_part_pas():
     base = _BaseSync([{"id": 1}])
     to_delete, pending = _filtrer(base, [42])
     assert not to_delete and not pending
+
+
+# ------------------- repli sur le catalogue quand le serveur ne peut pas répondre
+#: Alliances du catalogue livré dont la fiche HABREF tombe en 500 sur l'instance
+#: de l'ANA : 894 lignes de `habref_corresp_hab` y portent un `cd_hab_sortie`
+#: NULL, que la route de fiche déréférence sans le tester.
+_CD_HAB_CATALOGUE = 16564          # Thalictro flavi – Filipendulion ulmariae
+_NOM_CATALOGUE = "Thalictro flavi"
+
+
+def test_le_catalogue_nomme_un_habitat_dont_la_fiche_tombe():
+    """541 fiches sont illisibles sur l'instance : le serveur n'est pas la seule
+    source. Le catalogue livré nomme ces alliances sans rien demander."""
+    dock = _dock_avec_base(_BaseStations([]), client=_Client())  # fiche=None → 500
+    libelle, raison = dock._libelle_habref(_CD_HAB_CATALOGUE, nom_cite="")
+    assert _NOM_CATALOGUE in libelle, libelle
+    assert raison == "", "un libellé trouvé ne laisse pas de raison d'échec"
+
+
+def test_habref_reste_prioritaire_sur_le_catalogue():
+    """HABREF fait foi et peut corriger un libellé d'une version à l'autre.
+
+    Le catalogue ne parle que lorsque le serveur se tait : l'inverse figerait
+    les libellés sur une copie locale que personne ne met à jour.
+    """
+    client = _Client(fiche={"cd_hab": _CD_HAB_CATALOGUE,
+                            "lb_hab_fr": "Libellé officiel HABREF"})
+    dock = _dock_avec_base(_BaseStations([]), client=client)
+    libelle, _raison = dock._libelle_habref(_CD_HAB_CATALOGUE, nom_cite="")
+    assert libelle == "Libellé officiel HABREF"
+
+
+def test_un_cd_hab_inconnu_du_catalogue_reste_sans_libelle():
+    """Le repli ne doit rien inventer : sans entrée, la colonne reste vide."""
+    dock = _dock_avec_base(_BaseStations([]), client=_Client())
+    libelle, raison = dock._libelle_habref(999999, nom_cite="")
+    assert libelle == ""
+    assert raison, "l'échec doit rester expliqué dans le journal"
+
+
+def test_le_catalogue_ne_repond_pas_pour_une_ancre():
+    """Une ancre est un code CORINE emprunté, partagé par plusieurs alliances :
+    en tirer un nom attribuerait à l'habitat un syntaxon que nul n'a déterminé."""
+    from occhab.src.processing import correspondances as co
+    ancre = next((a for a in co.catalogue().ancrees() if a.ancre_cd_hab), None)
+    assert ancre is not None, "le catalogue livré doit porter au moins une ancre"
+    assert dw.OccHabDockWidget._libelle_catalogue(ancre.ancre_cd_hab) == ""
