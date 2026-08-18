@@ -722,16 +722,19 @@ SELECT
     -- d'un code écarté ferait noter la qualité d'une valeur qui n'est pas celle
     -- de la colonne d'à côté.
     --
-    -- Le LIBELLÉ d'une correspondance saisie vient du bloc lui aussi : le plugin
-    -- l'enregistre avec le code depuis la 0.9.1. Une première version le mettait
-    -- à NULL pour éviter d'interroger `ref_habitats` par habitat — ce qui avait
-    -- fait s'effondrer l'export en 0.8.0 — mais la légende d'une carte affichait
-    -- alors « C1.32 » tout court, et une carte d'habitats se lit par ses noms.
-    -- La vue ne lit donc QUE ce que le bloc contient déjà : extractions jsonb sur
-    -- `eh.j`, aucune table, aucune fonction à retour d'ensemble, aucune jointure
-    -- de plus qu'en 0.7.1. Les correspondances enregistrées AVANT la 0.9.1 n'ont
-    -- pas de libellé stocké et ressortent avec leur seul code jusqu'à
-    -- réenregistrement de l'habitat.
+    -- Le bloc ne porte QUE le `cd_hab` depuis la 0.11.0 : y recopier aussi le
+    -- code et le libellé faisait dépasser les 500 caractères de
+    -- `technical_precision` à quatre typologies, et GeoNature refusait alors la
+    -- station entière. C'est donc l'arbitrage seul qui est stocké ; code et nom
+    -- se relisent dans HABREF, par les jointures `c_*` en pied de vue — une par
+    -- typologie, sur la clé primaire.
+    -- Ce n'est PAS le retour de ce qui avait fait s'effondrer l'export en
+    -- 0.8.0 : là, `ref_habitats` était joint depuis un `jsonb_each`, dont le
+    -- planificateur ignore la cardinalité — il hachait HABREF entière à chaque
+    -- habitat. Ici l'expression jointe est scalaire, donc boucle indexée.
+    -- Les blocs écrits AVANT la 0.11.0 portent encore leur code et leur
+    -- libellé : le `coalesce` les laisse sortir tant que l'habitat n'a pas été
+    -- réenregistré.
     CASE WHEN eh.j -> 'corresp' -> 'CORINE_biotopes' ->> 'cd_hab' IS NOT NULL THEN coalesce(c_corine.lb_code, eh.j -> 'corresp' -> 'CORINE_biotopes' ->> 'code')
          WHEN t_hab.lb_nom_typo = 'CORINE_biotopes' THEN hab.lb_code
          ELSE corine.codes END                                    AS habitat_code_corine,
