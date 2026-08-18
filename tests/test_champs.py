@@ -207,7 +207,9 @@ def test_editer_un_champ_du_bloc_preserve_les_correspondances():
     codes = ef.decode_eval(habitat["technical_precision"])
     assert codes["enjeu"] == "faible"
     assert codes["determination"]["nom"] == "Subularion aquaticae"
-    assert codes["corresp"]["EUNIS"] == {"cd_hab": 1672, "src": "manuel"}
+    assert codes["corresp"]["EUNIS"]["cd_hab"] == 1672
+    assert codes["corresp"]["EUNIS"]["src"] == "manuel"
+    assert "nom" not in codes["corresp"]["EUNIS"], "le libellé ne revient pas"
 
 
 def test_editer_le_texte_libre_preserve_les_correspondances():

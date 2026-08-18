@@ -373,23 +373,43 @@ def test_merge_efface_les_correspondances_sans_toucher_au_reste():
     assert apres == {"enjeu": "fort"}
 
 
-def test_code_et_libelle_ne_sont_plus_enregistres():
-    """Ils faisaient déborder les 500 caractères de `technical_precision`.
+def test_le_libelle_n_est_plus_enregistre():
+    """C'est LUI qui faisait déborder les 500 caractères du champ.
 
-    À quatre typologies, le bloc dépassait la taille du champ et GeoNature
-    refusait la station ENTIÈRE. Le `cd_hab` suffit à faire la correspondance ;
-    code et libellé se retrouvent à la lecture (catalogue, puis HABREF).
+    À quatre typologies, le bloc dépassait la taille de `technical_precision` et
+    GeoNature refusait la station ENTIÈRE. Le libellé ne revient donc jamais : le
+    catalogue et HABREF savent tous deux le rendre à la lecture.
+    """
+    texte = ef.encode_eval("", corresp={"EUNIS": {
+        "cd_hab": 1778, "nom": "Fourrés ripicoles", "src": "manuel"}})
+    assert ef.decode_eval(texte)["corresp"]["EUNIS"] == {
+        "cd_hab": 1778, "src": "manuel"}
+    assert "Fourrés ripicoles" not in texte
+
+
+def test_le_code_reste_acceptable_car_parfois_irremplacable():
+    """Le format l'accepte, sans que la saisie l'écrive.
+
+    Quand le catalogue ignore un `cd_hab`, le bloc est la seule copie du code, et
+    l'effacer ferait afficher un nombre dans une colonne de codes. `_clean_corresp`
+    le laisse donc passer ; ce sont les appelants — le formulaire, l'allègement —
+    qui décident de l'écrire ou non.
     """
     texte = ef.encode_eval("", corresp={"EUNIS": {
         "cd_hab": 1778, "code": "F9.1", "nom": "Fourrés ripicoles", "src": "manuel"}})
     assert ef.decode_eval(texte)["corresp"]["EUNIS"] == {
-        "cd_hab": 1778, "src": "manuel"}
-    assert "F9.1" not in texte and "Fourrés ripicoles" not in texte
+        "cd_hab": 1778, "code": "F9.1", "src": "manuel"}
+    assert "Fourrés ripicoles" not in texte, "le libellé, lui, ne revient pas"
 
 
-def test_une_correspondance_ancienne_se_relit_allegee():
-    """Les blocs déjà en base portent code et libellé : ils restent lisibles."""
+def test_une_correspondance_ancienne_perd_son_libelle_pas_son_code():
+    """Les blocs déjà en base portent code et libellé : ils restent lisibles.
+
+    Le libellé est écarté — il pesait, et se retrouve. Le code est gardé : il
+    peut être la seule copie, et rien ici ne sait si le catalogue le connaît.
+    """
     codes = ef.decode_eval(
         '[ANA-EVAL] {"corresp": {"EUNIS": {"cd_hab": 1778, "code": "F9.1",'
         ' "nom": "Fourrés ripicoles", "src": "manuel"}}} [/ANA-EVAL]')
-    assert codes["corresp"]["EUNIS"] == {"cd_hab": 1778, "src": "manuel"}
+    assert codes["corresp"]["EUNIS"] == {"cd_hab": 1778, "code": "F9.1",
+                                         "src": "manuel"}

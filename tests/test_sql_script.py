@@ -159,3 +159,37 @@ def test_les_correspondances_sont_materialisees():
     )
     # La table se périme : le script doit dire comment la rafraîchir.
     assert "REFRESH MATERIALIZED VIEW" in _lire(_SCRIPT)
+
+
+def test_les_cd_hab_de_correspondance_sont_extraits_derriere_une_barriere():
+    """Joindre sur `eh.j` recopiait `ana_eval_json()` dans chaque condition.
+
+    Une condition de jointure ne reste pas derrière la barrière du LATERAL qui
+    décode le bloc : le planificateur y recopie l'appel de fonction. Avec quatre
+    typologies, cela faisait quatre décodages de plus par ligne — la fonction
+    plpgsql la plus coûteuse de la vue, celle que `OFFSET 0` sert justement à
+    n'exécuter qu'une fois. Le plan le montrait : la clé de cache des Memoize
+    portait `gn_exports.ana_eval_json(...)` en entier.
+
+    Les `cd_hab` sont donc extraits dans un LATERAL protégé, et les jointures ne
+    voient plus que des colonnes.
+    """
+    code = _sans_commentaires(_lire(_SCRIPT))
+    vue = code[code.index("CREATE OR REPLACE VIEW gn_exports.v_occhab_complet"):]
+    for ligne in vue.splitlines():
+        if "ref_habitats.habref c_" in ligne:
+            assert "ana_eval_json" not in ligne, (
+                "jointure de correspondance sur un décodage du bloc : la "
+                "fonction sera réévaluée par ligne et par typologie — %s"
+                % ligne.strip()
+            )
+            assert "cdc." in ligne, (
+                "la jointure doit porter sur la colonne extraite, pas sur une "
+                "expression — %s" % ligne.strip()
+            )
+    # Le LATERAL d'extraction porte sa propre barrière.
+    debut = vue.index("(eh.j -> 'corresp'")
+    assert "OFFSET 0" in vue[debut: vue.index(") cdc ON true", debut)], (
+        "le LATERAL qui extrait les cd_hab doit porter OFFSET 0, sinon il est "
+        "aplati et l'on retrouve la fonction dans chaque condition"
+    )

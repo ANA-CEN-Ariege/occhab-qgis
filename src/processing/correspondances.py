@@ -490,15 +490,25 @@ def correspondances_a_alleger(technical_precision):
 
     Repérer ces blocs permet de les réécrire AVANT qu'une saisie ne bute dessus.
 
-    La lecture se fait sur le bloc BRUT : `decode_eval` écarte déjà code et
-    libellé — ils ne font plus partie du format — et ne peut donc pas servir à
-    constater leur présence.
+    La lecture se fait sur le bloc BRUT : `decode_eval` écarte le libellé — il ne
+    fait plus partie du format — et ne peut donc pas servir à constater sa
+    présence.
+
+    Un code que le CATALOGUE NE SAIT PAS restituer ne compte pas : le bloc en est
+    alors la seule copie, l'allègement le garde, et le signaler ferait proposer
+    une réécriture qui n'aurait rien à retirer.
     """
     corresp = (bloc_brut(technical_precision) or {}).get("corresp") or {}
     if not isinstance(corresp, dict):
         return False
-    return any(isinstance(v, dict) and (v.get("code") or v.get("nom"))
-               for v in corresp.values())
+    for valeurs in corresp.values():
+        if not isinstance(valeurs, dict):
+            continue
+        if valeurs.get("nom"):
+            return True                      # le libellé part toujours
+        if valeurs.get("code") and catalogue().fiche_correspondance(valeurs.get("cd_hab")):
+            return True                      # code retrouvable : retirable
+    return False
 
 
 def alleger_correspondances(technical_precision):
@@ -507,13 +517,32 @@ def alleger_correspondances(technical_precision):
     None signifie « rien à faire » : sans lui, chaque passage marquerait toutes
     les stations « à synchroniser » pour une réécriture identique.
 
-    `decode_eval` écarte déjà code et libellé — ils ne font plus partie du format.
-    Il suffit donc de réencoder ce qu'il rend : le texte humain, les autres
-    champs et le `src` de chaque correspondance sont conservés.
+    Le LIBELLÉ part toujours : c'est lui qui pesait, et le catalogue comme HABREF
+    savent le rendre. Le CODE ne part que si le catalogue sait le restituer.
+
+    Sans cette nuance, l'allègement effaçait la seule copie du code d'une
+    correspondance arbitrée hors catalogue, et la colonne affichait ensuite le
+    `cd_hab` nu — un nombre, dans une colonne de codes. Mesuré sur une base de
+    terrain : garder ces codes-là coûte 12 entrées sur 514, le bloc le plus long
+    reste à 365 caractères (limite : 500), et les 26 habitats que GeoNature
+    refusait passent tous.
     """
     if not correspondances_a_alleger(technical_precision):
         return None
-    return encode_eval(technical_precision, **decode_eval(technical_precision))
+    champs = decode_eval(technical_precision)
+    corresp = champs.get("corresp")
+    if corresp:
+        garde = {}
+        for cle, valeurs in corresp.items():
+            entree = dict(valeurs)
+            entree.pop("code", None)
+            if not catalogue().fiche_correspondance(entree.get("cd_hab")):
+                code = code_stocke(technical_precision, cle)
+                if code:
+                    entree["code"] = code    # seule copie : elle reste
+            garde[cle] = entree
+        champs["corresp"] = garde
+    return encode_eval(technical_precision, **champs)
 
 
 def code_stocke(technical_precision, typologie):

@@ -526,11 +526,20 @@ def test_le_code_du_bloc_ancien_est_lisible():
                               "CORINE_biotopes") == "Cariçaies à Carex vesicaria"
 
 
-def test_un_bloc_allege_ne_porte_plus_de_code():
-    """Après allègement il n'y a plus rien à relire : le repli suivant prend."""
-    allege = co.alleger_correspondances(_BLOC_ANCIEN_HORS_CATALOGUE)
-    assert co.code_stocke(allege, "CORINE_biotopes") is None
-    assert co.code_stocke(allege, "EUNIS") is None
+def test_l_allegement_garde_le_code_que_le_catalogue_ignore():
+    """Ce bloc-ci porte deux correspondances arbitrées HORS catalogue.
+
+    Les alléger effacerait la seule copie de leur code, et la colonne afficherait
+    ensuite « 17228 » — un nombre, dans une colonne de codes. L'allègement ne
+    retire donc que ce qu'il sait faire revenir.
+    """
+    allege = co.alleger_correspondances(_BLOC_ANCIEN_HORS_CATALOGUE) \
+        or _BLOC_ANCIEN_HORS_CATALOGUE
+    assert co.code_stocke(allege, "CORINE_biotopes") == "53.2142"
+    assert co.code_stocke(allege, "EUNIS") == "D5.2142"
+    # Le libellé, lui, part : c'est lui qui pesait.
+    assert co.nom_stocke(allege, "CORINE_biotopes") is None
+    assert "Cariçaies" not in allege
 
 
 def test_sans_bloc_ni_typologie_le_code_stocke_ne_casse_pas():

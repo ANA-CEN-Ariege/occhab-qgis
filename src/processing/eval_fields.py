@@ -196,6 +196,16 @@ def _clean_corresp(value):
         if cd_hab <= 0:
             continue
         entree = {"cd_hab": cd_hab}
+        # Le CODE n'est plus écrit par la saisie — le catalogue le rend, et le
+        # recopier avec le libellé faisait dépasser les 500 caractères du champ.
+        # Il reste toutefois ACCEPTÉ : quand le catalogue ignore un `cd_hab`,
+        # le bloc est la seule copie du code, et l'effacer afficherait un nombre
+        # dans une colonne de codes. `alleger_correspondances` s'en sert pour
+        # ne retirer que ce qu'il sait restituer. Le libellé, lui, ne revient
+        # pas : c'est lui qui pesait.
+        code = _texte(detail.get("code"))
+        if code:
+            entree["code"] = code
         if detail.get("src") in ref.SOURCES_CORRESPONDANCE:
             entree["src"] = detail["src"]
         propre[typologie] = entree

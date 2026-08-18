@@ -529,15 +529,35 @@ LEFT JOIN LATERAL (
 LEFT JOIN LATERAL (
     SELECT gn_exports.ana_eval_json(h.technical_precision) AS j OFFSET 0
 ) eh ON true
+-- Les quatre `cd_hab` de correspondance, extraits DERRIÈRE UNE BARRIÈRE.
+--
+-- ⚠ Ce second `OFFSET 0` est aussi indispensable que le premier. Une condition
+-- de jointure ne peut pas rester derrière la barrière de `eh` : joindre
+-- directement sur `(eh.j -> … ->> 'cd_hab')::int` faisait recopier l'appel de
+-- `ana_eval_json()` dans CHAQUE condition, soit quatre décodages de plus par
+-- ligne — la fonction plpgsql la plus coûteuse de la vue, celle que le premier
+-- `OFFSET 0` sert précisément à n'exécuter qu'une fois. Le plan le montrait :
+-- la clé de cache des Memoize portait la fonction entière.
+-- Ici l'extraction est faite UNE fois par ligne, et les jointures ne voient
+-- plus que des colonnes.
+LEFT JOIN LATERAL (
+    SELECT (eh.j -> 'corresp' -> 'CORINE_biotopes' ->> 'cd_hab')::int             AS corine,
+           (eh.j -> 'corresp' -> 'EUNIS' ->> 'cd_hab')::int                       AS eunis,
+           (eh.j -> 'corresp' -> 'Habitats_d''intérêt_communautaire' ->> 'cd_hab')::int AS n2000,
+           (eh.j -> 'corresp' -> 'Cahiers_d''habitats' ->> 'cd_hab')::int         AS cahiers
+    OFFSET 0
+) cdc ON true
 -- Code et libellé d'une correspondance ARBITRÉE. Depuis la 0.11.0 le bloc ne
 -- porte plus que le `cd_hab` : il dépassait les 500 caractères de
 -- `technical_precision`, et GeoNature refusait la station entière. C'est donc
 -- HABREF qui rend code et nom, par jointure sur la clé primaire `cd_hab` — une
 -- par typologie, index unique, sans fonction à retour d'ensemble : ce n'est pas
 -- la résolution par habitat qui avait fait s'effondrer l'export en 0.8.0.
+-- Mesuré sur l'instance de l'ANA : « Index Scan using pk_habref » dans un
+-- « Nested Loop », 50 accès réels pour 978 lignes.
 -- Les blocs écrits avant la 0.11.0 portent encore code et nom ; le `coalesce`
 -- ci-dessus les laisse sortir tant qu'ils n'ont pas été réenregistrés.
-LEFT JOIN ref_habitats.habref c_corine  ON c_corine.cd_hab = (eh.j -> 'corresp' -> 'CORINE_biotopes' ->> 'cd_hab')::int
-LEFT JOIN ref_habitats.habref c_eunis   ON c_eunis.cd_hab = (eh.j -> 'corresp' -> 'EUNIS' ->> 'cd_hab')::int
-LEFT JOIN ref_habitats.habref c_n2000   ON c_n2000.cd_hab = (eh.j -> 'corresp' -> 'Habitats_d''intérêt_communautaire' ->> 'cd_hab')::int
-LEFT JOIN ref_habitats.habref c_cahiers ON c_cahiers.cd_hab = (eh.j -> 'corresp' -> 'Cahiers_d''habitats' ->> 'cd_hab')::int;
+LEFT JOIN ref_habitats.habref c_corine  ON c_corine.cd_hab  = cdc.corine
+LEFT JOIN ref_habitats.habref c_eunis   ON c_eunis.cd_hab   = cdc.eunis
+LEFT JOIN ref_habitats.habref c_n2000   ON c_n2000.cd_hab   = cdc.n2000
+LEFT JOIN ref_habitats.habref c_cahiers ON c_cahiers.cd_hab = cdc.cahiers;

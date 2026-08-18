@@ -319,13 +319,22 @@ class CorrespondancesEdit(QWidget):
     def get_data(self):
         """{typologie: {cd_hab, src}} — None si rien n'est renseigné.
 
-        Depuis 0.11.0, seul `cd_hab` et `src` sont enregistrés. Le code et libellé
-        sont retrouvés depuis HABREF à la relecture/export. Le `cd_hab` reste ce
-        qui fait autorité.
+        Le `cd_hab` fait autorité, et lui seul est écrit dans le cas courant :
+        code et libellé se retrouvent à la lecture (catalogue, puis HABREF), et
+        les recopier faisait dépasser les 500 caractères du champ.
+
+        Le CODE est toutefois conservé quand le catalogue ne sait pas le rendre.
+        Sans cela, rouvrir puis réenregistrer un habitat dont la correspondance a
+        été arbitrée hors catalogue effacerait la seule copie du code, et la
+        colonne afficherait ensuite le `cd_hab` nu. Cela ne concerne qu'une
+        poignée d'entrées — 12 sur 514 sur une base de terrain.
         """
         propre = {}
         for cle, valeurs in self._valeurs.items():
             entree = {"cd_hab": valeurs["cd_hab"]}
+            code = (valeurs.get("code") or "").strip()
+            if code and not corresp.catalogue().fiche_correspondance(valeurs["cd_hab"]):
+                entree["code"] = code
             if valeurs.get("src") in SOURCES_CORRESPONDANCE:
                 entree["src"] = valeurs["src"]
             propre[cle] = entree
