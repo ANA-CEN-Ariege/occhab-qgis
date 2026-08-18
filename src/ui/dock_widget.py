@@ -428,7 +428,7 @@ class OccHabDockWidget(QDockWidget):
             self._alleger_correspondances,
         )
         action_libelles.setToolTip(
-            "Les correspondances enregistrées avant la 0.9.2 recopiaient le code "
+            "Les correspondances enregistrées avant la 0.11.0 recopiaient le code "
             "et le libellé de chaque typologie. À quatre typologies, le bloc "
             "dépassait la taille du champ et GeoNature refusait la station "
             "entière. Cette action les réécrit à leur forme courte ; code et "
@@ -1127,7 +1127,7 @@ class OccHabDockWidget(QDockWidget):
     def _alleger_correspondances(self):
         """Réécrire les correspondances anciennes à leur forme courte.
 
-        Jusqu'à la 0.9.2, chaque correspondance recopiait son code ET son libellé.
+        Jusqu'à la 0.11.0, chaque correspondance recopiait son code ET son libellé.
         À quatre typologies le bloc dépassait les 500 caractères de
         `technical_precision`, et GeoNature refusait la station ENTIÈRE — pas
         seulement l'habitat fautif. Réécrire le stock désamorce ces refus au lieu

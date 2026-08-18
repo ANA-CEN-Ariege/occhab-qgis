@@ -291,7 +291,7 @@ class Catalogue:
             if len({normaliser(a.nom) for a in liste}) == 1
         }
         # Index cd_hab → {code, nom} de TOUTES les correspondances du catalogue.
-        # Depuis la 0.9.2 la donnée ne porte plus que le `cd_hab` : c'est ici que
+        # Depuis la 0.11.0 la donnée ne porte plus que le `cd_hab` : c'est ici que
         # l'export retrouve code et libellé, hors ligne et sans interroger HABREF
         # code par code — ce qui l'avait fait s'effondrer.
         self._fiches_corresp = {}
@@ -482,7 +482,7 @@ def charger(chemin=None):
 def correspondances_a_alleger(technical_precision):
     """Le bloc porte-t-il encore `code` ou `nom` dans ses correspondances ?
 
-    Jusqu'à la 0.9.2, chaque correspondance enregistrait son code ET son libellé.
+    Jusqu'à la 0.11.0, chaque correspondance enregistrait son code ET son libellé.
     À quatre typologies, le bloc dépassait les 500 caractères de
     `technical_precision` et GeoNature refusait l'enregistrement de la station
     entière. Seul le `cd_hab` est désormais écrit ; code et libellé se retrouvent
@@ -514,3 +514,32 @@ def alleger_correspondances(technical_precision):
     if not correspondances_a_alleger(technical_precision):
         return None
     return encode_eval(technical_precision, **decode_eval(technical_precision))
+
+
+def code_stocke(technical_precision, typologie):
+    """Code que le bloc porte ENCORE pour cette typologie, ou None.
+
+    Les blocs écrits avant la 0.11.0 recopient le code de chaque correspondance.
+    `decode_eval` ne le rend plus — il ne fait plus partie du format — mais il
+    est toujours dans la donnée, et c'est la meilleure source qui reste quand ni
+    le catalogue ni HABREF ne savent nommer le `cd_hab`.
+
+    Sans ce repli, un poste encore chargé de blocs anciens affiche le `cd_hab`
+    nu dans une colonne de codes — « 17228 » là où la donnée disait « 53.2142 ».
+    Un nombre à la place d'un code n'est pas une information dégradée : il se lit
+    comme un code faux.
+    """
+    corresp = (bloc_brut(technical_precision) or {}).get("corresp") or {}
+    entree = corresp.get(typologie) if isinstance(corresp, dict) else None
+    if not isinstance(entree, dict):
+        return None
+    return (entree.get("code") or "").strip() or None
+
+
+def nom_stocke(technical_precision, typologie):
+    """Libellé que le bloc porte ENCORE pour cette typologie, ou None."""
+    corresp = (bloc_brut(technical_precision) or {}).get("corresp") or {}
+    entree = corresp.get(typologie) if isinstance(corresp, dict) else None
+    if not isinstance(entree, dict):
+        return None
+    return (entree.get("nom") or "").strip() or None

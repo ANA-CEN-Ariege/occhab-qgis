@@ -17,7 +17,9 @@ le fichier réellement livré avec le plugin.
 """
 import os
 
+import champs as ch
 import correspondances as co
+import export
 
 _ICI = os.path.dirname(os.path.abspath(__file__))
 CATALOGUE_LIVRE = os.path.join(
@@ -272,7 +274,7 @@ def _bloc(**corresp):
 
 
 def _bloc_ancien(**corresp):
-    """Bloc à la forme d'avant la 0.9.2, monté à la main.
+    """Bloc à la forme d'avant la 0.11.0, monté à la main.
 
     `encode_eval` ne sait plus produire cette forme — code et libellé ne font
     plus partie du format. Or c'est exactement ce qui dort dans les bases : il
@@ -286,7 +288,7 @@ def _bloc_ancien(**corresp):
 
 
 def test_reperer_les_correspondances_a_alleger():
-    """Celles d'avant la 0.9.2 recopient code et libellé."""
+    """Celles d'avant la 0.11.0 recopient code et libellé."""
     ancien = _bloc_ancien(
         EUNIS={"cd_hab": 1778, "code": "F9.1", "src": "manuel"},
         CORINE_biotopes={"cd_hab": 1378, "code": "44.1",
@@ -499,3 +501,61 @@ def test_un_libelle_au_nom_repete_redevient_trouvable():
     ])
     assert catalogue.par_nom_approche(brut) is None
     assert catalogue.par_nom_approche(co.nom_habref(brut)) is not None
+
+
+# ------------- le code du bloc ancien vaut mieux qu'un cd_hab nu à l'affichage
+#: Bloc réel du poste d'une utilisatrice (habitat 2568, « Caricion gracilis ») :
+#: ses deux correspondances ont été arbitrées à la main, et leurs `cd_hab` sont
+#: étrangers au catalogue livré. Le bloc, lui, porte encore les codes.
+_BLOC_ANCIEN_HORS_CATALOGUE = (
+    '[ANA-EVAL] {"corresp": {'
+    '"CORINE_biotopes": {"cd_hab": 17228, "code": "53.2142",'
+    ' "nom": "Cariçaies à Carex vesicaria", "src": "manuel"},'
+    ' "EUNIS": {"cd_hab": 17730, "code": "D5.2142",'
+    ' "nom": "Cariçaies à Laîche vésiculeuse", "src": "manuel"}},'
+    ' "recouvrement": 100} [/ANA-EVAL]'
+)
+
+
+def test_le_code_du_bloc_ancien_est_lisible():
+    """`decode_eval` ne rend plus le code : il faut le relire dans le bloc brut."""
+    assert co.code_stocke(_BLOC_ANCIEN_HORS_CATALOGUE,
+                               "CORINE_biotopes") == "53.2142"
+    assert co.code_stocke(_BLOC_ANCIEN_HORS_CATALOGUE, "EUNIS") == "D5.2142"
+    assert co.nom_stocke(_BLOC_ANCIEN_HORS_CATALOGUE,
+                              "CORINE_biotopes") == "Cariçaies à Carex vesicaria"
+
+
+def test_un_bloc_allege_ne_porte_plus_de_code():
+    """Après allègement il n'y a plus rien à relire : le repli suivant prend."""
+    allege = co.alleger_correspondances(_BLOC_ANCIEN_HORS_CATALOGUE)
+    assert co.code_stocke(allege, "CORINE_biotopes") is None
+    assert co.code_stocke(allege, "EUNIS") is None
+
+
+def test_sans_bloc_ni_typologie_le_code_stocke_ne_casse_pas():
+    for mauvais in (None, "", "texte libre sans bloc", "[ANA-EVAL] pas du json [/ANA-EVAL]"):
+        assert co.code_stocke(mauvais, "EUNIS") is None
+        assert co.nom_stocke(mauvais, "EUNIS") is None
+
+
+def test_la_colonne_montre_le_code_du_bloc_plutot_qu_un_cd_hab_nu():
+    """Le cas signalé depuis le terrain : « 17228 » s'affichait dans une colonne
+    de codes CORINE, où il se lit comme un code — alors que la donnée disait
+    « 53.2142 ». Le catalogue ignore ce cd_hab ; le bloc, lui, savait."""
+    habitat = {"technical_precision": _BLOC_ANCIEN_HORS_CATALOGUE}
+    lues = {c.cle: ch.lire(habitat, c) for c in ch.CHAMPS
+            if c.stockage == ch.CORRESP}
+    assert lues["CORINE_biotopes"] == "53.2142", lues
+    assert lues["EUNIS"] == "D5.2142", lues
+
+
+def test_l_export_montre_le_code_du_bloc_plutot_qu_un_cd_hab_nu():
+    """Même repli côté export : une colonne de codes ne doit pas recevoir un
+    nombre quand la donnée porte le code."""
+    station = ({"id_station": 1, "geom": "POINT(0 0)", "geom_type": "Point"},
+               [{"id_habitat": 1, "cd_hab": 16508, "nom_cite": "Caricion gracilis",
+                 "technical_precision": _BLOC_ANCIEN_HORS_CATALOGUE}], [])
+    ligne = export.flatten_cartography([station], code_corresp=lambda _cd: None)[0]
+    assert ligne["corine_cite"] == "53.2142"
+    assert ligne["eunis_cite"] == "D5.2142"

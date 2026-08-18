@@ -334,7 +334,7 @@ def test_l_edition_en_masse_rend_le_cd_hab_ou_le_retrait():
 
     combo.setCurrentIndex(1)
     valeur = dialogue.valeurs()[(ch.HABITAT, "EUNIS")]
-    # Depuis la 0.9.2 seul le cd_hab est posé : code et libellé faisaient
+    # Depuis la 0.11.0 seul le cd_hab est posé : code et libellé faisaient
     # déborder les 500 caractères de `technical_precision`.
     assert valeur["cd_hab"]
     assert "code" not in valeur and "nom" not in valeur

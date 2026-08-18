@@ -59,6 +59,17 @@ NUMERIC_FIELDS = {
 }
 
 
+def _code_stocke(porteur, typologie):
+    """Code encore inscrit dans le bloc pour cette typologie, ou None."""
+    if not porteur:
+        return None
+    try:  # importable dans le paquet (plugin) comme en isolation (tests)
+        from . import correspondances
+    except ImportError:  # pragma: no cover - repli hors paquet
+        import correspondances
+    return correspondances.code_stocke(porteur, typologie)
+
+
 def _to_float(value):
     try:
         return float(value)
@@ -66,7 +77,7 @@ def _to_float(value):
         return None
 
 
-def _colonnes_catalogue(hab_eval, code_corresp=None):
+def _colonnes_catalogue(hab_eval, code_corresp=None, porteur=None):
     """Détermination hors HABREF et correspondances inscrites, à plat.
 
     `corresp_manu` liste les seules typologies **arbitrées à la main**. C'est la
@@ -88,7 +99,14 @@ def _colonnes_catalogue(hab_eval, code_corresp=None):
     }
     for typologie, colonne in _COLONNES_CORRESP:
         cd_hab = (corresp.get(typologie) or {}).get("cd_hab")
-        colonnes[colonne] = resoudre(cd_hab) if cd_hab else None
+        if not cd_hab:
+            colonnes[colonne] = None
+            continue
+        # Le bloc ANTÉRIEUR à la 0.11.0 porte encore le code : le préférer au
+        # `cd_hab` nu quand le résolveur ne sait pas répondre. Sans cela une
+        # colonne de codes reçoit un nombre, qui se lit comme un code faux.
+        colonnes[colonne] = resoudre(cd_hab) or _code_stocke(porteur, typologie) \
+            or str(cd_hab)
     return colonnes
 
 
@@ -103,7 +121,7 @@ def flatten_cartography(stations, nomenclature_label=None, jdd_name=None,
         jdd_name: libellé du jeu de données.
         role_label: callable ``id_role -> nom`` (numérisateur).
         code_corresp: callable ``cd_hab -> code`` pour les correspondances, qui
-            rend le ``cd_hab`` tel quel s'il ne le résout pas. Depuis la 0.9.2 la
+            rend le ``cd_hab`` tel quel s'il ne le résout pas. Depuis la 0.11.0 la
             donnée ne porte plus que le ``cd_hab`` (le bloc dépassait les 500
             caractères du champ) : le code se retrouve à la lecture.
 
@@ -188,7 +206,9 @@ def flatten_cartography(stations, nomenclature_label=None, jdd_name=None,
                     "pee": " ; ".join(hab_eval.get("pee") or []) or None,
                     "remarque": hab_eval.get("remarque"),
                 })
-                row.update(_colonnes_catalogue(hab_eval, code_corresp))
+                row.update(_colonnes_catalogue(
+                    hab_eval, code_corresp,
+                    porteur=habitat.get("technical_precision")))
             row["_geom"] = station.get("geom")
             row["_geom_type"] = station.get("geom_type")
             rows.append(row)

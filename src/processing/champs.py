@@ -289,6 +289,15 @@ def _catalogue():
     return correspondances.catalogue()
 
 
+def _code_stocke(porteur, typologie):
+    """Code que le bloc porte encore pour cette typologie (blocs < 0.11.0)."""
+    try:
+        from . import correspondances
+    except ImportError:  # pragma: no cover - repli hors paquet
+        import correspondances
+    return correspondances.code_stocke(porteur, typologie)
+
+
 def lire(objet, champ):
     """Valeur d'un champ dans un dict station ou habitat (None si absente)."""
     objet = objet or {}
@@ -299,15 +308,23 @@ def lire(objet, champ):
         return strip_eval(porteur) or None
     if champ.stockage == CORRESP:
         # Le CODE, pas le libellé : c'est lui qui identifie, et une colonne de
-        # tableau n'a pas la place du nom complet. Depuis la 0.9.2 il n'est plus
-        # stocké — le catalogue le rend — et à défaut on montre le `cd_hab` nu
-        # plutôt que rien, pour que la correspondance reste visible.
+        # tableau n'a pas la place du nom complet. Il n'est plus stocké depuis la
+        # 0.11.0 — le bloc dépassait les 500 caractères du champ —, donc on le
+        # retrouve, dans cet ordre :
+        #   1. le catalogue livré, qui répond hors ligne ;
+        #   2. le bloc lui-même, s'il est ANTÉRIEUR à la 0.11.0 et le porte
+        #      encore : la donnée l'a sous la main, la jeter afficherait un
+        #      nombre là où elle disait « 53.2142 » ;
+        #   3. le `cd_hab` nu, en dernier recours — une correspondance visible
+        #      vaut mieux qu'une case vide.
         entree = (decode_eval(porteur).get("corresp") or {}).get(champ.cle) or {}
         cd_hab = entree.get("cd_hab")
         if not cd_hab:
             return None
         fiche = _catalogue().fiche_correspondance(cd_hab) or {}
-        return fiche.get("code") or str(cd_hab)
+        return (fiche.get("code")
+                or _code_stocke(porteur, champ.cle)
+                or str(cd_hab))
     valeur = decode_eval(porteur).get(champ.cle)
     if champ.stockage == DOUBLE and valeur is None:
         # Repli sur la colonne native : une station venue du serveur peut porter

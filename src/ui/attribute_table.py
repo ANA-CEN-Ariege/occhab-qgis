@@ -569,7 +569,7 @@ class _ObservateursEdit(QListWidget):
 
 def _libelle_corresp(entree):
     """« 41.112 — Hêtraies montagnardes à Luzule », ou le code seul."""
-    # Depuis la 0.9.2 ni le code ni le nom ne sont stockés : à défaut on montre
+    # Depuis la 0.11.0 ni le code ni le nom ne sont stockés : à défaut on montre
     # le cd_hab, qui reste ce qui identifie la correspondance.
     code = entree.get("code") or entree.get("cd_hab")
     nom = entree.get("nom")

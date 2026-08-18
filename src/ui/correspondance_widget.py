@@ -70,7 +70,7 @@ _Ligne = namedtuple("_Ligne", "pile choix edit propre retour mention")
 
 def _libelle_choix(entree):
     """« 41.112 — Hêtraies montagnardes à Luzule », ou le code seul."""
-    # Depuis la 0.9.2 ni le code ni le nom ne sont stockés : à défaut on montre
+    # Depuis la 0.11.0 ni le code ni le nom ne sont stockés : à défaut on montre
     # le cd_hab, qui reste ce qui identifie la correspondance.
     code = entree.get("code") or entree.get("cd_hab")
     nom = entree.get("nom")
@@ -319,7 +319,7 @@ class CorrespondancesEdit(QWidget):
     def get_data(self):
         """{typologie: {cd_hab, src}} — None si rien n'est renseigné.
 
-        Depuis 0.9.2, seul `cd_hab` et `src` sont enregistrés. Le code et libellé
+        Depuis 0.11.0, seul `cd_hab` et `src` sont enregistrés. Le code et libellé
         sont retrouvés depuis HABREF à la relecture/export. Le `cd_hab` reste ce
         qui fait autorité.
         """

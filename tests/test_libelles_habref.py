@@ -231,7 +231,7 @@ def test_une_base_en_lecture_seule_n_empeche_pas_l_affichage():
 
 # --------------------- repérer les correspondances arbitrées sans leur libellé
 def _bloc_ancienne_forme():
-    """Bloc tel qu'écrit avant la 0.9.2 : code et libellé y étaient recopiés.
+    """Bloc tel qu'écrit avant la 0.11.0 : code et libellé y étaient recopiés.
 
     Monté à la main, car `encode_eval` ne sait plus produire cette forme — c'est
     justement ce qu'on cherche à repérer pour l'alléger.
