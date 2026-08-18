@@ -3,7 +3,7 @@ name=OccHab GeoNature
 qgisMinimumVersion=3.28
 qgisMaximumVersion=3.99
 description=Offline-first data entry for GeoNature's OccHab module (habitat stations) from QGIS, with local SQLite storage and synchronisation to the GeoNature REST API.
-version=0.11.3
+version=0.11.4
 author=Cédric Roy
 email=it@ariegenature.fr
 license=GPL-3.0-or-later
@@ -32,7 +32,24 @@ icon=resources/icons/occhab.svg
 experimental=True
 deprecated=False
 
-changelog=0.11.3 - Correction : un cd_hab s'affichait a la place du code.
+changelog=0.11.4 - Correction : l'allegement effacait des codes irremplacables.
+    « Alleger les correspondances anciennes… » retirait le code de TOUTES les
+    correspondances. Or le catalogue ne sait pas restituer celui d'une
+    correspondance arbitree hors catalogue : apres son passage, la colonne
+    reaffichait le cd_hab nu — le defaut corrige par la 0.11.3, reintroduit par
+    l'action censee assainir la donnee.
+    L'allegement ne retire desormais que ce qu'il sait faire revenir : le
+    libelle toujours, le code seulement si le catalogue resout son cd_hab.
+    Mesure sur deux bases de terrain : le bloc le plus long reste a 365
+    caracteres (limite 500), les habitats que GeoNature refusait passent tous,
+    aucune cellule ne se degrade. Le formulaire conserve lui aussi ce code :
+    reouvrir un tel habitat en effacait sinon la seule copie.
+    Vue d'export : les cd_hab de correspondance sont extraits derriere une
+    barriere d'optimisation. Joindre HABREF sur l'expression faisait recopier
+    ana_eval_json() dans chaque condition, soit quatre decodages de plus par
+    ligne — la fonction la plus couteuse de la vue.
+    ⚠ Redeployer sql/v_occhab_complet.sql pour cette derniere correction.
+    0.11.3 - Correction : un cd_hab s'affichait a la place du code.
     La colonne « CORINE biotopes (corresp.) » montrait « 17228 », l'EUNIS
     « 17730 » : ce sont des cd_hab, pas des codes. Un nombre dans une colonne
     de codes se lit comme un code faux, et rien ne signalait qu'il n'en etait
