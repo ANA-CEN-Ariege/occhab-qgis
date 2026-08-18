@@ -3,7 +3,7 @@ name=OccHab GeoNature
 qgisMinimumVersion=3.28
 qgisMaximumVersion=3.99
 description=Offline-first data entry for GeoNature's OccHab module (habitat stations) from QGIS, with local SQLite storage and synchronisation to the GeoNature REST API.
-version=0.11.1
+version=0.11.2
 author=Cédric Roy
 email=it@ariegenature.fr
 license=GPL-3.0-or-later
@@ -32,7 +32,24 @@ icon=resources/icons/occhab.svg
 experimental=True
 deprecated=False
 
-changelog=0.11.1 - Correction : la vue d'export ignorait les correspondances
+changelog=0.11.2 - Un habitat garde son nom quand sa fiche HABREF est illisible.
+    Sur l'instance de l'ANA, 894 lignes de correspondances HABREF portent une
+    cible vide (cd_hab_sortie NULL). La route de fiche du module habref les
+    dereference sans les tester, et 541 fiches repondent en erreur 500. Le
+    plugin n'avait alors aucun libelle a afficher : la colonne HABREF restait
+    vide, le rapprochement de noms echouait, et le code etait redemande au
+    serveur a chaque ouverture du tableau — sans jamais aboutir.
+    Le catalogue livre devient un TROISIEME recours, apres la fiche directe et
+    l'autocompletion. Il est consulte en DERNIER : HABREF fait foi et peut
+    corriger un libelle d'une version a l'autre, le catalogue ne parle que
+    lorsque le serveur se tait. Il nomme 184 alliances hors ligne.
+    Le libelle ainsi trouve est mis en cache comme les autres : le code n'est
+    plus redemande, et ces erreurs cessent d'encombrer le journal du serveur.
+    Les ancres sont ecartees : une ancre est un code CORINE emprunte, partage
+    par plusieurs alliances, et le nom rendu ne serait pas celui de cet
+    habitat-la.
+    Aucune modification de GeoNature n'est necessaire.
+    0.11.1 - Correction : la vue d'export ignorait les correspondances
     arbitrees, et le changelog de la 0.11.0 cassait l'analyse du paquet.
     La vue reconnaissait un arbitrage a la cle « code » du bloc. La 0.11.0 ne
     l'enregistre plus — seul le cd_hab subsiste —, donc la vue retombait sur le
