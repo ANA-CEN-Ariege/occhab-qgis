@@ -3,7 +3,7 @@ name=OccHab GeoNature
 qgisMinimumVersion=3.28
 qgisMaximumVersion=3.99
 description=Offline-first data entry for GeoNature's OccHab module (habitat stations) from QGIS, with local SQLite storage and synchronisation to the GeoNature REST API.
-version=0.11.5
+version=0.11.6
 author=Cédric Roy
 email=it@ariegenature.fr
 license=GPL-3.0-or-later
@@ -32,7 +32,22 @@ icon=resources/icons/occhab.svg
 experimental=True
 deprecated=False
 
-changelog=0.11.5 - Correction : un champ vide ne s'effacait pas dans GeoNature.
+changelog=0.11.6 - Recouvrement : la colonne native fait foi.
+    Le recouvrement etait ecrit a la fois dans la colonne OccHab
+    recovery_percentage et dans le bloc ANA-EVAL, et le bloc l'emportait a la
+    relecture. Sans consequence tant que GeoNature n'affiche pas le champ ; le
+    jour ou on le rend visible, une valeur corrigee sur le web n'atteint que la
+    colonne, le bloc revient du serveur intact, et c'est lui que le plugin
+    reaffiche — la correction resterait invisible dans le tableau, dans le
+    formulaire et dans la vue d'export, sans que rien ne le signale.
+    La colonne prime desormais partout ; le bloc ne sert plus que de repli pour
+    les habitats saisis avant qu'elle ne soit ecrite. La cle ne s'ecrit plus et
+    disparait du bloc a chaque enregistrement : purge au fil de l'eau, sans
+    migration, qui rend au passage sa place dans les 500 caracteres du champ
+    porteur.
+    ⚠ Redeployer sql/v_occhab_complet.sql. Ne passer recovery_percentage a true
+    cote GeoNature qu'apres le deploiement de cette version.
+    0.11.5 - Correction : un champ vide ne s'effacait pas dans GeoNature.
     Le payload retirait les valeurs nulles avant l'envoi. Or GeoNature n'ecrit
     que les cles recues : une cle absente laisse la colonne telle quelle. Vider
     un champ facultatif etait donc sans effet cote serveur — QGIS affichait
