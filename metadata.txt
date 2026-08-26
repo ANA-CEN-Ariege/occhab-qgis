@@ -3,7 +3,7 @@ name=OccHab GeoNature
 qgisMinimumVersion=3.28
 qgisMaximumVersion=3.99
 description=Offline-first data entry for GeoNature's OccHab module (habitat stations) from QGIS, with local SQLite storage and synchronisation to the GeoNature REST API.
-version=0.11.4
+version=0.11.5
 author=Cédric Roy
 email=it@ariegenature.fr
 license=GPL-3.0-or-later
@@ -32,7 +32,23 @@ icon=resources/icons/occhab.svg
 experimental=True
 deprecated=False
 
-changelog=0.11.4 - Correction : l'allegement effacait des codes irremplacables.
+changelog=0.11.5 - Correction : un champ vide ne s'effacait pas dans GeoNature.
+    Le payload retirait les valeurs nulles avant l'envoi. Or GeoNature n'ecrit
+    que les cles recues : une cle absente laisse la colonne telle quelle. Vider
+    un champ facultatif etait donc sans effet cote serveur — QGIS affichait
+    « non renseigne », GeoNature gardait l'ancienne valeur, et la
+    synchronisation se declarait reussie.
+    Concernait l'interet communautaire, la sensibilite, l'abondance, le type de
+    determination, le determinateur, l'exposition, le type de sol, la mosaique,
+    le commentaire, les altitudes, les profondeurs, la precision technique et
+    les observateurs.
+    Une mise a jour envoie desormais ces champs meme vides. La creation, elle,
+    ne change pas : les vides y restent omis, car il n'y a rien a effacer sur
+    une station qui n'existe pas encore, et un null explicite priverait la
+    station des valeurs par defaut de l'instance (nature de l'objet
+    geographique, type de sol). Les identifiants et les colonnes obligatoires
+    ne partent jamais a null.
+    0.11.4 - Correction : l'allegement effacait des codes irremplacables.
     « Alleger les correspondances anciennes… » retirait le code de TOUTES les
     correspondances. Or le catalogue ne sait pas restituer celui d'une
     correspondance arbitree hors catalogue : apres son passage, la colonne
