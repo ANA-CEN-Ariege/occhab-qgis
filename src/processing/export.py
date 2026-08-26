@@ -7,7 +7,9 @@ Une ligne par **habitat** (la géométrie de la station est répétée pour chac
 ses habitats ; une station sans habitat donne quand même une ligne). Les
 identifiants de nomenclature et de rôle sont résolus en **libellés** via des
 callables fournis par l'appelant. Les champs métier ANA (enjeu / état /
-recouvrement) sont décodés du commentaire station et de `technical_precision`.
+typicité) sont décodés du commentaire station et de `technical_precision` ; le
+recouvrement, lui, se lit dans sa colonne native, le bloc n'en étant qu'un repli
+pour les habitats antérieurs.
 
 Module **pur** (aucune dépendance PyQGIS) : il reçoit des stations déjà
 décomposées par `payload.parse_server_station` et renvoie des dicts d'attributs

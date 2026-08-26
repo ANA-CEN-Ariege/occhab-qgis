@@ -597,7 +597,10 @@ class HabitatForm(QWidget):
             self.text_precision.toPlainText(),
             enjeu=self.combo_enjeu.currentData(),
             etat_conservation=self.combo_etat.currentData(),
-            recouvrement=recouvrement,
+            # Pas de `recouvrement` ici : il a sa colonne native
+            # (`recovery_percentage`, plus bas), seule visible et corrigeable
+            # depuis GeoNature. `encode_eval` réécrivant le bloc entier, la clé
+            # d'un habitat ancien disparaît du même coup.
             typicite=self.combo_typicite.currentData(),
             dynamique=self.combo_dynamique.currentData(),
             restauration=self.combo_restauration.currentData(),
@@ -678,8 +681,9 @@ class HabitatForm(QWidget):
         if any(codes.get(cle) for cle in ("typicite", "dynamique", "restauration",
                                           "remarque")):
             self._set_n2000_visible(True)
-        # Recouvrement : bloc encodé prioritaire, sinon champ natif recovery_percentage.
-        rec = codes.get("recouvrement") or habitat.get("recovery_percentage")
+        # Recouvrement : la colonne native d'abord, le bloc en repli pour les
+        # habitats saisis avant qu'elle ne soit écrite (cf. `champs.lire`).
+        rec = habitat.get("recovery_percentage") or codes.get("recouvrement")
         if rec:
             # afficher le recouvrement sans réécraser l'abondance déjà enregistrée
             try:

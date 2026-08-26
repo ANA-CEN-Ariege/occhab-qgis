@@ -125,21 +125,60 @@ def test_bloc_ne_detruit_pas_le_texte_libre():
     assert ch.lire(habitat, ch.par_cle(ch.HABITAT, "typicite")) == "moyenne"
 
 
-def test_recouvrement_ecrit_dans_les_deux_stockages():
+def test_recouvrement_ecrit_dans_la_colonne_native_seule():
+    """La colonne OccHab suffit : la clé du bloc ferait doublon."""
     champ = ch.par_cle(ch.HABITAT, "recouvrement")
     habitat = {}
 
     ch.ecrire(habitat, champ, 60)
 
-    assert habitat["recovery_percentage"] == 60          # colonne native OccHab
-    assert "recouvrement" in habitat["technical_precision"]  # et le bloc
+    assert habitat["recovery_percentage"] == 60
+    # Pas de porteur créé pour rien : sans clé à purger, on n'y touche pas.
+    assert "technical_precision" not in habitat
     assert ch.lire(habitat, champ) == 60
 
 
-def test_recouvrement_repli_sur_la_colonne_native():
-    """Habitat venu du serveur : colonne renseignée, aucun bloc."""
+def test_recouvrement_purge_la_cle_d_un_bloc_ancien():
+    """Écrire nettoie le bloc, sans toucher aux autres clés ni au texte libre."""
     champ = ch.par_cle(ch.HABITAT, "recouvrement")
-    assert ch.lire({"recovery_percentage": 42}, champ) == 42
+    habitat = {
+        "recovery_percentage": 30,
+        "technical_precision": ef.encode_eval(
+            "Relevé partiel.", recouvrement=30, typicite="bonne"
+        ),
+    }
+
+    ch.ecrire(habitat, champ, 60)
+
+    assert habitat["recovery_percentage"] == 60
+    assert "recouvrement" not in ef.decode_eval(habitat["technical_precision"])
+    assert ef.decode_eval(habitat["technical_precision"])["typicite"] == "bonne"
+    assert ch.lire(habitat, ch.par_cle(ch.HABITAT, "technical_precision")) == \
+        "Relevé partiel."
+    assert ch.lire(habitat, champ) == 60
+
+
+def test_recouvrement_la_colonne_prime_sur_un_bloc_perime():
+    """Un recouvrement corrigé dans GeoNature ne doit pas être masqué.
+
+    Seule la colonne native est visible et modifiable côté web ; le bloc revient
+    du serveur intact. Le faire primer réaffichait l'ancienne valeur.
+    """
+    champ = ch.par_cle(ch.HABITAT, "recouvrement")
+    habitat = {
+        "recovery_percentage": 40,
+        "technical_precision": ef.encode_eval("", recouvrement=30),
+    }
+
+    assert ch.lire(habitat, champ) == 40
+
+
+def test_recouvrement_repli_sur_le_bloc():
+    """Habitat antérieur à la colonne : le bloc reste la seule source."""
+    champ = ch.par_cle(ch.HABITAT, "recouvrement")
+    habitat = {"technical_precision": ef.encode_eval("", recouvrement=30)}
+
+    assert ch.lire(habitat, champ) == 30
 
 
 def test_lire_objet_vide_ou_none():
@@ -171,7 +210,7 @@ def test_colonnes_touchees_suit_le_stockage():
     assert ch.colonnes_touchees(ch.par_cle(ch.STATION, "enjeu")) == {"comment"}
     # TEXTE_LIBRE : le commentaire lui-même, bloc préservé.
     assert ch.colonnes_touchees(ch.par_cle(ch.STATION, "comment")) == {"comment"}
-    # DOUBLE : le bloc de l'habitat ET la colonne native.
+    # DOUBLE : la colonne native, ET le bloc — dont l'écriture retire la clé.
     assert ch.colonnes_touchees(ch.par_cle(ch.HABITAT, "recouvrement")) == {
         "technical_precision", "recovery_percentage"}
 

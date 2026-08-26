@@ -78,6 +78,17 @@ def test_les_blocs_du_readme_sont_dans_le_script():
     assert not manquants, [bloc.splitlines()[0] for bloc in manquants]
 
 
+def test_le_recouvrement_lit_la_colonne_avant_le_bloc():
+    """La colonne native prime sur la clé du bloc.
+
+    Elle est la seule des deux qu'une saisie web puisse corriger : faire primer
+    le bloc aurait figé la vue sur une valeur que GeoNature n'affiche plus.
+    """
+    script = _lire(_SCRIPT)
+    assert ("coalesce(h.recovery_percentage::numeric, "
+            "(eh.j ->> 'recouvrement')::numeric)") in script
+
+
 def test_les_correspondances_saisies_ne_lisent_habref_que_par_cle_primaire():
     """La 0.8.0 a cassé l'export : jamais de cardinalité inconnue sur HABREF.
 

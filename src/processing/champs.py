@@ -17,8 +17,11 @@ Trois stockages coexistent, hérités des contraintes d'OccHab :
 - `COLONNE` — une vraie colonne (locale et côté GeoNature) ;
 - `EVAL` — une clé du bloc ANA-EVAL, faute de champ natif et de champs
   additionnels côté OccHab (cf. `eval_fields`) ;
-- `DOUBLE` — le recouvrement, écrit **à la fois** dans la colonne native
-  `recovery_percentage` et dans le bloc (le bloc fait foi à la relecture) ;
+- `DOUBLE` — le recouvrement, écrit dans la colonne native
+  `recovery_percentage`, qui **fait foi**. Il a longtemps été écrit aussi dans
+  le bloc, et le bloc l'emportait : une valeur corrigée dans l'interface web
+  serait alors revenue à l'ancienne à la relecture. La clé du bloc n'est plus
+  qu'un repli pour les habitats antérieurs, et chaque écriture l'en retire ;
 - `TEXTE_LIBRE` — la part humaine du champ qui porte le bloc : lire et écrire
   ce texte ne doit jamais détruire le bloc qui le suit.
 
@@ -325,12 +328,18 @@ def lire(objet, champ):
         return (fiche.get("code")
                 or _code_stocke(porteur, champ.cle)
                 or str(cd_hab))
-    valeur = decode_eval(porteur).get(champ.cle)
-    if champ.stockage == DOUBLE and valeur is None:
-        # Repli sur la colonne native : une station venue du serveur peut porter
-        # `recovery_percentage` sans bloc ANA-EVAL.
-        return objet.get(_COLONNE_DOUBLE.get(champ.cle, champ.cle))
-    return valeur
+    if champ.stockage == DOUBLE:
+        # La COLONNE d'abord : c'est elle que GeoNature expose, et la seule des
+        # deux qu'une saisie web puisse corriger. Faire primer le bloc rendait
+        # une telle correction invisible — le tableau réaffichait l'ancienne
+        # valeur, réimportée intacte dans le bloc.
+        valeur = objet.get(_COLONNE_DOUBLE.get(champ.cle, champ.cle))
+        if valeur is not None:
+            return valeur
+        # Repli : habitat saisi avant que la colonne ne soit écrite, ou venu
+        # d'une base où seul le bloc porte la valeur.
+        return decode_eval(porteur).get(champ.cle)
+    return decode_eval(porteur).get(champ.cle)
 
 
 def colonnes_touchees(champ):
@@ -373,9 +382,19 @@ def ecrire(objet, champ, valeur):
             corresp.pop(champ.cle, None)
         objet[porteur] = merge_eval(objet.get(porteur), corresp=corresp or None)
         return objet
-    objet[porteur] = merge_eval(objet.get(porteur), **{champ.cle: valeur})
     if champ.stockage == DOUBLE:
         objet[_COLONNE_DOUBLE.get(champ.cle, champ.cle)] = valeur
+        # Purge au fil de l'eau : la clé ferait doublon avec la colonne, et un
+        # bloc périmé reprendrait la main dès qu'on rétablirait sa priorité.
+        # Elle rend au passage sa place dans les 500 caractères du porteur.
+        # Sous condition : sans elle, il n'y a rien à purger, et réécrire le
+        # porteur poserait une chaîne vide là où il n'y avait rien.
+        if champ.cle in decode_eval(objet.get(porteur)):
+            objet[porteur] = merge_eval(
+                objet.get(porteur), **{champ.cle: None}
+            ) or None
+        return objet
+    objet[porteur] = merge_eval(objet.get(porteur), **{champ.cle: valeur})
     return objet
 
 

@@ -807,9 +807,14 @@ SELECT
     n_sens.label_default                                        AS sensibilite,
     n_com.label_default                                         AS interet_communautaire,
     -- ---- Habitat : bloc ANA-EVAL ----
+    -- Recouvrement : la COLONNE native d'abord. C'est la seule des deux qu'une
+    -- saisie web puisse corriger ; faire primer le bloc aurait figé la vue sur
+    -- une valeur que GeoNature n'affiche plus. Le bloc reste en repli pour les
+    -- habitats antérieurs, que le plugin purge à chaque enregistrement.
     -- `->>` rend du texte quel que soit le format d'origine (nombre en JSON,
-    -- chaîne dans l'ancien format) : un seul cast couvre les deux.
-    coalesce((eh.j ->> 'recouvrement')::numeric, h.recovery_percentage)
+    -- chaîne dans l'ancien format) : un seul cast couvre les deux. Le cast de
+    -- la colonne aligne les types, `coalesce` les voulant identiques.
+    coalesce(h.recovery_percentage::numeric, (eh.j ->> 'recouvrement')::numeric)
                                                                 AS recouvrement_pct,
     CASE eh.j ->> 'enjeu' WHEN 'majeur' THEN 'tres_fort'
                           ELSE eh.j ->> 'enjeu' END             AS habitat_niveau_enjeu,
