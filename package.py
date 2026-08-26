@@ -4,9 +4,16 @@
 
 """Construit le ZIP d'installation du plugin QGIS OccHab.
 
-Produit `dist/occhab-<version>.zip` avec un dossier racine `occhab/` (structure
+Produit `dist/occhab.<version>.zip` avec un dossier racine `occhab/` (structure
 attendue par le dépôt QGIS et l'installation « depuis un ZIP »). La version est
 lue dans `metadata.txt`. Les fichiers compilés / runtime / dev sont exclus.
+
+Le séparateur avant la version est un POINT, pas un tiret : installée depuis un
+dépôt, QGIS déduit le nom du dossier d'extension en coupant le nom du fichier au
+premier point (`installer_data.py`, `fileName.partition(".")[0]`). Avec
+`occhab-0.11.4.zip` il attendait un dossier `occhab-0`, ne le trouvait pas et
+annonçait « L'extension a disparu » — l'extension était pourtant bien installée
+dans `occhab/`, mais QGIS ne lui proposait plus aucune mise à jour.
 
 Usage :
     python package.py
@@ -58,7 +65,7 @@ def main():
     version = _read_version()
     out_dir = os.path.join(HERE, "dist")
     os.makedirs(out_dir, exist_ok=True)
-    out = os.path.join(out_dir, "occhab-%s.zip" % version)
+    out = os.path.join(out_dir, "%s.%s.zip" % (TOP, version))
 
     count = 0
     with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as zf:

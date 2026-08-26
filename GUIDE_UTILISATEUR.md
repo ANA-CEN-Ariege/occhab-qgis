@@ -121,7 +121,7 @@ Utile hors ligne, en avant-première, ou si le dépôt n'est pas accessible :
 
 1. Téléchargez le ZIP de la **dernière version** :
    **https://github.com/ANA-CEN-Ariege/occhab-qgis/releases/latest**
-   → dans la section *Assets*, cliquez sur **`occhab-x.y.z.zip`**.
+   → dans la section *Assets*, cliquez sur **`occhab.x.y.z.zip`**.
    *(lien direct de la dernière release : `…/releases/latest`)*
 2. Dans QGIS : **Extensions ▸ Installer/Gérer les extensions ▸ Installer depuis un
    ZIP**, choisissez le fichier téléchargé, cliquez **Installer l'extension**.
