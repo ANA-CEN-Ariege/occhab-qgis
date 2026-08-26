@@ -48,6 +48,48 @@ def coordonnees_wgs84(geojson):
     return parcourir(geojson.get("coordinates"))
 
 
+#: Champs qu'une MISE À JOUR envoie **même vides**, pour qu'un champ effacé dans
+#: QGIS le soit aussi sur GeoNature.
+#:
+#: Le serveur charge le payload avec `unknown=EXCLUDE` et n'écrit que les clés
+#: reçues : une clé absente laisse la colonne telle quelle. Retirer les valeurs
+#: nulles rendait donc tout effacement impossible — le champ repassait à
+#: « non renseigné » en local, GeoNature gardait l'ancienne valeur, et la
+#: synchronisation se déclarait réussie. Cas rencontré sur « Habitat d'intérêt
+#: communautaire », mais la règle valait pour chaque champ facultatif.
+#:
+#: N'y figurent que les colonnes que GeoNature accepte à NULL. En sont exclus :
+#: les identifiants (`id_station`, `id_habitat`, `unique_id_sinp_hab`), qu'un
+#: null détacherait de leur enregistrement serveur, et les colonnes NOT NULL
+#: (`id_dataset`, `date_min`, `date_max`, `cd_hab`, `nom_cite`,
+#: `id_nomenclature_collection_technique`), qu'un null ferait rejeter.
+EFFACABLES_STATION = frozenset({
+    "station_name", "observers_txt", "altitude_min", "altitude_max",
+    "depth_min", "depth_max", "area", "comment",
+    "id_nomenclature_exposure", "id_nomenclature_area_surface_calculation",
+    "id_nomenclature_geographic_object", "id_nomenclature_type_sol",
+    "id_nomenclature_type_mosaique_habitat", "observers",
+})
+EFFACABLES_HABITAT = frozenset({
+    "determiner", "recovery_percentage", "technical_precision",
+    "id_nomenclature_determination_type", "id_nomenclature_abundance",
+    "id_nomenclature_sensitivity", "id_nomenclature_community_interest",
+})
+
+
+def _sans_vides(champs, effacables):
+    """Retirer les valeurs vides, sauf celles qui effacent un champ côté serveur.
+
+    `effacables` est vide à la création : rien n'y est à effacer, et omettre un
+    champ laisse GeoNature appliquer ses valeurs par défaut (nature de l'objet
+    géographique, type de sol…), ce qu'un null explicite empêcherait.
+    """
+    return {
+        cle: valeur for cle, valeur in champs.items()
+        if valeur not in (None, []) or cle in effacables
+    }
+
+
 #: Couples min/max contraints côté GeoNature (`t_stations_altitude_max`,
 #: `t_stations_depth_max`) : un maximum inférieur au minimum y est rejeté.
 COUPLES_MIN_MAX = (
@@ -140,8 +182,13 @@ def build_station_payload(station, habitats, observers, geom_geojson):
             {"id_role": o["id_role"]} for o in observers if o.get("id_role")
         ],
     }
-    # On n'envoie pas les clés à None ni la liste d'observateurs vide.
-    properties = {k: v for k, v in properties.items() if v not in (None, [])}
+    # Création : on n'envoie ni les clés à None ni la liste d'observateurs vide.
+    # Mise à jour : les champs facultatifs partent même vides, sinon rien ne
+    # s'efface jamais côté serveur (cf. EFFACABLES_STATION).
+    properties = _sans_vides(
+        properties,
+        EFFACABLES_STATION if station.get("id_station") else frozenset(),
+    )
     return {
         "type": "Feature",
         "geometry": geom_geojson,
@@ -176,7 +223,10 @@ def _habitat_payload(habitat):
             "id_nomenclature_community_interest"
         ),
     }
-    return {k: v for k, v in fields.items() if v is not None}
+    # Un habitat sans `id_habitat` est une création : rien à y effacer.
+    return _sans_vides(
+        fields, EFFACABLES_HABITAT if habitat.get("id_habitat") else frozenset()
+    )
 
 
 def extract_id_station(response):

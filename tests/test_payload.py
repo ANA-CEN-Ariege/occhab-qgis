@@ -31,12 +31,87 @@ def test_build_station_payload_structure():
     assert props["date_min"] == "2025-05-07"
     assert props["observers"] == [{"id_role": 5}]
     assert props["habitats"][0]["cd_hab"] == 10
-    assert "comment" not in props  # les valeurs None sont retirées
+    # Station déjà sur le serveur : un commentaire vide part explicitement à
+    # null, sans quoi l'ancien resterait en place (cf. tests d'effacement).
+    assert props["comment"] is None
 
 
 def test_build_station_payload_drops_empty_observers():
     feature = p.build_station_payload({"id_dataset": 3}, [], [], None)
     assert "observers" not in feature["properties"]
+
+
+def test_creation_ne_transmet_aucune_valeur_vide():
+    """À la création, les champs vides sont omis : GeoNature applique ses défauts."""
+    station = {"id_dataset": 3, "station_name": None, "comment": None}
+    habitats = [{"cd_hab": 10, "nom_cite": "h", "determiner": None}]
+
+    props = p.build_station_payload(station, habitats, [], None)["properties"]
+
+    assert "station_name" not in props
+    assert "comment" not in props
+    assert "id_nomenclature_type_sol" not in props
+    assert "determiner" not in props["habitats"][0]
+
+
+def test_mise_a_jour_efface_un_champ_vide():
+    """Un champ vidé dans QGIS doit partir à null, sinon rien ne s'efface jamais.
+
+    Le serveur n'écrit que les clés reçues : une clé retirée du payload laissait
+    la colonne à sa valeur d'avant. « Habitat d'intérêt communautaire » effacé
+    dans le tableau réapparaissait ainsi intact dans GeoNature, la synchro se
+    déclarant réussie.
+    """
+    station = {"id_station": 42, "id_dataset": 3, "station_name": None,
+               "id_nomenclature_type_sol": None}
+    habitats = [{
+        "id_habitat": 7, "cd_hab": 10, "nom_cite": "h",
+        "id_nomenclature_community_interest": None, "determiner": None,
+    }]
+
+    props = p.build_station_payload(station, habitats, [], None)["properties"]
+
+    assert props["station_name"] is None
+    assert props["id_nomenclature_type_sol"] is None
+    habitat = props["habitats"][0]
+    assert habitat["id_nomenclature_community_interest"] is None
+    assert habitat["determiner"] is None
+
+
+def test_mise_a_jour_ne_met_jamais_les_identifiants_a_null():
+    """Un null sur ces clés détacherait la station de son enregistrement serveur
+    ou serait rejeté par une colonne NOT NULL."""
+    station = {"id_station": 42, "id_dataset": 3, "date_min": None}
+    habitats = [{"id_habitat": 7, "cd_hab": 10, "nom_cite": "h",
+                 "unique_id_sinp_hab": None,
+                 "id_nomenclature_collection_technique": None}]
+
+    props = p.build_station_payload(station, habitats, [], None)["properties"]
+
+    assert "date_min" not in props
+    habitat = props["habitats"][0]
+    assert "unique_id_sinp_hab" not in habitat
+    assert "id_nomenclature_collection_technique" not in habitat
+
+
+def test_habitat_neuf_dans_une_station_connue_reste_une_creation():
+    """Sans `id_habitat`, l'habitat est créé : ses champs vides restent omis."""
+    station = {"id_station": 42, "id_dataset": 3}
+    habitats = [{"cd_hab": 10, "nom_cite": "h", "determiner": None}]
+
+    habitat = p.build_station_payload(
+        station, habitats, [], None
+    )["properties"]["habitats"][0]
+
+    assert "determiner" not in habitat
+
+
+def test_mise_a_jour_efface_les_observateurs():
+    station = {"id_station": 42, "id_dataset": 3}
+
+    props = p.build_station_payload(station, [], [], None)["properties"]
+
+    assert props["observers"] == []
 
 
 def test_extract_id_station():
