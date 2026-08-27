@@ -400,6 +400,13 @@ renseignés.
 > Certains champs (type de sol, mosaïque…) ne s'affichent que si votre instance
 > GeoNature les propose. **Surface** et **altitude** sont calculées automatiquement.
 
+> **Nature d'objet géographique** part sur **« Ne sait pas »** : GeoNature exige
+> une valeur pour ce champ, il ne peut donc pas rester vide. Vous pouvez en
+> changer, mais pas le vider — c'est le seul champ que « Modifier les lignes
+> sélectionnées » ne propose pas d'effacer. Sur les stations saisies avant la
+> 0.11.7, il peut s'afficher vide : la valeur du serveur revient à la première
+> synchronisation.
+
 ### Étape 3 — Ajouter un ou plusieurs habitats (facultatif)
 
 L'habitat n'est **pas obligatoire** : vous pouvez enregistrer une station sans

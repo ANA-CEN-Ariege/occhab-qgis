@@ -79,18 +79,21 @@ G_MESURES = "mesures"
 # `cellule` : modifiable dans une cellule de la table. Distinct de `masse` — les
 #   observateurs sont une liste multi-valuée, intenable dans une cellule mais
 #   parfaitement modifiable en lot. Confondre les deux les rendait intouchables.
+# `effacable` : la colonne GeoNature accepte NULL. À faux, l'interface ne propose
+#   plus de vider le champ — la contrainte NOT NULL du serveur ferait rejeter la
+#   station, et une entrée « vider » qui n'efface rien est un mensonge.
 Champ = namedtuple(
     "Champ",
     "cle niveau libelle type stockage groupe referentiel nomenclature masse "
-    "cellule lecture_seule largeur",
+    "cellule lecture_seule effacable largeur",
 )
 
 
 def _champ(cle, niveau, libelle, type_, stockage, groupe, referentiel=None,
            nomenclature=None, masse=True, cellule=True, lecture_seule=False,
-           largeur=120):
+           effacable=True, largeur=120):
     return Champ(cle, niveau, libelle, type_, stockage, groupe, referentiel,
-                 nomenclature, masse, cellule, lecture_seule, largeur)
+                 nomenclature, masse, cellule, lecture_seule, effacable, largeur)
 
 
 #: Identifiant de la station sur GeoNature. Il vaut mieux qu'un numéro d'ordre
@@ -175,8 +178,11 @@ CHAMPS = [
     _champ("id_nomenclature_area_surface_calculation", STATION,
            "Méthode de surface", NOMENCLATURE, COLONNE, G_MESURES,
            nomenclature="surface_method", largeur=150),
+    # `pr_occhab.t_stations.id_nomenclature_geographic_object` est NOT NULL :
+    # on peut en changer la valeur, jamais la retirer (cf. `effacable`).
     _champ("id_nomenclature_geographic_object", STATION, "Nature objet géo.",
-           NOMENCLATURE, COLONNE, G_MESURES, nomenclature="geo_object", largeur=140),
+           NOMENCLATURE, COLONNE, G_MESURES, nomenclature="geo_object",
+           effacable=False, largeur=140),
     _champ("id_nomenclature_type_sol", STATION, "Type de sol", NOMENCLATURE, COLONNE,
            G_MESURES, nomenclature="type_sol", largeur=130),
     _champ("id_nomenclature_type_mosaique_habitat", STATION, "Mosaïque (OccHab)",

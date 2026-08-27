@@ -1042,9 +1042,18 @@ class OccHabDockWidget(QDockWidget):
 
     def _station_defaults(self):
         defaults = self._default_ids(STATION_NOMENCLATURES)
-        # Champs laissés « non renseigné » par défaut (placeholder).
-        for key in ("geo_object", "type_sol", "mosaique"):
+        # Champs facultatifs, laissés « non renseigné » par défaut (placeholder).
+        for key in ("type_sol", "mosaique"):
             defaults.pop(key, None)
+        # Nature de l'objet géographique (NOT NULL côté serveur) : défaut
+        # « Ne sait pas » (cd NSP) si l'instance sert cette valeur, sinon son
+        # propre défaut. Laisser le champ vide n'était pas tenable : la station
+        # partait à la création sans la clé, GeoNature posait sa valeur, et la
+        # copie locale restait vide — la mise à jour suivante la renvoyait à null
+        # et se faisait rejeter par la contrainte.
+        ne_sait_pas = self._nomenclature_id_by_cd("NAT_OBJ_GEO", "NSP")
+        if ne_sait_pas is not None:
+            defaults["geo_object"] = ne_sait_pas
         return defaults
 
     def _habitat_defaults(self):
@@ -3453,6 +3462,7 @@ class OccHabDockWidget(QDockWidget):
         from ..api.geonature_client import GeoNatureAPIError
         from ..api.payload import (
             build_station_payload,
+            combler_defauts_serveur,
             extract_id_station,
             parse_server_station,
             server_fingerprint,
@@ -3592,17 +3602,28 @@ class OccHabDockWidget(QDockWidget):
                 else:  # première synchro → création
                     response = self.client.create_station(payload)
                     id_station = extract_id_station(response)
-                # Rafraîchir l'empreinte serveur (best-effort) pour les conflits futurs.
-                snapshot = None
+                # Relire la station envoyée (best-effort) : rafraîchit l'empreinte
+                # pour les conflits futurs, et récupère au passage les valeurs que
+                # GeoNature a posées lui-même sur les champs que nous n'envoyons
+                # pas (nature de l'objet géographique, type de sol…). Sans cela la
+                # colonne locale reste vide et affiche « non renseigné » alors que
+                # la station en porte une sur le serveur.
+                snapshot, combles = None, {}
                 try:
-                    snapshot = server_fingerprint(
-                        *parse_server_station(self.client.get_station(id_station))
+                    srv, srv_habitats, srv_observers = parse_server_station(
+                        self.client.get_station(id_station)
                     )
+                    snapshot = server_fingerprint(srv, srv_habitats, srv_observers)
+                    combles = combler_defauts_serveur(full, srv)
                 except Exception:  # noqa: BLE001
-                    snapshot = None
+                    snapshot, combles = None, {}
                 self.db.mark_station_synced(
                     station["id"], id_station, server_snapshot=snapshot
                 )
+                if combles:
+                    # Après `mark_station_synced` : `update_station` ne touche pas
+                    # `sync_status`, la station reste « synchronisée ».
+                    self.db.update_station(station["id"], **combles)
                 ok += 1
                 if recreated:
                     orphans_recreated += 1

@@ -94,6 +94,64 @@ def test_mise_a_jour_ne_met_jamais_les_identifiants_a_null():
     assert "id_nomenclature_collection_technique" not in habitat
 
 
+def test_mise_a_jour_n_efface_jamais_la_nature_d_objet_geographique():
+    """`t_stations.id_nomenclature_geographic_object` est NOT NULL.
+
+    Le DEFAULT posé côté serveur n'en dispense pas : il ne joue que sur une
+    colonne ABSENTE de l'UPDATE, jamais contre un null explicite — que le schéma
+    laisse passer (le modèle la donne pour `Optional`) et que la base rejette en
+    500. Vide en local veut donc dire « ne pas y toucher ».
+    """
+    station = {"id_station": 42, "id_dataset": 3,
+               "id_nomenclature_geographic_object": None}
+
+    props = p.build_station_payload(station, [], [], None)["properties"]
+
+    assert "id_nomenclature_geographic_object" not in props
+
+
+def test_mise_a_jour_transmet_la_nature_d_objet_geographique_renseignee():
+    """Non effaçable ne veut pas dire non modifiable."""
+    station = {"id_station": 42, "id_dataset": 3,
+               "id_nomenclature_geographic_object": 614}
+
+    props = p.build_station_payload(station, [], [], None)["properties"]
+
+    assert props["id_nomenclature_geographic_object"] == 614
+
+
+def test_combler_defauts_serveur_ne_rend_que_les_trous():
+    """Après un envoi, on récupère ce que GeoNature a posé sur les champs omis.
+
+    Uniquement les colonnes restées vides : recopier la station entière
+    ramènerait le commentaire serveur avec son bloc ANA-EVAL et écraserait
+    `validation_status`, dont la colonne locale fait foi.
+    """
+    locale = {
+        "id_nomenclature_geographic_object": None,
+        "id_nomenclature_type_sol": 475,
+        "comment": "note locale",
+        "validation_status": "valide",
+    }
+    serveur = {
+        "id_nomenclature_geographic_object": 614,
+        "id_nomenclature_type_sol": 999,
+        "comment": "[ANA-EVAL] …",
+        "validation_status": "brouillon",
+    }
+
+    assert p.combler_defauts_serveur(locale, serveur) == {
+        "id_nomenclature_geographic_object": 614
+    }
+
+
+def test_combler_defauts_serveur_sans_valeur_serveur():
+    """`parse_server_station` retire les clés nulles : rien à combler."""
+    locale = {"id_nomenclature_geographic_object": None}
+
+    assert p.combler_defauts_serveur(locale, {}) == {}
+
+
 def test_habitat_neuf_dans_une_station_connue_reste_une_creation():
     """Sans `id_habitat`, l'habitat est créé : ses champs vides restent omis."""
     station = {"id_station": 42, "id_dataset": 3}

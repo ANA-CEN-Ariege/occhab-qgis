@@ -4,6 +4,7 @@
 """Tests du registre de champs (module pur `champs`)."""
 import champs as ch
 import eval_fields as ef
+import payload
 import referentiels as ref
 
 
@@ -41,6 +42,19 @@ def test_champs_a_referentiel_bien_appareilles():
             assert champ.referentiel, champ.cle
         if champ.type == ch.NOMENCLATURE:
             assert champ.nomenclature, champ.cle
+
+
+def test_un_champ_non_effacable_ne_part_jamais_a_null():
+    """Le registre et le payload doivent dire la même chose.
+
+    Les deux listes ont divergé une fois : `id_nomenclature_geographic_object`
+    était rangé parmi les effaçables alors que sa colonne est NOT NULL, et toute
+    mise à jour d'une station au champ vide se faisait rejeter en 500.
+    """
+    non_effacables = {c.cle for c in ch.du_niveau(ch.STATION) if not c.effacable}
+
+    assert non_effacables, "aucun champ non effaçable : le drapeau ne sert plus"
+    assert not (non_effacables & payload.EFFACABLES_STATION)
 
 
 def test_modifiables_en_masse_excluent_le_calcule_et_le_technique():

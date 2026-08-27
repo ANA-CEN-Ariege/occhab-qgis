@@ -62,13 +62,23 @@ def coordonnees_wgs84(geojson):
 #: les identifiants (`id_station`, `id_habitat`, `unique_id_sinp_hab`), qu'un
 #: null détacherait de leur enregistrement serveur, et les colonnes NOT NULL
 #: (`id_dataset`, `date_min`, `date_max`, `cd_hab`, `nom_cite`,
-#: `id_nomenclature_collection_technique`), qu'un null ferait rejeter.
+#: `id_nomenclature_collection_technique`, `id_nomenclature_geographic_object`),
+#: qu'un null ferait rejeter.
+#:
+#: `id_nomenclature_geographic_object` mérite un mot : la colonne est déclarée
+#: `integer NOT NULL` (`pr_occhab.t_stations`), et le DEFAULT posé côté serveur
+#: n'en dispense pas — un DEFAULT ne s'applique qu'à une colonne ABSENTE de
+#: l'UPDATE, jamais contre un null explicite. Le modèle SQLAlchemy la donne
+#: pourtant pour `Optional`, si bien que le schéma laisse passer le null et que
+#: la violation n'éclate qu'en base, en 500 illisible. Vide en local veut donc
+#: dire « ne pas y toucher » : la clé n'est pas envoyée, GeoNature garde sa
+#: valeur. Le formulaire, lui, pose « Ne sait pas » sur les stations neuves.
 EFFACABLES_STATION = frozenset({
     "station_name", "observers_txt", "altitude_min", "altitude_max",
     "depth_min", "depth_max", "area", "comment",
     "id_nomenclature_exposure", "id_nomenclature_area_surface_calculation",
-    "id_nomenclature_geographic_object", "id_nomenclature_type_sol",
-    "id_nomenclature_type_mosaique_habitat", "observers",
+    "id_nomenclature_type_sol", "id_nomenclature_type_mosaique_habitat",
+    "observers",
 })
 EFFACABLES_HABITAT = frozenset({
     "determiner", "recovery_percentage", "technical_precision",
@@ -87,6 +97,31 @@ def _sans_vides(champs, effacables):
     return {
         cle: valeur for cle, valeur in champs.items()
         if valeur not in (None, []) or cle in effacables
+    }
+
+
+#: Colonnes que GeoNature renseigne lui-même quand le plugin ne les envoie pas
+#: (DEFAULT de colonne). Sans relecture, la copie locale les garde vides à vie :
+#: le champ s'affiche « non renseigné » dans QGIS alors que la station en porte
+#: une valeur sur le serveur.
+COMBLABLES_STATION = (
+    "id_nomenclature_geographic_object", "id_nomenclature_type_sol",
+    "id_nomenclature_type_mosaique_habitat",
+)
+
+
+def combler_defauts_serveur(locale, serveur):
+    """Colonnes vides en local que le serveur, lui, a renseignées.
+
+    Module pur, appelé après un envoi réussi sur le détail déjà rechargé pour
+    l'empreinte. Ne rend QUE les trous : recopier la station entière ramènerait
+    le commentaire serveur avec son bloc ANA-EVAL et écraserait
+    `validation_status`, dont la colonne locale fait foi.
+    """
+    return {
+        cle: serveur[cle]
+        for cle in COMBLABLES_STATION
+        if not locale.get(cle) and serveur.get(cle) is not None
     }
 
 

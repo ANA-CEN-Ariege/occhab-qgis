@@ -752,7 +752,10 @@ class AppliquerDialog(QDialog):
             return edit
         if champ.type in (ch.CODE, ch.NOMENCLATURE, ch.JDD):
             widget = QComboBox()
-            widget.addItem("— vider —", None)
+            # Champ non effaçable (colonne NOT NULL côté GeoNature) : pas d'entrée
+            # « vider », qui promettrait un effacement que le serveur refuse.
+            if champ.effacable:
+                widget.addItem("— vider —", None)
             for valeur, libelle in self.contexte.items(champ):
                 widget.addItem(libelle, valeur)
             return widget
@@ -919,6 +922,10 @@ class AppliquerDialog(QDialog):
                 texte = widget.text().strip()
                 valeur = ([p.strip() for p in texte.split(";") if p.strip()] or None
                           if champ.type == ch.LISTE_TEXTE else texte or None)
+            if valeur is None and not champ.effacable:
+                # Rien à proposer (nomenclatures non chargées, hors ligne) : mieux
+                # vaut ignorer le champ que d'écrire un NULL que le serveur refuse.
+                continue
             choix[cle] = valeur
         return choix
 
