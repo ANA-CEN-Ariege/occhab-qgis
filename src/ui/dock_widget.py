@@ -381,7 +381,7 @@ class OccHabDockWidget(QDockWidget):
         self.btn_sync.clicked.connect(lambda _checked=False: self.synchronize())
         self.btn_refresh = QPushButton("Rafraîchir")
         self.btn_refresh.setToolTip("Recharger les stations locales et le contexte serveur.")
-        self.btn_refresh.clicked.connect(self.refresh)
+        self.btn_refresh.clicked.connect(self._on_refresh_clicked)
         row_srv.addWidget(self.btn_sync, 1)
         row_srv.addWidget(self.btn_refresh)
         layout.addLayout(row_srv)
@@ -2611,6 +2611,19 @@ class OccHabDockWidget(QDockWidget):
             # synchro impose la version locale (sans re-détecter le conflit).
             self.db.set_server_snapshot(station_id, None)
         self.refresh()
+
+    def _on_refresh_clicked(self):
+        """Bouton « Rafraîchir » : stations locales ET contexte serveur.
+
+        `refresh()` seul ne relit que la base locale ; il est appelé après
+        chaque édition et ne doit surtout pas partir sur le réseau à chaque
+        fois. Le bouton, lui, est un geste explicite de l'utilisateur : c'est
+        le seul endroit d'où redemander les stations du serveur sans qu'on ait
+        changé de JDD — ce que promettaient déjà l'infobulle et le message de
+        « Récupérer depuis la carte », sans que personne ne le fasse.
+        """
+        self.refresh()
+        self._load_server_stations()
 
     # --------------------------------------------------------- tableau
     def refresh(self):
