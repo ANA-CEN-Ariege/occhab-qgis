@@ -3,7 +3,7 @@ name=OccHab GeoNature
 qgisMinimumVersion=3.28
 qgisMaximumVersion=3.99
 description=Offline-first data entry for GeoNature's OccHab module (habitat stations) from QGIS, with local SQLite storage and synchronisation to the GeoNature REST API.
-version=0.11.6
+version=0.11.7
 author=Cédric Roy
 email=it@ariegenature.fr
 license=GPL-3.0-or-later
@@ -32,7 +32,31 @@ icon=resources/icons/occhab.svg
 experimental=True
 deprecated=False
 
-changelog=0.11.6 - Recouvrement : la colonne native fait foi.
+changelog=0.11.7 - Correction : la synchronisation echouait sur la nature de l'objet geographique.
+    Depuis la 0.11.5, mettre a jour une station dont ce champ etait vide en
+    local faisait rejeter l'envoi par GeoNature : la colonne
+    id_nomenclature_geographic_object est NOT NULL, et la valeur par defaut
+    posee cote serveur n'en dispense pas — elle ne s'applique qu'a une colonne
+    absente de la requete, jamais contre un null explicite. L'erreur restait
+    muette : la synchronisation comptait un echec sans dire lequel.
+    Le champ etait vide sur presque toutes les stations creees depuis QGIS : le
+    formulaire ne le prerenseignait pas, la creation omettait la cle, GeoNature
+    posait sa propre valeur, et la copie locale ne la relisait jamais.
+    Le formulaire propose desormais « Ne sait pas » par defaut sur une station
+    neuve. Un champ vide en local n'efface plus rien : la cle n'est pas envoyee
+    et GeoNature garde sa valeur — aucune donnee du serveur n'est ecrasee, les
+    stations bloquees repartent telles quelles. Apres chaque envoi reussi, la
+    copie locale recupere les valeurs que le serveur a posees lui-meme (nature
+    de l'objet geographique, type de sol, mosaique) au lieu d'afficher
+    « non renseigne » a vie.
+    « Modifier les lignes selectionnees » ne propose plus de vider ce champ : la
+    base l'interdit. Les autres champs restent effacables, la correction de la
+    0.11.5 tient.
+    Corrige aussi « Rafraichir » : le bouton ne rechargeait que la base locale,
+    alors que son infobulle promettait « les stations locales et le contexte
+    serveur ». Une fois le JDD choisi, plus rien ne redemandait les stations du
+    serveur, sauf a changer de JDD et revenir, ou a synchroniser.
+    0.11.6 - Recouvrement : la colonne native fait foi.
     Le recouvrement etait ecrit a la fois dans la colonne OccHab
     recovery_percentage et dans le bloc ANA-EVAL, et le bloc l'emportait a la
     relecture. Sans consequence tant que GeoNature n'affiche pas le champ ; le
