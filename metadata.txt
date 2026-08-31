@@ -3,7 +3,7 @@ name=OccHab GeoNature
 qgisMinimumVersion=3.28
 qgisMaximumVersion=3.99
 description=Offline-first data entry for GeoNature's OccHab module (habitat stations) from QGIS, with local SQLite storage and synchronisation to the GeoNature REST API.
-version=0.11.9
+version=0.12.0
 author=Cédric Roy
 email=it@ariegenature.fr
 license=GPL-3.0-or-later
@@ -32,7 +32,31 @@ icon=resources/icons/occhab.svg
 experimental=True
 deprecated=False
 
-changelog=0.11.9 - Correction : l'accrochage ignorait les stations recemment saisies.
+changelog=0.12.0 - Documentation remise en accord avec le plugin, et trois reglages morts retires.
+    Le guide et le README avaient pris du retard : 79 divergences avec le code,
+    dont une douzaine qui induisaient en erreur. Le guide envoyait vers une
+    action de menu supprimee depuis la 0.11.0, et promettait une copie de
+    sauvegarde systematique avant modification en lot alors qu'elle ne se
+    declenche qu'a partir de cinq stations — en dessous, on croyait avoir une
+    marche arriere qu'on n'avait pas. Le README decrivait encore le recouvrement
+    comme vivant dans le bloc ANA-EVAL, alors que la colonne native fait foi
+    depuis la 0.11.6.
+    La reparation automatique des geometries, arrivee en 0.11.8, n'etait
+    documentee nulle part alors qu'elle modifie la donnee locale a la
+    synchronisation. Sont aussi decrites desormais : la synchronisation d'une
+    seule station par clic droit, le retablissement de la geometrie precedente,
+    l'allegement des correspondances anciennes, et l'affichage des motifs
+    d'echec.
+    Le README recoit un sommaire, qu'il n'avait pas a 2 500 lignes, et sa
+    section la plus longue est decoupee en trois. Les sections « bis / ter /
+    quater » des deux documents sont renumerotees.
+    Cote reglages, trois cles jamais lues sont retirees du config.json :
+    « database », qui laissait croire qu'il fallait renseigner un acces
+    PostgreSQL alors que tout passe par l'API REST ; « auto_sync_interval », qui
+    promettait une synchronisation automatique inexistante ; et « projection »,
+    sans objet puisque tout le circuit est en EPSG:4326. Un config.json existant
+    n'a rien a migrer.
+    0.11.9 - Correction : l'accrochage ignorait les stations recemment saisies.
     L'accrochage de QGIS ne prenait pas les stations ajoutees depuis le dernier
     rafraichissement de la carte. Le symptome etait trompeur : il « se mettait a
     marcher » une fois la station synchronisee. La synchronisation n'y etait pour
