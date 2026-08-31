@@ -217,6 +217,14 @@ class StationLayerManager:
         if items:
             provider.addFeatures(self._features(layer, items))
         layer.updateExtents()
+        # Les entités sont écrites DIRECTEMENT dans le provider : QgsVectorLayer
+        # n'émet alors aucun des signaux auxquels l'index d'accrochage
+        # (QgsPointLocator) est abonné, et ni updateExtents() ni triggerRepaint()
+        # ne l'invalident. Le canevas redessinait donc les nouvelles stations
+        # pendant que l'accrochage travaillait encore sur l'ancien jeu : une
+        # station fraîchement saisie ne s'accrochait pas, et une station
+        # supprimée s'accrochait encore, à l'endroit qu'elle occupait.
+        layer.emitDataChanged()
         layer.triggerRepaint()
 
     def _ensure_layer(self, geom_type, create):
