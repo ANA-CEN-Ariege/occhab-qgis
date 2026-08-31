@@ -23,12 +23,12 @@ QGIS. Il couvre l'installation, la première configuration et l'usage quotidien.
 10. [Supprimer : base locale ou serveur](#10-supprimer--base-locale-ou-serveur)
 11. [Travailler hors-ligne](#11-travailler-hors-ligne)
 12. [Sauvegarde et export des données](#12-sauvegarde-et-export-des-données)
-13. [Les champs « enjeu / état / zone humide / recouvrement »](#13-les-champs-enjeu--état--zone-humide--recouvrement)
-13 bis. [Brouillon, validé, et la table des stations](#13-bis-brouillon-validé-et-la-table-des-stations)
-13 ter. [Sortir une carte : la mise en page](#13-ter-sortir-une-carte--la-mise-en-page)
-13 quater. [Le catalogue des végétations et les correspondances](#13-quater-le-catalogue-des-végétations-et-les-correspondances)
-14. [Dépannage (FAQ)](#14-dépannage-faq)
-15. [Glossaire](#15-glossaire)
+13. [Les champs « enjeu / état / zone humide / recouvrement »](#13-les-champs--enjeu--état--zone-humide--recouvrement-)
+14. [Brouillon, validé, et la table des stations](#14-brouillon-validé-et-la-table-des-stations)
+15. [Sortir une carte : la mise en page](#15-sortir-une-carte--la-mise-en-page)
+16. [Le catalogue des végétations et les correspondances](#16-le-catalogue-des-végétations-et-les-correspondances)
+17. [Dépannage (FAQ)](#17-dépannage-faq)
+18. [Glossaire](#18-glossaire)
 
 ---
 
@@ -61,7 +61,7 @@ Concrètement, vous pouvez :
   éviter les doublons ;
 - **cartographier** : charger une couche d'habitats du serveur, colorée par
   habitat et regroupée par grand milieu, puis en tirer une **planche imprimable**
-  à partir des gabarits de l'ANA (voir §13 ter).
+  à partir des gabarits de l'ANA (voir §15).
 
 ---
 
@@ -70,7 +70,7 @@ Concrètement, vous pouvez :
 - **QGIS 3.28 ou plus récent** (Windows, Linux ou macOS).
 - Un **compte GeoNature** de votre instance (ex. celle de l'ANA-CEN Ariège), avec
   les **droits sur le module OccHab** (au minimum *Lire* et *Créer* ; *Modifier*
-  et *Supprimer* pour éditer/effacer vos données). Voir §14 si vous obtenez une
+  et *Supprimer* pour éditer/effacer vos données). Voir §17 si vous obtenez une
   erreur de permissions.
 - L'**URL de l'API GeoNature** de votre instance (elle ressemble à
   `https://votre-serveur/geonature/api`). Demandez-la à votre administrateur.
@@ -146,10 +146,11 @@ Utile hors ligne, en avant-première, ou si le dépôt n'est pas accessible :
 > ⏸ **Voie mise en attente le temps de l'expérimentation.**
 > ~~L'extension est aussi publiée sur le dépôt officiel des extensions QGIS,
 > présent d'origine dans le gestionnaire.~~
-> La version qui s'y trouve (**0.5.2**) est **plus ancienne** que celle du dépôt
-> de l'ANA (**0.7.0**) : ne l'installez pas depuis là, vous n'auriez ni la mise
-> en page cartographique, ni le copier-coller de polygone, ni les corrections de
-> saisie. Utilisez la
+> La version qui s'y trouve (**0.5.2**) a plusieurs années de retard sur celle du
+> dépôt de l'ANA : ne l'installez pas depuis là, vous n'auriez ni la mise en page
+> cartographique, ni le catalogue des végétations et l'arbitrage des
+> correspondances, ni les cartes thématiques (enjeux, plantes exotiques), ni le
+> copier-coller de polygone, ni les corrections de saisie. Utilisez la
 > **méthode A**. Cette voie sera rouverte quand l'extension sortira de sa phase
 > d'expérimentation.
 
@@ -173,9 +174,10 @@ Deux cas où la reconnexion n'a pas lieu, et c'est voulu :
 - **Vous êtes hors ligne.** Le plugin démarre déconnecté, ce qui est son mode de
   travail normal : vous saisissez, vous synchroniserez plus tard.
 
-Pour désactiver la reconnexion automatique, mettez `geonature.reconnexion_auto`
+Pour désactiver la reconnexion automatique, ajoutez `geonature.reconnexion_auto`
 à `false` dans le fichier `config.json` du plugin (menu **Base locale… ▸ Ouvrir
-le dossier**).
+le dossier**) : la clé n'y figure pas d'origine, il faut l'écrire à la main dans
+le bloc `geonature`.
 
 ### Ouvrir le plugin
 
@@ -196,19 +198,19 @@ passe).
 1. Cliquez sur **« Connexion GeoNature… »** dans le dock.
 2. Renseignez l'**URL de l'API** GeoNature (ex.
    `https://votre-serveur/geonature/api`).
-3. En face de **Configuration d'authentification**, cliquez sur **« + »** pour en
-   créer une :
+3. En face d'**Authentification QGIS**, cliquez sur **« + »** pour créer une
+   configuration :
    - **Type** : *Authentification de base* (*Basic*).
    - **Nom** : par ex. `GeoNature ANA`.
    - **Nom d'utilisateur** / **Mot de passe** : vos identifiants GeoNature.
    - Enregistrez. (QGIS peut demander de définir un **mot de passe principal**
      la première fois — c'est le coffre-fort qui chiffre vos identifiants.)
-4. Sélectionnez cette configuration, puis **validez**.
+4. Sélectionnez cette configuration, puis cliquez sur **« Se connecter »**.
 
 ### Étape 2 — Se connecter
 
-Après validation, l'en-tête du dock affiche **« Connecté : Prénom Nom
-(identifiant, id_role=…) »**. Le chargement des **JDD**, des listes déroulantes
+Une fois connecté, l'en-tête du dock affiche **« ✓ Prénom Nom (identifiant,
+id_role=…) »**, suivi du jeu de données courant. Le chargement des **JDD**, des listes déroulantes
 (nomenclatures), du référentiel HABREF, des observateurs et de la couche serveur
 se fait automatiquement.
 
@@ -229,11 +231,11 @@ vos **stations locales** avec leurs actions, puis le bloc **Serveur** :
 │─────────────────────────────────────────────────────────│
 │ Mes stations                                    7 locales │
 │ [✏ Éditer] [⬡ Géométrie ▾] [🔍 Zoom] [▦ Tableau] [🗑 Suppr.]│
-│  ┌────────────────────┬───────────┬─────────────────┐     │
-│  │ Habitat(s)         │ Date      │ Statut · synchro│     │
-│  │ 41.711 — Bois de…  │ 2024-06-21│ ✔ Validée       │     │
-│  │                    │           │ ✓ Synchronisée  │     │
-│  └────────────────────┴───────────┴─────────────────┘     │
+│  ┌──────────┬─────────────────┬───────────┬──────────────┐│
+│  │ id_station│ Habitat(s)     │ Date      │ Statut·synchro││
+│  │ 2616      │ 41.711 — Bois… │ 2024-06-21│ ✔ Validée     ││
+│  │           │                │           │ ✓ Synchronisée││
+│  └──────────┴─────────────────┴───────────┴──────────────┘│
 │  [＋ Nouvelle station ▾]                                  │
 │─────────────────────────────────────────────────────────│
 │ Serveur                                                   │
@@ -247,12 +249,16 @@ vos **stations locales** avec leurs actions, puis le bloc **Serveur** :
 - **Barre connexion + JDD** (repliable) : cliquez **« changer »** pour la déplier
   (se connecter, choisir le JDD, filtre « mes stations serveur ») ; elle se replie
   une fois le JDD choisi. La combo JDD est **cherchable** (tapez pour filtrer).
-- **Mes stations** : le tableau de **vos** saisies. La **barre d'action
-  au-dessus** agit sur la **ligne sélectionnée** (grisée sans sélection) :
-  *Éditer*, *Géométrie ▾*, *Zoom*, *Supprimer* (destructif). *Supprimer* accepte
-  une **multi-sélection** (Ctrl/Maj) pour effacer plusieurs stations d'un coup
-  (voir §10). Les mêmes actions sont accessibles par **clic-droit** sur une ligne,
-  et **double-clic** ouvre la station. **« ＋ Nouvelle station ▾ »** la crée (voir §6).
+- **Mes stations** : le tableau de **vos** saisies. La première colonne,
+  **id_station**, porte l'identifiant GeoNature — un tiret tant que la station
+  n'a jamais été envoyée. La **barre d'action au-dessus** agit sur la **ligne
+  sélectionnée** : *Éditer*, *Géométrie ▾*, *Supprimer* (destructif) sont grisés
+  sans sélection ; *Zoom*, lui, reste actif et cadre alors sur **l'emprise du
+  JDD**. *Supprimer* accepte une **multi-sélection** (Ctrl/Maj) pour effacer
+  plusieurs stations d'un coup (voir §10). Le **clic-droit** sur une ligne
+  reprend ces actions et en ajoute une : **« Synchroniser cette station »** (voir
+  §9). Le **double-clic** ouvre la station, et **« ＋ Nouvelle station ▾ »** la
+  crée (voir §6).
 - **Serveur** : *Synchroniser*, *Rafraîchir*, *Récupérer une station du serveur…*
   — ces actions rapatrient des données **éditables** dans votre base.
 - **Pied de panneau** : *Base locale…* (dossier, sauvegarde, exports) et
@@ -280,9 +286,8 @@ Ces deux groupes sont gérés automatiquement par le plugin : les couches sont
 en lecture seule et reconstruites à chaque rafraîchissement (la base SQLite
 locale reste la seule source de vérité). Un message s'affiche une fois par
 session lors de leur première apparition dans le panneau Couches pour le
-rappeler — évitez de les modifier, renommer, déplacer ou supprimer
-manuellement : elles seraient simplement recréées au rafraîchissement
-suivant.
+rappeler — évitez de les modifier, renommer ou déplacer manuellement : elles
+seraient simplement recréées au rafraîchissement suivant.
 
 ### La colonne « Statut · synchro »
 
@@ -320,7 +325,7 @@ Cliquez **« ＋ Nouvelle station ▾ »** et choisissez d'où vient la géomét
 - **Dessiner un polygone** / **Dessiner un point** — dessinez sur la carte : clic
   gauche pour poser les sommets (l'**accrochage** QGIS est actif, pratique pour se
   caler sur des objets existants), **clic droit** pour terminer.
-- **Copier la ou les entités sélectionnées (autre couche)** — sélectionnez d'abord
+- **Copier la ou les entités sélectionnées d'une autre couche** — sélectionnez d'abord
   une **ou plusieurs** entités dans une **autre couche** (parcellaire, ancien relevé,
   trace GPS…), puis choisissez ceci : leur forme est reprise (et reprojetée) pour la
   station.
@@ -377,9 +382,10 @@ Le formulaire est à **deux niveaux**. L'**Essentiel** est toujours visible :
 - **Nom de la station**, **dates** (début / fin).
 - **Observateur(s)** — champ à **autocomplétion** : déroulez pour parcourir la
   liste, ou **tapez** un nom pour filtrer ; l'observateur choisi s'ajoute dessous
-  (retirable par double-clic ou « Retirer »).
+  (retirable par double-clic ou par **« Retirer l'observateur sélectionné »**).
 - **Unité végétale** et **nature de l'observation** (Natura 2000).
-- **Niveau d'enjeu** / **état de conservation** (voir §13), **Commentaire**.
+- **Niveau d'enjeu** / **état de conservation** / **zone humide** (voir §13).
+- **Statut** — brouillon ou validé (voir §14) — et **Commentaire**.
 
 > **Reprise de la saisie précédente.** Dès la deuxième station, les
 > **observateurs** de la saisie précédente sont **repris automatiquement**, ainsi
@@ -391,9 +397,10 @@ Le formulaire est à **deux niveaux**. L'**Essentiel** est toujours visible :
 > station n'a été saisie, c'est l'utilisateur connecté qui est pré-ajouté comme
 > observateur.
 
-Les autres champs (**altitude**, **profondeur**, **surface**, **exposition**,
-**type de sol**, **type de mosaïque**, **nature d'objet géographique**, **échelle
-de numérisation**) sont sous **« ▸ Détails »** — cliquez pour déplier. En
+Les autres champs (**altitude** min/max, **profondeur** min/max, **type de sol**,
+**type de mosaïque d'habitats**, **échelle de numérisation**, **exposition**,
+**surface**, **méthode de calcul de la surface**, **nature objet géographique**)
+sont sous **« ▸ Détails (altitude, surface, exposition, sol…) »** — cliquez pour déplier. En
 **édition**, cette section se déplie d'elle-même si ces champs sont déjà
 renseignés.
 
@@ -423,17 +430,26 @@ ajouter, dans le formulaire :
 - **Catalogue ANA** — les propositions marquées **★ Catalogue ANA** viennent du
   *catalogue des végétations de l'Ariège* et arrivent **en tête** de liste. Elles
   apportent l'alliance **et** ses correspondances CORINE / EUNIS / Natura 2000
-  (§13 quater). Elles restent proposées **hors connexion** : le catalogue est sur
+  (§16). Elles restent proposées **hors connexion** : le catalogue est sur
   votre disque.
 - **Filtre typologie** — pour cibler la recherche (Corine, EUNIS…). Il ne
   s'applique qu'à HABREF, pas au catalogue.
 - **Déterminateur** — utilisateur connecté par défaut, saisie libre possible.
 - **Type de détermination**, **intérêt communautaire**.
-- **Technique de collecte** — **« In situ » par défaut**.
+- **Technique de collecte** — **« In situ » par défaut** — et **précision
+  technique** (texte libre).
 - **Recouvrement (%)** — pré-sélectionne automatiquement la classe d'**abondance**.
 - **Niveau d'enjeu** / **état de conservation** de l'habitat (voir §13), puis le
   **critère d'évaluation** qui le justifie et les **PEE** (plantes exotiques
   envahissantes, 3 taxons au plus séparés par « ; »).
+
+Le formulaire compte **trois sections repliables**, et non une seule :
+
+- **« ▸ Correspondances (CORINE, EUNIS, Natura 2000) »** — les équivalences dans
+  les autres typologies, reprises du catalogue ou arbitrées à la main (§16).
+- **« ▸ Natura 2000 (typicité, dynamique, restauration, remarque) »** — les quatre
+  champs d'évaluation Natura 2000.
+- **« ▸ Abondance et sensibilité »**, en bas.
 
 **Abondance** et **sensibilité** sont repliées **en bas** du formulaire, sous
 **« ▸ Abondance et sensibilité »** : l'abondance se déduit du recouvrement saisi
@@ -453,14 +469,17 @@ sans le dire.
 > de renseignements (§6, étape 1).
 
 Répétez pour chaque habitat. La **liste des habitats** de la station affiche, pour
-chacun, son **% de recouvrement**. Un garde-fou demande confirmation avant de
+chacun, son **% de recouvrement**, et sous elle un **total** : « Total : 100 % ✓ »
+quand le compte est bon, sinon « Total : 80 % — il manque 20 % » (ou
+« dépassement de … »). Rien n'est bloqué — c'est un repère, utile en mosaïque et
+pour Natura 2000. Un garde-fou demande confirmation avant de
 **retirer** un habitat. Pour en retirer **plusieurs d'un coup**, sélectionnez-les
 avec **Ctrl** (ajouter/enlever) ou **Maj** (une plage), puis **« Retirer »**.
 
 ### Étape 4 — Enregistrer
 
-Validez le formulaire : la station apparaît dans le tableau **« Mes stations
-(local) »**, identifiée par son premier habitat (ex. « 41.2 - Chênaies-charmaies
+Validez le formulaire : la station apparaît dans le tableau **« Mes stations »**,
+identifiée par son premier habitat (ex. « 41.2 - Chênaies-charmaies
 (+2) » = 3 habitats), en état **À synchroniser**. Une station **sans habitat**
 s'affiche sous son **nom** (ou « (station sans habitat) » si le nom est vide).
 
@@ -476,8 +495,9 @@ sur la carte — **double-clic** / clic avec l'outil **Identifier des entités**
 - **Géométrie** : bouton **« Géométrie ▾ »** (ou clic-droit → *Modifier la
   géométrie*) :
   - *Redessiner / éditer sur la carte* : déplacez/ajoutez/supprimez les sommets,
-    puis **Valider** (ou **Annuler**) via la barre de message. *(Pendant l'édition,
-    **Ctrl+Z** annule le dernier geste ; « Annuler » abandonne toute l'édition.)*
+    puis **« Valider la géométrie »** (ou **« Annuler »**) via la barre de message.
+    *(Pendant l'édition, l'annulation habituelle de QGIS — **Ctrl+Z** — défait le
+    dernier geste ; « Annuler » abandonne toute l'édition.)*
   - *Copier l'entité sélectionnée d'une autre couche* : remplace la géométrie par
     celle d'une entité sélectionnée dans une autre couche.
   - *Rétablir la géométrie précédente* : **annule** le dernier changement de
@@ -561,7 +581,8 @@ décodés), chargée en **couche QGIS en lecture seule**.
 1. L'**export** est celui bâti sur la vue OccHab complète : le plugin ne propose
    pas les autres exports de l'instance (synthèse, taxons, métadonnées…), dont il
    ne saurait ni filtrer ni présenter le contenu.
-2. Choisissez le **jeu de données** — celui du panneau est présélectionné.
+2. Le **jeu de données** est rappelé, sans être modifiable : c'est celui du
+   panneau (voir l'encadré ci-dessus).
 3. Choisissez la **période**. Par défaut **l'année en cours** (1ᵉʳ janvier →
    31 décembre) ; modifiable, ou décochez **« Restreindre à une période »** pour
    tout rapatrier. Sont retenues les stations dont les dates de début **et** de
@@ -572,10 +593,10 @@ décodés), chargée en **couche QGIS en lecture seule**.
 > typologies figurent dans le **tableau des stations** (colonnes « CORINE
 > biotopes (corresp.) », « EUNIS (corresp.) »…) et dans **« Modifier les lignes
 > sélectionnées… »**. Sélectionnez vos lignes, cochez la typologie, choisissez le
-> code une fois : il est écrit partout, marqué **arbitré**. Laisser le champ vide
-> **retire** la correspondance — c'est le seul moyen d'en enlever une posée par
-> erreur sur tout un lot. Les autres typologies de la même ligne ne sont jamais
-> touchées.
+> code une fois : il est écrit partout, marqué **arbitré**. Pour en **enlever** une
+> posée par erreur sur tout un lot, choisissez **« — retirer la correspondance — »**
+> en tête de la liste (dans le repli en recherche libre, c'est le champ laissé vide
+> qui retire). Les autres typologies de la même ligne ne sont jamais touchées.
 
 #### Cartographier dans une autre typologie que celle de saisie
 
@@ -606,13 +627,15 @@ export deux fois, dans deux typologies, et de les comparer.
 > Le Prodrome n'est pas dans la liste : vos déterminations y sont déjà, donc
 > **« Habitat saisi »** donne exactement cette carte-là.
 
-> **Une légende qui n'affiche qu'un code ?** Les correspondances arbitrées avant
-> la version 0.9.1 n'ont pas de libellé enregistré : la carte montre alors
-> « C1.32 » au lieu du nom de l'habitat. **« Base locale… → Compléter les
-> libellés de correspondance »** demande les libellés manquants au référentiel et
-> les inscrit. Les stations touchées repassent **« à synchroniser »** —
-> synchronisez pour que la correction parte sur GeoNature, puis rechargez
-> l'export.
+> **Une légende qui n'affiche qu'un code ?** Le libellé n'est plus enregistré
+> dans la donnée depuis la 0.11.0 : il est retrouvé à la lecture, en interrogeant
+> le référentiel HABREF. Si la carte montre « C1.32 » au lieu du nom de
+> l'habitat, c'est que ce libellé n'a pas encore été obtenu — le plugin le
+> demande au fil des ouvertures du tableau, par lots, et le garde en cache.
+> Ouvrez le tableau des stations une fois connecté, puis rechargez l'export. Pour
+> repartir de zéro (un habitat renommé dans HABREF, par exemple), utilisez
+> **« Base locale… → Recharger les libellés HABREF »**, qui oublie le cache et
+> les redemande.
 
 #### Les couleurs de la couche
 
@@ -636,7 +659,7 @@ Peu importe donc la typologie dans laquelle vous saisissez.
 > serait restée grise. Elle est désormais colorée d'après les codes Natura 2000,
 > et l'infobulle indique la typologie qui a servi (colonne `source_classe`).
 
-Reste en gris — « Habitat non rattaché » — ce qui n'a **aucune** correspondance
+Reste en gris — « Habitat non rattaché (ni EUNIS, ni CORINE, ni N2000) » — ce qui n'a **aucune** correspondance
 dans HABREF, à aucun niveau. Là, ce n'est pas un défaut d'affichage : c'est que
 le référentiel ne relie pas ce syntaxon. Les requêtes de diagnostic du README
 (§6) permettent de les compter et de les lister.
@@ -654,9 +677,10 @@ dans le panneau des couches, avec ses habitats dessous.
 |---|---|---|---|---|
 | **G** | Forêts et bois | | **D** | Tourbières et bas-marais |
 | **E** | Prairies et pelouses | | **C** | Eaux douces |
-| **F** | Landes et fruticées | | **H** | Rochers, éboulis |
-| **B** | Côtes, dunes | | **I** | Cultures et jardins |
-| **A** | Milieux marins | | **J** | Bâti, artificialisé |
+| **F** | Landes et fruticées | | **H** | Rochers, éboulis, peu végétalisé |
+| **B** | Côtes, dunes et plages | | **I** | Cultures et jardins |
+| **A** | Milieux marins | | **J** | Bâti et milieux artificialisés |
+| **X** | Complexes d'habitats | | | |
 
 La **légende ne contient que les milieux réellement présents** dans ce que vous
 avez chargé : elle se reconstruit à chaque chargement.
@@ -665,7 +689,7 @@ avez chargé : elle se reconstruit à chaque chargement.
 
 Un polygone peut porter plusieurs habitats. **Aucune convention nationale ne dit
 comment les représenter** — le guide méthodologique du MNHN normalise le modèle
-de données, pas la sémiologie. La fenêtre de chargement propose donc **deux
+de données, pas la sémiologie. La fenêtre de chargement propose donc **quatre
 représentations**, à comparer sur vos propres données :
 
 | Mode | Ce qu'on voit |
@@ -675,8 +699,9 @@ représentations**, à comparer sur vos propres données :
 | **Carte des enjeux** | une couleur par **niveau d'enjeu de la station**, et les contours des habitats par-dessus — la charte des cartes « Flore Ariège » |
 | **Carte des plantes exotiques envahissantes** | les habitats en bandes, et par-dessus **un cercle par espèce exotique** relevée, une couleur par espèce |
 
-Dans les deux cas, **chaque habitat occupe la surface de son recouvrement** : un
-50 / 30 / 20 se mesure à la règle sur la carte. Les parts sont calculées au
+Dans les deux **premiers** modes — bandes et damier —, **chaque habitat occupe la
+surface de son recouvrement** : un 50 / 30 / 20 se mesure à la règle sur la carte.
+(La carte des enjeux, elle, pose un aplat unique par polygone : voir plus bas.) Les parts sont calculées au
 chargement, y compris sur les polygones concaves, où un simple partage de la
 hauteur donnerait de fausses surfaces.
 
@@ -693,7 +718,7 @@ hauteur donnerait de fausses surfaces.
 > Chaque espèce garde sa couleur d'un chargement à l'autre, et les espèces sont
 > rangées par nom : deux cartes du même secteur se comparent.
 
-> **La carte des enjeux ne parle pas des mêmes choses** que les deux autres :
+> **La carte des enjeux ne parle pas des mêmes choses** que les autres :
 > la couleur n'y dit pas ce qui pousse, mais ce qui est en jeu. Le niveau
 > appartient à la **station**, que ses habitats se partagent — il n'y a donc ni
 > bandes ni mailles, un aplat par polygone. La légende reprend vos libellés :
@@ -752,7 +777,25 @@ Cliquez **« Synchroniser »** (vous devez être connecté). Le plugin :
 2. **envoie les créations et modifications** (les stations *À synchroniser*).
 
 Un **récapitulatif** s'affiche (« X envoyée(s), Y supprimée(s), Z échec(s) »), et
-la couche serveur est rechargée.
+la couche serveur est rechargée. **Si des stations ont échoué**, une fenêtre
+liste chacune avec le **motif renvoyé par le serveur** (les dix premières, puis
+« … (+N) ») : c'est là qu'on lit la vraie cause d'un refus, plutôt que dans le
+journal.
+
+> **Synchroniser une seule station.** Le **clic droit** sur une ligne du tableau
+> propose **« Synchroniser cette station »** (ou « Synchroniser ces N stations »
+> en multi-sélection) : seule la sélection part. C'est ce qu'il faut pour
+> **éprouver une correction sur une station** — la voir acceptée par GeoNature —
+> avant d'engager tout le lot. L'entrée est grisée si rien n'est en attente dans
+> la sélection.
+
+> **Une géométrie réparée en cours d'envoi.** Si le tracé d'une station se
+> recoupe lui-même, le plugin le corrige avant de l'envoyer (voir §7), **et
+> enregistre la correction en local** : la géométrie et la surface de votre base
+> sont mises à jour, pour que le local et GeoNature ne divergent pas. Le
+> récapitulatif l'indique — « dont N géométrie(s) corrigée(s) ». Votre
+> **géométrie précédente n'est pas touchée** : *Rétablir la géométrie précédente*
+> reste ce que vous, vous aviez fait.
 
 ### « Cette station n'existe plus sur GeoNature »
 
@@ -850,6 +893,18 @@ Bouton **« Base locale… »** (en bas du dock) :
   sont **jamais** touchées. Le plugin affiche le nombre concerné et **demande
   confirmation** ; après une synchronisation, un rappel discret apparaît si
   beaucoup de stations anciennes se sont accumulées.
+- **Alléger les correspondances anciennes…** — les correspondances enregistrées
+  avant la 0.11.0 recopiaient le **code et le libellé** de chaque typologie. À
+  quatre typologies, le bloc dépassait la taille du champ et **GeoNature refusait
+  la station entière**. Cette action les réécrit à leur forme courte ; code et
+  libellé sont retrouvés à la lecture. Le libellé part toujours ; le code n'est
+  retiré que si le catalogue sait le restituer — sans quoi on effacerait la seule
+  copie d'une correspondance arbitrée hors catalogue. À lancer sur la
+  **sélection** ou sur **toute la base**. Les stations touchées repassent
+  **« à synchroniser »**.
+- **Recharger les libellés HABREF** — oublie les libellés déjà obtenus du
+  référentiel. Ils seront redemandés à la prochaine ouverture du tableau : utile
+  si un habitat a **changé de nom** dans HABREF.
 
 > Pensez à **sauvegarder** régulièrement votre base locale, surtout avant une
 > synchronisation importante.
@@ -860,9 +915,10 @@ Bouton **« Base locale… »** (en bas du dock) :
 
 Le module OccHab de GeoNature n'a pas de champ dédié pour le **niveau d'enjeu**,
 l'**état de conservation**, le **statut zone humide** et le **recouvrement**. 
-Le plugin les enregistre de façon **normalisée**, **encodés dans les champs de 
-commentaire** d'OccHab (au niveau station et/ou habitat), sans détruire le texte 
-libre que vous y mettez.
+Le plugin les enregistre de façon **normalisée**, encodés dans le **commentaire**
+de la station et dans la **précision technique** de l'habitat, sans détruire le
+texte libre que vous y mettez. Le **recouvrement** fait exception : il a sa
+propre colonne dans OccHab (`recovery_percentage`), et c'est elle qui fait foi.
 
 - **Niveau d'enjeu** : Très fort / Fort / Moyen / Faible / Aucun / Inconnu (liste
   déroulante, du plus fort au plus faible). Les stations saisies avec l'ancienne
@@ -889,7 +945,7 @@ restent ré-extractibles (voir README §6 pour les administrateurs).
 
 ---
 
-## 13 bis. Brouillon, validé, et la table des stations
+## 14. Brouillon, validé, et la table des stations
 
 ### Travailler en brouillon
 
@@ -924,7 +980,11 @@ habitats occupe trois lignes ; ses informations de station y sont répétées.
   d'œil. L'infobulle précise « habitat 2 sur 3 ».
   Il est **vide tant que la station n'est pas synchronisée** : GeoNature ne le lui
   a pas encore attribué. Le fond alterné, lui, continue de grouper les lignes.
-- **Colonnes** : choisissez *Essentiel*, *Natura 2000* ou *Tout*.
+- **Colonnes** : choisissez *Essentiel*, *Natura 2000* ou *Tout* — le registre
+  compte une cinquantaine de colonnes, elles ne tiennent pas toutes à l'écran.
+  Le jeu *Tout* comprend les **quatre colonnes de correspondance** (« CORINE
+  biotopes (corresp.) », « EUNIS (corresp.) », etc.), modifiables **en cellule**
+  comme **en lot** ; ce qu'on y écrit est marqué **arbitré** (§16).
 - **Filtres** : statut, synchro, et une zone de recherche (nom de station,
   habitat, cd_hab). Cliquez un en-tête pour trier.
 - **La colonne « Habitat (HABREF) »** montre, à côté du **nom cité** que vous avez
@@ -998,18 +1058,23 @@ valeurs déjà renseignées seront remplacées**.
 **Rien n'est écrit tant que vous n'avez pas cliqué « Enregistrer ».** Les
 cellules modifiées apparaissent en orangé. À l'enregistrement, le plugin :
 
-1. vous avertit si un polygone ne totalise pas 100 % de recouvrement (exigence
-   Natura 2000) — c'est un avertissement, vous pouvez continuer ;
-2. **copie votre base** dans un fichier `…avant-lot-AAAAMMJJ-HHMMSS.db` — c'est
-   votre marche arrière en cas de fausse manœuvre ;
-3. écrit les modifications et repasse les stations en « À synchroniser ».
+1. **refuse d'enregistrer** si une mesure a un minimum supérieur à son maximum
+   (altitude, profondeur…) : il faut corriger avant de continuer. C'est le seul
+   contrôle **bloquant** ;
+2. vous avertit si un polygone ne totalise pas 100 % de recouvrement (exigence
+   Natura 2000) — un avertissement, celui-là : vous pouvez continuer ;
+3. **copie votre base** dans un fichier `…avant-lot-AAAAMMJJ-HHMMSS.db` — votre
+   marche arrière en cas de fausse manœuvre. **Attention : cette copie n'est
+   faite qu'à partir de 5 stations modifiées.** En dessous, il n'y a pas de
+   marche arrière : relisez avant d'enregistrer ;
+4. écrit les modifications et repasse les stations en « À synchroniser ».
 
 Une station **validée** que vous retouchez dans la table **repasse en brouillon**
 automatiquement : y revenir, c'est que le travail n'était pas fini.
 
 ---
 
-## 13 ter. Sortir une carte : la mise en page
+## 15. Sortir une carte : la mise en page
 
 > ⚠️ **Synchronisez avant.** La planche est faite à partir d'une couche d'export,
 > donc des données **du serveur**. Vos saisies du jour n'y seront pas tant
@@ -1038,16 +1103,17 @@ déjà : vous ne renseignez que ce qui change.
 La planche s'ouvre dans le composeur de QGIS, **entièrement modifiable** :
 déplacez les cadres, changez les polices, exportez en PDF ou en PNG.
 
-> **Si la légende compte trop d'habitats** pour la colonne du gabarit — au-delà
-> d'une vingtaine — elle est **placée sur une deuxième page**, en pleine page et
+> **Si la légende ne tient pas** dans la colonne du gabarit — le plugin le
+> mesure, il n'y a pas de seuil fixe — elle est **placée sur une deuxième page**, en pleine page et
 > en colonnes. Rien n'est coupé, et la carte occupe alors toute la page 1. Un
 > message vous le dit au moment de la création. Le PDF sort en deux pages : la
 > carte, puis sa légende.
 >
 > La page de légende **reprend l'habillage de la première** — bandeau, titre,
 > logo, adresse, sources — pour qu'imprimée seule, on sache de quelle carte elle
-> parle. Les **grands types d'habitats y sont en capitales**, pour se distinguer
-> des habitats qu'ils regroupent.
+> parle. Les **grands types d'habitats sont en capitales** dans toute légende —
+> y compris dans le panneau des couches — pour se distinguer des habitats qu'ils
+> regroupent.
 
 > La barre d'échelle et la légende sont rattachées à la carte : elles se mettent
 > à jour toutes seules si vous recadrez.
@@ -1063,7 +1129,7 @@ déplacez les cadres, changez les polices, exportez en PDF ou en PNG.
 
 ---
 
-## 13 quater. Le catalogue des végétations et les correspondances
+## 16. Le catalogue des végétations et les correspondances
 
 ### Pourquoi cette section existe
 
@@ -1119,7 +1185,7 @@ Les listes affichent le **libellé** et pas seulement le code : vous choisissez
 - **Rien n'est choisi à votre place.** Quand plusieurs correspondances sont
   possibles, la ligne reste vide et affiche « n propositions — à choisir ».
 - **Aucune proposition ?** La ligne devient un champ de recherche : tapez un
-  **nom** (« hêtraie », « aulnaie ») ou un code. `Autre…` en bas d'une liste fait
+  **nom** (« hêtraie », « aulnaie ») ou un code. `Autre… (chercher dans HABREF)`, en bas d'une liste, fait
   la même chose quand aucune proposition ne convient ; **↩** revient à la liste.
 - **La typologie que vous avez déterminée ne pose pas de question.** Si vous avez
   déterminé un habitat EUNIS, la ligne EUNIS affiche son propre code et se
@@ -1151,7 +1217,7 @@ colonne `corresp_manu` (export du plugin) et `habitat_*_source` (vue serveur).
 
 ---
 
-## 14. Dépannage (FAQ)
+## 17. Dépannage (FAQ)
 
 ### « Je ne vois pas l'extension dans le gestionnaire »
 Deux causes, dans cet ordre (onglet **Paramètres** du gestionnaire) :
@@ -1205,7 +1271,7 @@ Reconnectez-vous, sélectionnez vos stations dans la couche serveur et
 
 ---
 
-## 15. Glossaire
+## 18. Glossaire
 
 - **Station** : objet géographique (point, ligne, polygone) décrivant un lieu
   d'observation. Porte 1 à N habitats.

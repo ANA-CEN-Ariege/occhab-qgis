@@ -11,6 +11,28 @@ Développée par l'**ANA-CEN Ariège**.
 
 ---
 
+## Sommaire
+
+1. [Ce que fait le plugin](#1-ce-que-fait-le-plugin)
+2. [Modèle de données](#2-modèle-de-données)
+3. [Architecture](#3-architecture)
+4. [Installation](#4-installation)
+5. [Utilisation](#5-utilisation)
+6. [Champs métier ANA (enjeu, état de conservation, zone humide, recouvrement)](#6-champs-métier-ana-enjeu-état-de-conservation-zone-humide-recouvrement)
+7. [Ré-extraction côté PostgreSQL](#7-ré-extraction-côté-postgresql)
+8. [Brouillon / validé, et la table attributaire](#8-brouillon--validé-et-la-table-attributaire)
+9. [Cartographie : charger un export du serveur](#9-cartographie--charger-un-export-du-serveur)
+10. [Mise en page cartographique](#10-mise-en-page-cartographique)
+11. [Déterminer dans le catalogue des végétations, arbitrer les correspondances](#11-déterminer-dans-le-catalogue-des-végétations-arbitrer-les-correspondances)
+12. [API GeoNature utilisée](#12-api-geonature-utilisée)
+13. [Configuration (`config.json`)](#13-configuration-configjson)
+14. [Structure du projet](#14-structure-du-projet)
+15. [Développement](#15-développement)
+16. [Limites connues / à confirmer](#16-limites-connues--à-confirmer)
+- [Auteur & licence](#auteur--licence)
+
+---
+
 ## 1. Ce que fait le plugin
 
 - **Saisie hors-ligne** de stations (spatiales) et de leurs habitats, stockée en
@@ -25,14 +47,17 @@ Développée par l'**ANA-CEN Ariège**.
   nature d'objet géographique), observateurs (multi-sélection d'utilisateurs).
 - **Calculs automatiques** : surface du polygone (m², ellipsoïdal) et altitude
   min/max (MNT serveur, `POST /geo/altitude`).
-- **Champs métier ANA-CEN Ariège** absents d'OccHab — niveau d'enjeu, état de conservation, recouvrement — saisis de façon normalisée et encodés dans les champs libres (voir §6).
+- **Champs métier ANA-CEN Ariège** absents d'OccHab — niveau d'enjeu, état de
+  conservation, zone humide — saisis de façon normalisée et encodés dans les
+  champs libres (voir §6). Le **recouvrement**, lui, a sa colonne native dans
+  OccHab : c'est elle qui fait foi.
 - **Champs Natura 2000** de l'annexe 2 du cahier des charges d'Occitanie :
   typicité, dynamique, restauration, critère et PEE (habitat) ; unité végétale,
   nature de l'observation, échelle de numérisation (station). Voir §6.
 - **Table attributaire** : toutes les stations d'un JDD, **une ligne par
-  habitat**, éditable, avec application en masse sur une sélection (§6 bis).
+  habitat**, éditable, avec application en masse sur une sélection (§8).
 - **Travail en brouillon** : chaque station porte un état métier
-  *brouillon / validée*, distinct de son état de synchronisation (§6 bis).
+  *brouillon / validée*, distinct de son état de synchronisation (§8).
 - **Sélection partagée** entre les tableaux du plugin et la carte, dans les
   deux sens.
 - **Synchronisation** : création (`POST /occhab/stations/`), mise à jour
@@ -44,6 +69,19 @@ Développée par l'**ANA-CEN Ariège**.
 - **Stockage & export** : emplacement du fichier SQLite visible, sauvegarde,
   export GeoPackage des saisies locales, et **export cartographie d'habitats** d'un
   JDD (vue à plat, une ligne par habitat, en GeoPackage + Shapefile).
+- **Cartographie** : chargement d'un export serveur en **couche colorée**, avec
+  quatre figurés pour les stations en mosaïque — bandes proportionnelles,
+  damier de mailles, carte des enjeux, carte des plantes exotiques — et le
+  choix de la **typologie de la carte**, indépendante de celle de saisie
+  (§9).
+- **Mise en page** : planche imprimable depuis un gabarit ANA `.qpt`, légende
+  groupée par milieu, report en page 2 si elle ne tient pas (§10).
+- **Catalogue des végétations de l'Ariège** : détermination par alliance, qui
+  apporte ses correspondances CORINE / EUNIS / Natura 2000, et **arbitrage**
+  de ces correspondances à la main, traçable (§11).
+- **Contrôle des géométries** : SCR source exigé, domaine WGS84 vérifié, et
+  **validité topologique contrôlée puis réparée** — un contour qui se recoupe
+  fait échouer le calcul d'altitude côté PostGIS (§5).
 
 ---
 
@@ -68,14 +106,30 @@ Aligné sur le schéma `pr_occhab` réel :
 ### Base SQLite locale (miroir)
 
 `occhab_local.db` : `t_stations`, `t_habitats`, `cor_station_observer`,
-`t_sync_log`. Chaque station porte **deux états distincts** —
+`t_sync_log` et `habref_libelles` (cache local des libellés du référentiel,
+vidable par « Base locale… ▸ Recharger les libellés HABREF »).
+Chaque station porte **deux états distincts** —
 `sync_status` (`pending` / `synced` / `conflict` / `to_delete`, **technique**) et
-`validation_status` (`brouillon` / `valide`, **métier**, cf. §6 bis) — plus un
+`validation_status` (`brouillon` / `valide`, **métier**, cf. §8) — plus un
 indicateur `mine` (données créées par l'utilisateur, seules supprimables via le
 plugin).
 
 Le chargement d'une liste de stations avec leurs habitats et observateurs passe
 par `get_stations_full()` : **3 requêtes au total**, et non 3 par station.
+
+Trois colonnes de `t_stations` méritent d'être signalées, parce qu'elles ne
+correspondent à rien dans OccHab et portent des mécanismes du plugin :
+`server_snapshot` (empreinte de la version serveur, base de la détection de
+conflit) et `prev_geom` / `prev_geom_type` (tampon d'une seule profondeur,
+qui sert le « Rétablir la géométrie précédente » — libéré à la
+synchronisation). Les géométries y sont du **WKT en clair, EPSG:4326** : pas
+de SpatiaLite, pas de SRID stocké.
+
+`_migrate()` fait évoluer un fichier existant par `ALTER TABLE` successifs et
+reprend les données au passage (les stations `sync_status='synced'` d'avant
+l'introduction du statut métier deviennent `validation_status='valide'`).
+Deux constantes de rétention : `SYNC_LOG_KEEP = 500` lignes de journal,
+`RETENTION_MONTHS = 6` pour le nettoyage des stations synchronisées anciennes.
 
 ---
 
@@ -222,14 +276,51 @@ l'auteur.
 Ouvrir une station : **« Éditer »** (barre au-dessus du tableau), **double-clic**
 sur la ligne, **clic-droit → Éditer**, ou — sur la carte — **double-clic / clic
 avec l'outil *Identifier***. Attributs et habitats modifiables (retirer un habitat
-demande confirmation). **« Géométrie ▾ »** propose *Redessiner / éditer sur la
-carte* (édition des sommets, ou nouveau tracé si aucune géométrie) ou *Copier
-l'entité sélectionnée (autre couche)*. Toute édition repasse la station en
-*À synchroniser*.
+demande confirmation). **« Géométrie ▾ »** propose trois entrées :
+*Redessiner / éditer sur la carte* (édition des sommets, ou nouveau tracé si
+aucune géométrie), *Copier la ou les entités sélectionnées d'une autre couche*,
+et *Rétablir la géométrie précédente* — un échange avec le tampon `prev_geom`,
+donc réversible, disponible tant que la station n'a pas été synchronisée.
+Toute édition repasse la station en *À synchroniser*.
+
+**Les géométries sont contrôlées à l'entrée**, sur les trois chemins
+(numérisation, édition des sommets, reprise d'une entité d'une autre couche) :
+SCR source exigé — `CrsIndetermine` refuse une couche sans SCR plutôt que de
+recopier des mètres présentés comme des degrés —, domaine WGS84 vérifié, et
+**validité topologique** contrôlée puis réparée (`assainir_geometrie` :
+`removeDuplicateNodes`, puis `makeValid` avec filtrage manuel des parties à la
+dimension d'origine). Un contour qui se recoupe est invalide dès l'EPSG:4326 et
+fait échouer le calcul d'altitude côté PostGIS ; la réparation pouvant découper
+le polygone en plusieurs parties et changer sa surface, l'utilisateur en est
+averti. Un tracé irrécupérable lève `GeometrieIrreparable` et est refusé avec
+son motif. Aucun arrondi n'est appliqué : il ne corrigerait rien et écraserait
+les stations les plus fines.
 
 ### Synchroniser
 **« Synchroniser »** envoie les créations/mises à jour et applique les
 suppressions marquées, puis recharge le contexte serveur. Récapitulatif affiché.
+
+Le **clic droit** sur une ligne du tableau propose **« Synchroniser cette
+station »** (`synchronize(ids=…)`) : seule la sélection part. C'est ce qui permet
+d'éprouver une correction sur UNE station — la voir acceptée par GeoNature —
+avant d'engager le reste.
+
+Trois comportements de la boucle d'envoi méritent d'être connus :
+
+- **Géométrie invalide réparée, et la réparation persistée.** `assainir_wkt`
+  passe avant la construction du payload ; si le tracé se recoupait, la
+  géométrie corrigée **et la surface recalculée** sont réécrites en base
+  (`db.update_station`), sans quoi on réparerait à chaque synchro et le local
+  divergerait du serveur. `prev_geom` et `sync_status` ne sont **pas** touchés.
+  L'altitude n'est délibérément pas recalculée ici : ce serait un aller-retour
+  réseau par station en pleine boucle.
+- **Le récapitulatif compte les réparations** — « dont N géométrie(s)
+  corrigée(s) » —, ce qui les fait entrer dans `log_sync`, donc dans
+  l'historique.
+- **Les motifs d'échec sont montrés**, dans une fenêtre listant les dix premières
+  stations en échec avec le message du serveur (puis « … (+N) »). Avant, ce
+  message finissait dans un journal que personne n'ouvre et l'utilisateur ne
+  lisait que « N échec(s) ».
 
 Avant d'envoyer une station déjà synchronisée, le plugin **vérifie qu'elle existe
 toujours** sur GeoNature (`GET /occhab/stations/<id>/`) :
@@ -263,6 +354,21 @@ la resynchro) et deviennent éditables. Utile si la base locale est perdue ou
 depuis une autre machine. Si une station sélectionnée est **déjà en local**, le
 plugin propose de **remplacer la copie locale par la version du serveur**
 (restauration ; les modifications locales non synchronisées sont alors écrasées).
+
+### Alléger les correspondances anciennes
+**« Base locale… ▸ Alléger les correspondances anciennes… »** réécrit à leur
+forme courte les correspondances enregistrées avant la 0.11.0, qui recopiaient
+le code **et** le libellé de chaque typologie : à quatre typologies le bloc
+dépassait la taille de `technical_precision` et GeoNature refusait la station
+entière.
+
+La règle d'arbitrage mérite d'être connue, parce qu'une première version
+effaçait de la donnée : **le libellé part toujours** — c'est lui qui pesait —
+mais **le code ne part que si le catalogue sait le restituer**. Sans cette
+nuance, l'allègement supprimait la seule copie du code d'une correspondance
+arbitrée hors catalogue. Le repli `code_stocke()` lit ce code résiduel à
+l'export. À lancer sur la sélection ou sur toute la base ; les stations
+touchées repassent « à synchroniser ».
 
 ### Supprimer
 **« Supprimer »** distingue **deux gestes** — base
@@ -333,7 +439,7 @@ dizaine de `regexp_match`.
 
 | Clé | Où | Valeurs |
 |---|---|---|
-| `statut` | station | `brouillon` · `valide` — **état métier**, injecté au moment de l'envoi depuis la colonne locale `validation_status` (cf. §6 bis) |
+| `statut` | station | `brouillon` · `valide` — **état métier**, injecté au moment de l'envoi depuis la colonne locale `validation_status` (cf. §8) |
 | `enjeu` | station · habitat | `tres_fort` `fort` `moyen` `faible` `aucun` `inconnu` — extension **ANA**, hors cahier des charges N2000 |
 | `etat_conservation` | station · habitat | `inconnu` `excellent` `bon` `moyen` `mauvais` — annexe 2, `id_et_cons` |
 | `dynamique` | habitat | `inconnue` `stable` `progressive_lente` `regressive_lente` `progressive_rapide` `regressive_rapide` — `id_dynam` |
@@ -341,12 +447,13 @@ dizaine de `regexp_match`.
 | `typicite` | habitat | `inconnue` `bonne` `moyenne` `mauvaise` — `id_typi` |
 | `unite_vegetale` | station | `non_complexe` `mosaique_non_definie` `mosaique_temporelle` `mosaique_topographique` `mixte` — `id_uv` |
 | `nature_observation` | station | `inconnu` `directe_avec_releve` `directe_sans_releve` `a_distance` `photo_interpretation` `autre` — `id_nat_obs` |
+| `echelle` | station | entier 1 à 1 000 000 — échelle de numérisation. **Saisie et exportée par le plugin, mais absente de `v_occhab_complet`** |
 | `critere` · `remarque` | habitat | texte libre |
 | `pee` | habitat | liste de **3 taxons au plus** (plantes exotiques envahissantes) |
-| `zone_humide` | station | `oui` `non` `a_verifier` — extension **ANA**. Anciennement un booléen : `true` se relit `oui`, `false` ne se relit pas (une case décochée ne disait pas « non ») |
-| `recouvrement` | habitat | 0-100 ; **pré-sélectionne** l'Abondance (< 5 %, 5-25 %, 25-50 %, 50-75 %, > 75 %) **et** alimente le champ natif `recovery_percentage` |
-| `determination` | habitat | `{"nom": …, "ancre": …}` — présente **seulement** quand `cd_hab` est une ancre (cf. §6 quater) |
-| `corresp` | habitat | `{typologie: {"cd_hab": …, "code": …, "src": …}}` — correspondances inscrites dans la donnée (cf. §6 quater) |
+| `zone_humide` | station | `oui` `non` `a_verifier` — extension **ANA**. Anciennement un booléen : les *chaînes* `true`/`false` de l'ancien format `clé=valeur` se relisent `oui`/`non` (cf. `ALIAS_ZONE_HUMIDE`). Seul un booléen JSON `false` est écarté à la lecture |
+| `recouvrement` | habitat | **N'est plus écrit dans le bloc.** La colonne native `recovery_percentage` fait foi, et la clé est **purgée du bloc à chaque enregistrement** (`champs._COLONNE_DOUBLE`) — elle n'y subsiste qu'en repli, pour les habitats saisis avant la 0.11.6. Valeur 0-100, qui **pré-sélectionne** l'Abondance (< 5 %, 5-25 %, 25-50 %, 50-75 %, > 75 %) |
+| `determination` | habitat | `{"nom": …, "ancre": …}` — présente **seulement** quand `cd_hab` est une ancre (cf. §11) |
+| `corresp` | habitat | `{typologie: {"cd_hab": …, "src": …}}` — correspondances inscrites dans la donnée (cf. §11). `code` n'est **plus écrit par la saisie** : il n'est qu'accepté en relecture, et réécrit dans le seul cas où le catalogue ne sait pas restituer le code. Le libellé, lui, ne revient jamais : c'est lui qui pesait |
 
 Ces deux dernières clés sont les seules **structurées** du bloc ; toutes les
 autres sont scalaires. Elles sont validées typologie par typologie : une
@@ -386,7 +493,9 @@ station par station, au fil des éditions. Corollaire : tant qu'une station n'a
 pas été rééditée, PostgreSQL voit encore l'ancien format — la fonction SQL
 ci-dessous lit **les deux**.
 
-### Ré-extraction côté PostgreSQL
+---
+
+## 7. Ré-extraction côté PostgreSQL
 
 **Limite assumée** : pas de contrainte au niveau base (la normalisation est
 garantie par la saisie + la convention). Ré-extraction via **une seule vue à plat** :
@@ -1037,7 +1146,7 @@ montage, et la raison de ne le poser qu'en connaissance de cause.
 >
 > Les **temps de réponse** ont été mesurés à part, sur un HABREF synthétique à
 > l'échelle du vrai : la vue est lente si l'on s'en tient au calcul à la volée.
-> Lire [Performance](#performance--deux-index-puis-une-table-matérialisée) avant
+> Lire [Ré-extraction côté PostgreSQL](#7-ré-extraction-côté-postgresql) avant
 > de la déclarer dans le module Exports — deux index et une table matérialisée
 > font passer les correspondances de plusieurs dizaines de secondes à quelques
 > millisecondes.
@@ -1241,7 +1350,169 @@ LEFT JOIN ref_habitats.bib_habref_typo_rel rel ON rel.cd_type_rel = c.cd_type_re
 ORDER BY f.o_dist, t_cib.lb_nom_typo, cible.lb_code;
 ```
 
-### Récupérer un export depuis le plugin
+## 8. Brouillon / validé, et la table attributaire
+
+### Deux états, à ne pas confondre
+
+- **`sync_status`** — état **technique** vis-à-vis du serveur (`pending`,
+  `synced`, `conflict`, `to_delete`).
+- **`validation_status`** — état **métier** du travail : `brouillon` ou `valide`
+  (colonne locale `t_stations.validation_status`).
+
+Ils sont **orthogonaux**. Les botanistes reviennent plusieurs fois sur une
+station avant de la figer ; la synchronisation sert entre-temps de **sauvegarde
+de fin de journée**, donc **un brouillon est bien envoyé sur GeoNature**.
+
+Conséquence à connaître : **GeoNature contient du travail en cours**. La colonne
+`statut` de la vue (§7) est là pour permettre de filtrer.
+
+Comme OccHab n'a ni champ natif ni champs additionnels, le statut voyage dans le
+bloc ANA-EVAL. La **colonne locale fait foi** ; le commentaire n'est que son
+transport : il est injecté à la construction du payload et retiré à la relecture
+(`api/payload.py`), pour éviter un stockage en double qui divergerait.
+
+Reprise des bases existantes : à l'ajout de la colonne, les stations `synced`
+deviennent `valide`, les autres `brouillon`. Une station **dupliquée** repart
+toujours en brouillon.
+
+### Table attributaire
+
+**« Tableau »** (barre d'action du dock) ouvre une fenêtre listant les stations
+du JDD courant, **une ligne par habitat** — la géométrie et les champs station
+étant répétés sur les lignes sœurs.
+
+- **Jeux de colonnes** : *Essentiel* / *Natura 2000* / *Tout* (48 colonnes ne
+  tiennent pas à l'écran).
+- **Filtres** statut, synchro, texte libre ; tri par colonne.
+- **Sélection partagée avec la carte**, dans les deux sens (dock et table). La
+  fenêtre est donc **non modale** : modale, elle bloquerait le canevas et rendrait
+  la sélection carte impossible. Les boucles sont coupées par un verrou unique
+  dans `StationLayerManager` — une sélection posée par le code ne notifie pas.
+- **Édition en place**, éditeur adapté au type déclaré dans le registre de champs.
+  La cellule **« Nom cité »** fait exception : elle ouvre la **recherche HABREF**
+  (`HabrefLineEdit`), et l'habitat retenu écrit **nom cité + `cd_hab`** sur la
+  ligne — via `GrilleModel.definir_par_cle`, donc même si la colonne `cd_hab`
+  n'est pas affichée, et via `mapToSource` pour viser la bonne ligne sous un
+  filtre. Hors connexion, repli sur du texte libre (annoncé en infobulle).
+- Un champ **station** modifié sur une ligne l'est **pour toutes ses lignes
+  sœurs** : les colonnes station sont teintées et le signalent en infobulle.
+- **« Modifier les lignes sélectionnées… »** pousse les mêmes valeurs sur un lot ;
+  chaque champ a une case à cocher, sinon valider écraserait tout avec du vide.
+  Les champs restent **saisissables** et la saisie coche la case : les griser
+  d'avance rendait le bloc HABREF « Nom cité » inerte sans que rien ne l'explique.
+  Le bouton porte le nombre de lignes visées et reste grisé sans sélection : le
+  libellé « Appliquer à la sélection… » ne disait pas ce qu'il appliquait.
+  L'**identité de l'habitat** (`cd_hab` + `nom_cite`) s'y modifie via la même
+  **recherche HABREF** (`ui/habref_widget.py`, partagé par le formulaire, le lot
+  et les cellules) : choisir un habitat coche et renseigne **les deux champs**,
+  un code qui ne correspondrait plus à son nom étant une donnée incohérente.
+- **« Marquer comme validées »** passe les stations de brouillon à validé.
+- Le registre distingue **`cellule`** (saisissable dans une cellule) de
+  **`masse`** (modifiable en lot) : les observateurs, liste multi-valuée, sont
+  `cellule=False` mais bien modifiables en masse. Les confondre les rendait
+  intouchables partout.
+
+**Garde-fous** — les modifications sont accumulées **en mémoire** ; rien n'est
+écrit avant « Enregistrer ». Avant l'écriture : récapitulatif comptant les
+**valeurs écrasées** (le seul chiffre qui signale une perte), contrôle des
+recouvrements (somme = 100 % par polygone, exigence N2000 — avertissement, pas
+blocage) et **copie horodatée de la base** (`*.avant-lot-*.db`), qui est
+l'annulation réelle d'une modification portant sur des dizaines de stations.
+
+**Retoucher une station validée la repasse en brouillon** — sauf si le statut a
+été changé explicitement dans la même passe, sans quoi valider la remettrait
+aussitôt en brouillon. ⚠️ Cette règle vaut dans la **table** ; dans le formulaire
+station, la liste « Statut » est **autoritaire** (ce qu'elle affiche est
+enregistré), pour ne pas empêcher de conserver une station validée qu'on rouvre.
+
+**Libellé HABREF** — la colonne `Habitat (HABREF)` (clé `champs.HABREF`) montre à
+quoi le `cd_hab` renvoie vraiment, à côté du `nom_cite` que le botaniste a écrit :
+c'est ainsi qu'on repère une détermination dont le code ne correspond plus au nom.
+Elle n'est pas dans la base — `Contexte.poser_libelles_habref()` l'écrit sur les
+dicts d'habitat au chargement de la table, pour que la valeur circule comme les
+autres (affichage, infobulle, copie TSV, tri) plutôt que par un cas particulier
+dans le modèle. `lecture_seule` et `cellule=False` la tiennent hors de tout
+enregistrement.
+
+Les libellés viennent de `GET habref/habitat/<cd_hab>`, **un appel par code**, et
+sont mis en cache dans la **base locale** (table `habref_libelles`) : sans cela,
+chaque ouverture de la table rejouerait des dizaines d'allers-retours. Ils ont
+d'abord été rangés dans `config.json` — c'était une faute : un fichier de
+PRÉFÉRENCES n'est pas un cache de données, rafraîchir un nom d'habitat y
+demandait de l'éditer à la main, et une valeur bancale y restait pour toujours.
+Le menu **Base locale… ▸ Recharger les libellés HABREF** vide la table ; les
+libellés sont redemandés à l'ouverture suivante. Au premier lancement, l'ancien
+cache de la configuration est versé en base — sans les valeurs qui ne sont qu'un
+code — et la clé est retirée. La première
+ouverture d'un gros jeu de données en demande au plus 40 (`LIBELLES_PAR_OUVERTURE`),
+le reste venant aux ouvertures suivantes — le cache s'épaissit à chaque fois.
+**Deux chemins pour un libellé**, parce que la fiche directe ne suffit pas. Un
+habitat marqué `fg_validite = NR` — non retenu, c'est-à-dire un synonyme —
+existe dans HABREF avec son `lb_hab_fr`, mais `GET habref/habitat/<cd_hab>` peut
+le refuser. Relevé sur le `Brachypodio rupestris-Centaureion nemoralis`
+(cd_hab 16415, `cd_typo` 18) : la base porte le nom, la colonne restait vide. À
+défaut de fiche, on repasse donc par l'**autocomplétion**, sur le code lu en tête
+du nom cité (`6.0.1.0.2 - …`, tel que le sélecteur HABREF l'écrit), en retenant
+l'entrée dont le `cd_hab` correspond.
+
+Hors ligne, la colonne reste partiellement vide : mieux vaut ça qu'une table qui
+refuse de s'ouvrir. Encore faut-il pouvoir répondre à « pourquoi celui-là n'a pas
+de nom ? » — la première version consignait l'échec en `debug` et laissait une
+case muette. Désormais : la raison est journalisée en `info` code par code
+(hors ligne, erreur du serveur, fiche sans libellé), l'infobulle de la case vide
+la rappelle, et `_libelle_de_fiche()` accepte plusieurs formes de réponse.
+
+La fiche et l'autocomplétion ne rendent d'ailleurs pas les mêmes champs : la
+première donne `lb_hab_fr` / `lb_hab_fr_complet`, la seconde `search_name`, qui
+vaut « code - nom ». On en retire le code plutôt que de se rabattre sur
+`lb_code` — qui ferait afficher « 6.0.1.0.2 » dans une colonne intitulée
+« Habitat », alors que le `cd_hab` est déjà dans la colonne d'à côté. Mieux vaut
+une case vide, qui se voit et s'explique, qu'un code qui se fait passer pour un
+nom.
+
+**`id_station`** — première colonne de la table attributaire **et** de la liste
+du dock. C'est l'identifiant de la station sur GeoNature : le même que dans la
+base, dans les exports et dans l'interface web, donc celui qu'on cite dans un
+courriel ou qu'on colle dans une requête. Une première version affichait un
+numéro d'ordre inventé au chargement — lisible, mais qui ne désignait rien hors
+de la fenêtre où il s'affichait.
+
+Il est **vide tant que la station n'est pas synchronisée** : GeoNature ne le lui
+a pas encore attribué. La liste du dock écrit alors un tiret plutôt qu'une case
+vide, qui se lirait comme un oubli de saisie. Le champ est `lecture_seule` et
+`cellule=False`, donc jamais dans `colonnes_modifiees()` — c'est le serveur qui
+l'attribue, la table ne fait que le montrer.
+
+Le fond des cellules, lui, suit le **rang de la station dans la grille**
+(`Grille.rang_station`), tenu à part et non écrit dans le dict de la station :
+une clé de plus finirait par se retrouver quelque part. Une station sur deux est
+teintée sur toute la largeur de la ligne, ce qui a remplacé l'alternance ligne à
+ligne de Qt (`setAlternatingRowColors`) : les deux rythmes se contrariaient, et
+une mosaïque de trois habitats paraissait en compter six. C'est ce fond qui
+continue de grouper les lignes quand `id_station` est encore vide.
+
+Dans la liste du dock, la colonne porte aussi l'**identifiant local** en donnée
+cachée (`UserRole`) : tout le panneau va le chercher sur la première colonne pour
+savoir sur quelle station porte une action.
+
+**Copier vers un tableur** — `Ctrl+C`, le bouton « Copier » et le menu
+contextuel produisent du **TSV** (`processing/tableur.py`), le seul format que
+LibreOffice et Excel collent sans rien demander. Les cellules contenant une
+tabulation, un saut de ligne ou un guillemet sont encadrées à la convention CSV,
+faute de quoi un commentaire de station sur deux lignes décalerait tout le
+tableau — une erreur qu'on ne voit qu'après coup, une fois les colonnes
+mélangées. La copie d'une **cellule seule** échappe à cette règle : on la recolle
+le plus souvent dans un champ de saisie, où les guillemets seraient à effacer à
+la main. « Copier tout » suit le proxy, donc les filtres et le tri à l'écran.
+
+**Architecture** — toute la logique risquée (propagation, suivi des
+modifications, application en masse, rétrogradation) est dans
+`processing/grille.py`, **pur et testé sans Qt** ; `ui/attribute_table.py` n'en
+est qu'un adaptateur.
+
+---
+
+## 9. Cartographie : charger un export du serveur
 
 Le module Exports expose **deux** routes, dont une seule sert ici :
 
@@ -1451,9 +1722,11 @@ rupestris-Centaureion nemoralis (6.0.1.0.2) » dit l'épithète et le code, sa f
 abrégée n'apprend rien de plus. Mesuré sur l'export réel : **26 postes de légende
 au lieu de 42**.
 
-Neuf champs sont calculés à la volée avant l'écriture du GeoJSON :
+Onze champs sont calculés à la volée avant l'écriture du GeoJSON :
 `classe_milieu`, `libelle_milieu`, `source_classe`, `cle_habitat`, `couleur`,
-`rang_habitat`, `est_dominant`, `est_mosaique` et `composition`. Le rendu est un
+`rang_habitat`, `est_dominant`, `est_mosaique`, `composition`, `bande_debut_pct`
+et `bande_fin_pct`. Selon le mode, `export_layers` en ajoute d'autres :
+`bande_y_debut` / `bande_y_fin` (bandes), les mailles WKT (damier), `pee_points`. Le rendu est un
 `QgsRuleBasedRenderer` **à deux niveaux** — un groupe par milieu, une règle par
 habitat.
 
@@ -1467,9 +1740,10 @@ export levait `AttributeError: type object 'QgsJsonUtils' has no attribute
 toutes les versions vaut mieux qu'une branche selon celle qu'on a sous la main.
 Vérifié identique à `QgsJsonUtils` sur les 236 entités d'un export réel.
 
-Trois autres énumérations ne sont atteintes qu'avec un repli, pour la même
-raison : `Qgis.RenderUnit` (QGIS 3.30), `Qgis.SymbolType` (3.20) et
-`QgsLegendStyle.Style`. Toutes existent encore dans les versions récentes, mais
+Quatre autres énumérations ne sont atteintes qu'avec un repli, pour la même
+raison : `Qgis.RenderUnit` (QGIS 3.30), `Qgis.SymbolType` (3.20),
+`QgsLegendStyle.Style` et `Qgis.DistanceUnit` (`print_layout`, repli sur
+`QgsUnitTypes.DistanceMeters`). Toutes existent encore dans les versions récentes, mais
 leur ancienne place existe dans TOUTES — c'est elle qui sert de filet.
 
 **La carte des PEE** (`_poser_pee`, `_ajouter_regles_pee`) pose un cercle par
@@ -1529,7 +1803,7 @@ endroit — l'empilement le faisait grossir et noircir, le trait paraissait sale
 0,16 mm en gris très sombre plutôt que 0,26 en noir : sur des aplats clairs, un
 trait épais fait ressortir le découpage plus que le propos de la carte.
 
-**Mosaïques : deux représentations, choisies au chargement** (`MODES` dans
+**Mosaïques : quatre représentations, choisies au chargement** (`MODES` dans
 `ui/export_layers.py`). Aucune convention nationale ne tranche — le guide
 MNHN/CBN 2005 normalise le modèle de données, pas la sémiologie — d'où le choix
 laissé à l'utilisateur, le mode figurant dans le nom de la couche pour que deux
@@ -1638,169 +1912,7 @@ lieu d'aligner onze entrées dont neuf vides.
 
 ---
 
-## 6 bis. Brouillon / validé, et la table attributaire
-
-### Deux états, à ne pas confondre
-
-- **`sync_status`** — état **technique** vis-à-vis du serveur (`pending`,
-  `synced`, `conflict`, `to_delete`).
-- **`validation_status`** — état **métier** du travail : `brouillon` ou `valide`
-  (colonne locale `t_stations.validation_status`).
-
-Ils sont **orthogonaux**. Les botanistes reviennent plusieurs fois sur une
-station avant de la figer ; la synchronisation sert entre-temps de **sauvegarde
-de fin de journée**, donc **un brouillon est bien envoyé sur GeoNature**.
-
-Conséquence à connaître : **GeoNature contient du travail en cours**. La colonne
-`statut` de la vue (§6) est là pour permettre de filtrer.
-
-Comme OccHab n'a ni champ natif ni champs additionnels, le statut voyage dans le
-bloc ANA-EVAL. La **colonne locale fait foi** ; le commentaire n'est que son
-transport : il est injecté à la construction du payload et retiré à la relecture
-(`api/payload.py`), pour éviter un stockage en double qui divergerait.
-
-Reprise des bases existantes : à l'ajout de la colonne, les stations `synced`
-deviennent `valide`, les autres `brouillon`. Une station **dupliquée** repart
-toujours en brouillon.
-
-### Table attributaire
-
-**« Tableau »** (barre d'action du dock) ouvre une fenêtre listant les stations
-du JDD courant, **une ligne par habitat** — la géométrie et les champs station
-étant répétés sur les lignes sœurs.
-
-- **Jeux de colonnes** : *Essentiel* / *Natura 2000* / *Tout* (25 colonnes ne
-  tiennent pas à l'écran).
-- **Filtres** statut, synchro, texte libre ; tri par colonne.
-- **Sélection partagée avec la carte**, dans les deux sens (dock et table). La
-  fenêtre est donc **non modale** : modale, elle bloquerait le canevas et rendrait
-  la sélection carte impossible. Les boucles sont coupées par un verrou unique
-  dans `StationLayerManager` — une sélection posée par le code ne notifie pas.
-- **Édition en place**, éditeur adapté au type déclaré dans le registre de champs.
-  La cellule **« Nom cité »** fait exception : elle ouvre la **recherche HABREF**
-  (`HabrefLineEdit`), et l'habitat retenu écrit **nom cité + `cd_hab`** sur la
-  ligne — via `GrilleModel.definir_par_cle`, donc même si la colonne `cd_hab`
-  n'est pas affichée, et via `mapToSource` pour viser la bonne ligne sous un
-  filtre. Hors connexion, repli sur du texte libre (annoncé en infobulle).
-- Un champ **station** modifié sur une ligne l'est **pour toutes ses lignes
-  sœurs** : les colonnes station sont teintées et le signalent en infobulle.
-- **« Modifier les lignes sélectionnées… »** pousse les mêmes valeurs sur un lot ;
-  chaque champ a une case à cocher, sinon valider écraserait tout avec du vide.
-  Les champs restent **saisissables** et la saisie coche la case : les griser
-  d'avance rendait le bloc HABREF « Nom cité » inerte sans que rien ne l'explique.
-  Le bouton porte le nombre de lignes visées et reste grisé sans sélection : le
-  libellé « Appliquer à la sélection… » ne disait pas ce qu'il appliquait.
-  L'**identité de l'habitat** (`cd_hab` + `nom_cite`) s'y modifie via la même
-  **recherche HABREF** (`ui/habref_widget.py`, partagé par le formulaire, le lot
-  et les cellules) : choisir un habitat coche et renseigne **les deux champs**,
-  un code qui ne correspondrait plus à son nom étant une donnée incohérente.
-- **« Marquer comme validées »** passe les stations de brouillon à validé.
-- Le registre distingue **`cellule`** (saisissable dans une cellule) de
-  **`masse`** (modifiable en lot) : les observateurs, liste multi-valuée, sont
-  `cellule=False` mais bien modifiables en masse. Les confondre les rendait
-  intouchables partout.
-
-**Garde-fous** — les modifications sont accumulées **en mémoire** ; rien n'est
-écrit avant « Enregistrer ». Avant l'écriture : récapitulatif comptant les
-**valeurs écrasées** (le seul chiffre qui signale une perte), contrôle des
-recouvrements (somme = 100 % par polygone, exigence N2000 — avertissement, pas
-blocage) et **copie horodatée de la base** (`*.avant-lot-*.db`), qui est
-l'annulation réelle d'une modification portant sur des dizaines de stations.
-
-**Retoucher une station validée la repasse en brouillon** — sauf si le statut a
-été changé explicitement dans la même passe, sans quoi valider la remettrait
-aussitôt en brouillon. ⚠️ Cette règle vaut dans la **table** ; dans le formulaire
-station, la liste « Statut » est **autoritaire** (ce qu'elle affiche est
-enregistré), pour ne pas empêcher de conserver une station validée qu'on rouvre.
-
-**Libellé HABREF** — la colonne `Habitat (HABREF)` (clé `champs.HABREF`) montre à
-quoi le `cd_hab` renvoie vraiment, à côté du `nom_cite` que le botaniste a écrit :
-c'est ainsi qu'on repère une détermination dont le code ne correspond plus au nom.
-Elle n'est pas dans la base — `Contexte.poser_libelles_habref()` l'écrit sur les
-dicts d'habitat au chargement de la table, pour que la valeur circule comme les
-autres (affichage, infobulle, copie TSV, tri) plutôt que par un cas particulier
-dans le modèle. `lecture_seule` et `cellule=False` la tiennent hors de tout
-enregistrement.
-
-Les libellés viennent de `GET habref/habitat/<cd_hab>`, **un appel par code**, et
-sont mis en cache dans la **base locale** (table `habref_libelles`) : sans cela,
-chaque ouverture de la table rejouerait des dizaines d'allers-retours. Ils ont
-d'abord été rangés dans `config.json` — c'était une faute : un fichier de
-PRÉFÉRENCES n'est pas un cache de données, rafraîchir un nom d'habitat y
-demandait de l'éditer à la main, et une valeur bancale y restait pour toujours.
-Le menu **Base locale… ▸ Recharger les libellés HABREF** vide la table ; les
-libellés sont redemandés à l'ouverture suivante. Au premier lancement, l'ancien
-cache de la configuration est versé en base — sans les valeurs qui ne sont qu'un
-code — et la clé est retirée. La première
-ouverture d'un gros jeu de données en demande au plus 40 (`LIBELLES_PAR_OUVERTURE`),
-le reste venant aux ouvertures suivantes — le cache s'épaissit à chaque fois.
-**Deux chemins pour un libellé**, parce que la fiche directe ne suffit pas. Un
-habitat marqué `fg_validite = NR` — non retenu, c'est-à-dire un synonyme —
-existe dans HABREF avec son `lb_hab_fr`, mais `GET habref/habitat/<cd_hab>` peut
-le refuser. Relevé sur le `Brachypodio rupestris-Centaureion nemoralis`
-(cd_hab 16415, `cd_typo` 18) : la base porte le nom, la colonne restait vide. À
-défaut de fiche, on repasse donc par l'**autocomplétion**, sur le code lu en tête
-du nom cité (`6.0.1.0.2 - …`, tel que le sélecteur HABREF l'écrit), en retenant
-l'entrée dont le `cd_hab` correspond.
-
-Hors ligne, la colonne reste partiellement vide : mieux vaut ça qu'une table qui
-refuse de s'ouvrir. Encore faut-il pouvoir répondre à « pourquoi celui-là n'a pas
-de nom ? » — la première version consignait l'échec en `debug` et laissait une
-case muette. Désormais : la raison est journalisée en `info` code par code
-(hors ligne, erreur du serveur, fiche sans libellé), l'infobulle de la case vide
-la rappelle, et `_libelle_de_fiche()` accepte plusieurs formes de réponse.
-
-La fiche et l'autocomplétion ne rendent d'ailleurs pas les mêmes champs : la
-première donne `lb_hab_fr` / `lb_hab_fr_complet`, la seconde `search_name`, qui
-vaut « code - nom ». On en retire le code plutôt que de se rabattre sur
-`lb_code` — qui ferait afficher « 6.0.1.0.2 » dans une colonne intitulée
-« Habitat », alors que le `cd_hab` est déjà dans la colonne d'à côté. Mieux vaut
-une case vide, qui se voit et s'explique, qu'un code qui se fait passer pour un
-nom.
-
-**`id_station`** — première colonne de la table attributaire **et** de la liste
-du dock. C'est l'identifiant de la station sur GeoNature : le même que dans la
-base, dans les exports et dans l'interface web, donc celui qu'on cite dans un
-courriel ou qu'on colle dans une requête. Une première version affichait un
-numéro d'ordre inventé au chargement — lisible, mais qui ne désignait rien hors
-de la fenêtre où il s'affichait.
-
-Il est **vide tant que la station n'est pas synchronisée** : GeoNature ne le lui
-a pas encore attribué. La liste du dock écrit alors un tiret plutôt qu'une case
-vide, qui se lirait comme un oubli de saisie. Le champ est `lecture_seule` et
-`cellule=False`, donc jamais dans `colonnes_modifiees()` — c'est le serveur qui
-l'attribue, la table ne fait que le montrer.
-
-Le fond des cellules, lui, suit le **rang de la station dans la grille**
-(`Grille.rang_station`), tenu à part et non écrit dans le dict de la station :
-une clé de plus finirait par se retrouver quelque part. Une station sur deux est
-teintée sur toute la largeur de la ligne, ce qui a remplacé l'alternance ligne à
-ligne de Qt (`setAlternatingRowColors`) : les deux rythmes se contrariaient, et
-une mosaïque de trois habitats paraissait en compter six. C'est ce fond qui
-continue de grouper les lignes quand `id_station` est encore vide.
-
-Dans la liste du dock, la colonne porte aussi l'**identifiant local** en donnée
-cachée (`UserRole`) : tout le panneau va le chercher sur la première colonne pour
-savoir sur quelle station porte une action.
-
-**Copier vers un tableur** — `Ctrl+C`, le bouton « Copier » et le menu
-contextuel produisent du **TSV** (`processing/tableur.py`), le seul format que
-LibreOffice et Excel collent sans rien demander. Les cellules contenant une
-tabulation, un saut de ligne ou un guillemet sont encadrées à la convention CSV,
-faute de quoi un commentaire de station sur deux lignes décalerait tout le
-tableau — une erreur qu'on ne voit qu'après coup, une fois les colonnes
-mélangées. La copie d'une **cellule seule** échappe à cette règle : on la recolle
-le plus souvent dans un champ de saisie, où les guillemets seraient à effacer à
-la main. « Copier tout » suit le proxy, donc les filtres et le tri à l'écran.
-
-**Architecture** — toute la logique risquée (propagation, suivi des
-modifications, application en masse, rétrogradation) est dans
-`processing/grille.py`, **pur et testé sans Qt** ; `ui/attribute_table.py` n'en
-est qu'un adaptateur.
-
----
-
-## 6 ter. Mise en page cartographique
+## 10. Mise en page cartographique
 
 **La carte montre le SERVEUR, pas la base locale.** Une couche d'export est une
 vue de GeoNature ; une station non synchronisée n'y est pas, et rien à l'écran ne
@@ -2027,7 +2139,7 @@ ajouter une typologie à la vue la fait apparaître dans le menu sans autre
 changement. Le Prodrome n'y figure pas — la vue ne le calcule pas, et les
 déterminations de l'ANA y sont déjà, donc « Habitat saisi » donne cette carte.
 
-## 6 quater. Déterminer dans le catalogue des végétations, arbitrer les correspondances
+## 11. Déterminer dans le catalogue des végétations, arbitrer les correspondances
 
 ### Le problème
 
@@ -2047,8 +2159,13 @@ arbitrage **prime** sur le calcul.
 tourne hors QGIS, n'écrit **jamais** dans le fichier source, et met ses
 résolutions HABREF en cache — une seconde exécution est instantanée.
 
+Le classeur est **versionné dans le dépôt** (`resources/typologie/`) et le
+script le vise par défaut ; l'argument ne sert qu'à en désigner un autre. Le
+`.xlsx` est exclu du ZIP d'installation, le `.csv` non — c'est lui que le
+plugin lit à l'exécution.
+
 ```
-python3 scripts/import_typologie.py CHEMIN/0_Typologie.xlsx --sortie resources/typologie
+python3 scripts/import_typologie.py --sortie resources/typologie
 ```
 
 Trois règles portent l'essentiel :
@@ -2120,8 +2237,10 @@ Deux règles d'ergonomie qui sont en réalité des règles de données :
 C'est ce qui permet, en fin de campagne, de lister ce qui a été vérifié. L'export
 du plugin l'isole dans `corresp_manu` ; la vue SQL l'expose par typologie dans
 `habitat_*_source`, où s'ajoute `determination` (l'habitat était déjà dans la
-typologie visée) et le vide (rien de saisi : c'est `habref_equivalents` qui a
-parlé, et `habitat_*_rang` dit ce que vaut sa déduction).
+typologie visée), `saisi` (une correspondance enregistrée sans `src`
+exploitable : `_clean_corresp` n'écrit `src` que s'il figure dans
+`SOURCES_CORRESPONDANCE`) et le vide (rien de saisi : c'est `habref_equivalents`
+qui a parlé, et `habitat_*_rang` dit ce que vaut sa déduction).
 
 ### Colonnes ajoutées
 
@@ -2132,9 +2251,11 @@ parlé, et `habitat_*_rang` dit ce que vaut sa déduction).
 `habitat_ancre_typologie`, et pour chacune des quatre typologies une colonne
 `habitat_*_source`. Les colonnes `habitat_code_*` / `habitat_nom_*` existantes
 **changent de sémantique** : elles rendent désormais la valeur saisie quand il y
-en a une, le calcul sinon. Le libellé de la valeur saisie est résolu par jointure
-sur HABREF, jamais lu depuis la donnée : HABREF fait foi et peut le corriger
-d'une version à l'autre.
+en a une, le calcul sinon. Le libellé de la valeur saisie est résolu **en
+priorité** par jointure sur HABREF — il fait foi et peut le corriger d'une
+version à l'autre — avec, en repli (`coalesce`), le libellé écrit dans le bloc.
+Ce repli ne sert qu'aux blocs antérieurs à la 0.11.0, seuls à porter encore leur
+libellé.
 
 ### Limites connues
 
@@ -2151,20 +2272,37 @@ d'une version à l'autre.
   cache par `cd_hab` pour la durée du formulaire. Hors connexion, aucune
   proposition : les lignes passent en recherche libre.
 
-## 7. API GeoNature utilisée
+## 12. API GeoNature utilisée
 
 | Besoin | Endpoint |
 |---|---|
 | Authentification | `POST /auth/login` (identifiants issus de l'auth QGIS) |
 | JDD | `GET /meta/datasets?active=true&fields=modules` |
 | Nomenclatures | `GET /nomenclatures/nomenclature/<code_type>`, `GET /occhab/defaultNomenclatures` |
-| HABREF | `GET /habref/habitats/autocomplete?search_name=…`, `GET /habref/typo` |
+| HABREF | `GET /habref/habitats/autocomplete?search_name=…`, `GET /habref/typo`, `GET /habref/habitat/<cd_hab>` (fiche : correspondances directes et libellé, alimente le cache `habref_libelles`) |
 | Observateurs | `GET /users/menu/<OBSERVER_LIST_ID>` |
 | Altitude (MNT) | `POST /geo/altitude` |
 | Stations (liste/contexte) | `GET /occhab/stations/?format=geojson&id_dataset=…` |
 | Station (détail) | `GET /occhab/stations/<id>/` |
 | Créer / mettre à jour | `POST /occhab/stations/` · `POST /occhab/stations/<id>/` |
 | Supprimer | `DELETE /occhab/stations/<id>/` |
+| Export cartographie | `POST /occhab/export_stations/<format>` |
+| Exports disponibles | `GET /exports/` |
+| Page d'un export | `GET /exports/api/<id>` (pagination, `TAILLE_PAGE_EXPORT = 1000`) |
+
+**Délais d'expiration.** Tout est synchrone dans le fil de l'interface : un
+appel qui ne rend pas la main fige QGIS. D'où deux délais — `DELAI_MAX = 30 s`
+pour l'interactif, `DELAI_LONG = 120 s` pour ce qui est massif par nature
+(liste des stations d'un JDD, pages d'export).
+
+**Erreurs.** `GeoNatureAPIError` porte un `status_code` (`None` = panne
+réseau), ce qui permet de distinguer un 404 — station supprimée côté serveur,
+nomenclature absente de l'instance — d'une indisponibilité. `_error_detail()`
+en tire un message lisible : messages dédiés pour les 502/504 d'un
+reverse-proxy, détection d'une réponse HTML servie à la place du JSON,
+extraction de `msg` / `message` / `description` / `detail` / `error`, le tout
+tronqué à 300 caractères. C'est ce message que la synchronisation affiche
+désormais en fin de course pour chaque station en échec.
 
 **Format de payload validé de bout en bout contre une vraie instance**
 (demo.geonature.fr) : GeoJSON **Feature** (`geometry` GeoJSON + `properties`),
@@ -2172,16 +2310,38 @@ dates `%Y-%m-%d`, `observers = [{"id_role": …}]`, habitats imbriqués,
 `id_station`/`id_habitat` préservés pour les mises à jour. Création, mise à jour,
 suppression et récupération (aller-retour) confirmées.
 
+Trois règles du payload ne se devinent pas :
+
+- **Effacer n'est possible qu'en mise à jour.** À la création, les clés vides
+  sont omises pour laisser jouer les DEFAULT du serveur. En mise à jour, les
+  champs de `EFFACABLES_STATION` (13) et `EFFACABLES_HABITAT` (7) partent
+  **même vides**, sans quoi rien ne s'effacerait jamais côté serveur : GeoNature
+  charge le payload avec `unknown=EXCLUDE` et n'écrit que les clés reçues. En
+  sont exclues les colonnes `NOT NULL` et les identifiants.
+- **Le commentaire n'est pas transmis tel quel** : `merge_eval` y injecte le
+  statut métier (brouillon / validé) à chaque envoi, et `parse_server_station`
+  l'en retire à la relecture (cf. §8).
+- **Deux garde-fous lèvent avant l'envoi** : géométrie hors du domaine WGS84
+  (`coordonnees_wgs84`) et mesures min/max inversées (`mesures_incoherentes`,
+  altitude, profondeur…). La station échoue seule, avec son motif ; les autres
+  passent.
+
+Après une création, `combler_defauts_serveur` relit trois colonnes que le
+plugin n'envoie pas et que GeoNature renseigne lui-même
+(`id_nomenclature_geographic_object`, `..._type_sol`,
+`..._type_mosaique_habitat`) : sans cela la copie locale les afficherait
+« non renseigné » à vie.
+
 ---
 
-## 8. Configuration (`config.json`)
+## 13. Configuration (`config.json`)
 
 Stocké dans le répertoire du profil QGIS (`…/occhab/config.json`). Réglages
 avancés (non exposés dans l'UI) :
 
 | Clé | Défaut | Rôle |
 |---|---|---|
-| `geonature.api_url` | — | URL de l'API (mémorisée à la connexion) |
+| `geonature.api_url` | `https://geonature.fr/geonature/api` | URL de l'API (mémorisée à la connexion ; le défaut n'est qu'un gabarit) |
 | `geonature.authcfg` | — | id de config d'auth QGIS (mémorisée) |
 | `geonature.verify_ssl` | `true` | Vérifier le certificat SSL |
 | `geonature.id_application` | `0` | `id_application` au login (0 = auto) |
@@ -2192,17 +2352,40 @@ avancés (non exposés dans l'UI) :
 | `last_entry.cd_typo` | — | Typologie HABREF de la dernière saisie (filtre pré-réglé) |
 | `last_entry.habitat` | — | Dernier habitat saisi, sans son identité ni ses mesures (pré-remplissage) |
 | `local_db.path` | auto | Chemin de la base SQLite |
+| `geonature.reconnexion_auto` | `true` | Reconnexion silencieuse à l'ouverture |
+| `mise_en_page.dossier_gabarits` | — | Dernier dossier de gabarits `.qpt` retenu |
+
+> **Toutes ces clés ne sont pas écrites dans le fichier.** Seuls
+> `geonature.api_url`, `geonature.verify_ssl`, `local_db.path`, `id_dataset` et
+> `last_entry.*` figurent dans `DEFAULT_CONFIG`, donc dans un `config.json`
+> neuf. Les autres n'existent que comme valeur de repli passée à l'appel : pour
+> les régler, il faut **les ajouter à la main**.
+
+> **Clés retirées en 0.12.0** : `database` (host/port/database/user),
+> `auto_sync_interval` et `projection`. Aucune n'était lue nulle part, et
+> écrites dans chaque `config.json` elles promettaient ce qui n'existe pas —
+> une connexion PostgreSQL directe (le plugin passe exclusivement par l'API
+> REST), une synchronisation automatique (elle se déclenche au bouton) et un
+> SCR de travail (tout le circuit est en EPSG:4326). Une clé résiduelle dans un
+> `config.json` existant est simplement ignorée : rien à migrer.
 
 ---
 
-## 9. Structure du projet
+## 14. Structure du projet
 
 ```
 occhab/
-├── metadata.txt              # métadonnées du plugin (nom, version…)
+├── metadata.txt              # métadonnées du plugin (nom, version, changelog)
 ├── __init__.py               # classFactory (point d'entrée QGIS)
 ├── plugin.py                 # OccHabPlugin : menu/toolbar + dock
-├── resources/icons/occhab.svg
+├── package.py                # construit dist/occhab.<version>.zip (cf. §15)
+├── requirements.txt · LICENSE · README.md · GUIDE_UTILISATEUR.md
+├── sql/             v_occhab_complet.sql       # vue d'export (PostgreSQL 15)
+├── scripts/         import_typologie.py        # catalogue des végétations → CSV
+├── tests/                                      # suite pytest (cf. §15)
+├── resources/       icons/occhab.svg
+│                    typologie/0_Typologie.xlsx           # classeur source des botanistes
+│                    typologie/dictionnaire_typologie.csv # catalogue embarqué, lu à l'exécution
 └── src/
     ├── utils/        config.py · logger.py
     ├── database/     sqlite_local.py            # modèle station/habitat + CRUD
@@ -2211,16 +2394,20 @@ occhab/
     ├── processing/   referentiels.py            # vocabulaires fermés ANA + N2000 (pur, testé)
     │                 champs.py                  # registre des champs saisissables (pur, testé)
     │                 eval_fields.py             # bloc ANA-EVAL : encodage JSON (pur, testé)
+    │                 correspondances.py         # catalogue ANA, arbitrage, allègement (pur, testé)
     │                 grille.py                  # tampon d'édition en masse (pur, testé)
     │                 export.py                  # aplatissement cartographie (pur, testé)
     │                 duplicate.py               # duplication / collage / reprise (pur, testé)
     │                 geojson_wkt.py             # GeoJSON → WKT, sans QgsJsonUtils (pur, testé)
     │                 tableur.py                 # mise en TSV pour le presse-papiers (pur, testé)
     │                 gabarits.py                # repérage des .qpt de mise en page (pur, testé)
-    │                 mise_en_page.py            # dimensionnement de la légende (pur, testé)
+    │                 mise_en_page.py            # place libre autour d'un cadre, corps d'un
+    │                                            #   bloc de mentions (pur, testé) — la légende,
+    │                                            #   elle, est MESURÉE par QGIS (print_layout)
     │                 habitat_style.py           # classes de milieu EUNIS, mosaïques (pur, testé)
-    │                 geometry.py                # WKT/GeoJSON, reprojection 4326, réparation topologique
-    ├── sql/          v_occhab_complet.sql       # vue d'export, prête à exécuter (PostgreSQL 15)
+    │                 pee.py                     # couleurs des plantes exotiques (pur, testé)
+    │                 geometry.py                # WKT/GeoJSON, reprojection 4326, réparation
+    │                                            #   topologique (PyQGIS, testé)
     └── ui/           dock_widget.py             # dock principal
                       print_layout.py            # planche cartographique depuis un gabarit ANA
                       layout_dialog.py           # choix du gabarit, du titre, du cadrage
@@ -2228,6 +2415,12 @@ occhab/
                       dialog_size.py             # dialogues défilants, bornés à l'écran
                       station_form.py · habitat_form.py · station_dialog.py
                       station_picker_dialog.py   # choix d'une station à recopier
+                      server_picker_dialog.py    # recherche d'une station du serveur
+                      correspondance_widget.py   # arbitrage des correspondances
+                      habref_widget.py           # recherche HABREF + catalogue ANA
+                      export_dialog.py           # choix export / période / typologie
+                      export_layers.py           # couches d'export : bandes, damier, enjeux, PEE
+                      flow_layout.py · no_wheel.py           # utilitaires Qt
                       connection_dialog.py
                       map_tools.py               # capture + édition de géométrie
                       station_layers.py · server_layers.py   # couches carte
@@ -2235,27 +2428,66 @@ occhab/
 
 ---
 
-## 10. Développement
+## 15. Développement
 
 - Recharger : extension **Plugin Reloader**.
-- Modules purs testables hors QGIS (aucune dépendance PyQGIS) :
-  `referentiels`, `champs`, `eval_fields`, `grille`, `export`, `duplicate`,
-  `payload`, `sqlite_local`. La règle : **tout ce qui peut corrompre des données
-  en silence vit dans un module pur et testé** — l'interface n'en est qu'un
-  adaptateur.
-  Les modules `ui/*`, `geometry`,
-  `station_layers`, `server_layers` dépendent de PyQGIS (testables dans QGIS).
+- Modules purs testables hors QGIS (aucune dépendance PyQGIS) : tout
+  `src/processing/` **sauf `geometry.py`**, plus `api/payload.py` et
+  `database/sqlite_local.py`. La règle : **tout ce qui peut corrompre des
+  données en silence vit dans un module pur et testé** — l'interface n'en est
+  qu'un adaptateur.
 - Le format d'API a été validé par des scripts contre `demo.geonature.fr`
   (création/màj/suppression/récupération réelles).
 
+### Lancer les tests
+
+```bash
+pip install pytest          # volontairement PAS dans requirements.txt : le
+                            # plugin lui-même n'a aucune dépendance à installer
+python3 -m pytest tests/
+```
+
+`tests/conftest.py` met `src/api`, `src/database`, `src/processing` et `scripts`
+sur le `sys.path`, ainsi que le dossier **parent** du dépôt — pour que
+`occhab.src.ui…` s'importe comme dans QGIS. Un module pur s'y teste donc par son
+seul nom (`import payload`), un module d'interface par son chemin complet.
+
+**PyQGIS est requis pour une partie de la suite.** Lancez `pytest` avec le
+Python qui voit `qgis.core` (celui de l'installation QGIS). Sont concernés
+`test_geometry.py` (réparation topologique), `test_station_layers.py`
+(invalidation de l'index d'accrochage), `test_export_layers.py` et
+`test_interface_habitat.py`, qui construit de vrais widgets hors écran — une
+suite qui ne testerait que les modules purs laisserait passer une extension qui
+ne se charge plus.
+
+### Construire le ZIP d'installation
+
+```bash
+python3 package.py          # → dist/occhab.<version>.zip
+```
+
+La version est lue dans `metadata.txt` et le ZIP porte un dossier racine
+`occhab/`. **Le séparateur avant la version est un point, pas un tiret** :
+installé depuis un dépôt, QGIS déduit le nom du dossier d'extension en coupant
+le nom du fichier au premier point. Avec `occhab-0.11.4.zip` il cherchait un
+dossier `occhab-0`, ne le trouvait pas et annonçait « L'extension a disparu »
+alors qu'elle était bien installée.
+
+Sont exclus du paquet : `tests/`, `scripts/`, `dist/`, tout dossier commençant
+par un point, les fichiers compilés, les bases et journaux d'exécution, et les
+`*.xlsx` — ce qui écarte le classeur source des botanistes tout en gardant le
+`dictionnaire_typologie.csv` que le plugin lit à l'exécution.
+
 ---
 
-## 11. Limites connues / à confirmer
+## 16. Limites connues / à confirmer
 
 - **Surface / export GeoPackage / affichage des couches** : reposent sur des API
-  QGIS non testables hors QGIS (`QgsDistanceArea`, `QgsVectorFileWriter`, OGR) —
+  QGIS qu'aucun test n'exerce (`QgsDistanceArea`, `QgsVectorFileWriter`, OGR) —
   à confirmer au premier lancement. L'endpoint **altitude** et la synchro sont
-  validés en direct.
+  validés en direct. Les parties PyQGIS **qui sont** testées, elles, le sont par
+  la suite : réparation topologique et invalidation de l'index d'accrochage
+  (cf. §15).
 - **Habitat saisi hors-ligne** : la technique de collecte (obligatoire côté
   serveur) reste vide jusqu'à la synchro, où elle est comblée par le défaut
   **« In situ »** (`cd_nomenclature = 1`) de la nomenclature GeoNature. Si cette
