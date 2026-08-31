@@ -2219,7 +2219,7 @@ occhab/
     │                 gabarits.py                # repérage des .qpt de mise en page (pur, testé)
     │                 mise_en_page.py            # dimensionnement de la légende (pur, testé)
     │                 habitat_style.py           # classes de milieu EUNIS, mosaïques (pur, testé)
-    │                 geometry.py                # WKT/GeoJSON, reprojection 4326
+    │                 geometry.py                # WKT/GeoJSON, reprojection 4326, réparation topologique
     ├── sql/          v_occhab_complet.sql       # vue d'export, prête à exécuter (PostgreSQL 15)
     └── ui/           dock_widget.py             # dock principal
                       print_layout.py            # planche cartographique depuis un gabarit ANA

@@ -32,7 +32,12 @@ from qgis.core import (
 )
 from qgis.gui import QgsMapToolCapture, QgsMapToolDigitizeFeature
 
-from ..processing.geometry import geometry_to_wkt_4326
+from ..processing.geometry import (
+    CrsIndetermine,
+    GeometrieIrreparable,
+    assainir_wkt,
+    geometry_to_wkt_4326,
+)
 
 _CAPTURE_MODE = {
     "point": QgsMapToolCapture.CaptureMode.CapturePoint,
@@ -40,6 +45,14 @@ _CAPTURE_MODE = {
     "polygon": QgsMapToolCapture.CaptureMode.CapturePolygon,
 }
 _WKB_TYPE = {"point": "Point", "line": "LineString", "polygon": "Polygon"}
+
+#: Avertissement commun à la numérisation et à l'édition de sommets. La forme
+#: enregistrée n'est plus celle qui a été dessinée — un contour qui se recoupe
+#: est découpé en plusieurs parties, et sa surface change : il faut le dire.
+_MESSAGE_CORRIGEE = (
+    "Le tracé se recoupait lui-même : la géométrie a été corrigée automatiquement "
+    "(elle peut être découpée en plusieurs parties). Vérifiez la forme sur la carte."
+)
 
 
 class GeometryCaptureController(QObject):
@@ -57,6 +70,7 @@ class GeometryCaptureController(QObject):
         self._prev_tool = None
         self._geom_type = None
         self._pending_wkt = None
+        self._pending_notice = None  # message à pousser une fois le nettoyage fait
         self._finished = False
         self._session = 0
 
@@ -119,9 +133,14 @@ class GeometryCaptureController(QObject):
         if session != self._session:
             return  # une nouvelle session a démarré entre-temps → ignorer
         wkt = None if cancelled else self._pending_wkt
+        notice = None if cancelled else self._pending_notice
         geom_type = self._geom_type
         # Ne pas restaurer l'outil si l'utilisateur en a déjà choisi un autre.
         self._teardown(restore_tool=not cancelled)
+        if notice:
+            # Après `_teardown` : pousser un message depuis le code natif de
+            # l'outil ferait vaciller le cycle de vie décrit en tête de module.
+            self.iface.messageBar().pushWarning("OccHab", notice)
         if wkt:
             self.captured.emit(wkt, geom_type)
         else:
@@ -152,6 +171,7 @@ class GeometryCaptureController(QObject):
         self._layer = None
         self._prev_tool = None
         self._pending_wkt = None
+        self._pending_notice = None
 
     def _disconnect(self, tool):
         if tool is None:
@@ -166,12 +186,26 @@ class GeometryCaptureController(QObject):
                 pass
 
     def _to_wkt_4326(self, geometry):
+        """WKT EPSG:4326 assaini, ou None (motif retenu dans `_pending_notice`).
+
+        Appelée depuis le code natif de l'outil : elle ne pousse aucun message,
+        elle le met de côté pour `_finish`, qui s'exécute après le nettoyage.
+        """
         if geometry is None or geometry.isNull() or geometry.isEmpty():
             return None
         source_crs = self._canvas.mapSettings().destinationCrs()
         try:
-            return geometry_to_wkt_4326(geometry, source_crs)
-        except Exception:  # noqa: BLE001 - une géométrie invalide ne doit pas planter
+            wkt, corrigee = assainir_wkt(geometry_to_wkt_4326(geometry, source_crs))
+            if corrigee:
+                self._pending_notice = _MESSAGE_CORRIGEE
+            return wkt
+        except (CrsIndetermine, GeometrieIrreparable, ValueError) as exc:
+            # Sans ce motif, un refus ressortait en « Numérisation annulée. » :
+            # message faux, et l'utilisateur recommençait le même tracé.
+            self._pending_notice = str(exc)
+            return None
+        except Exception:  # noqa: BLE001 - rien ne doit planter le code natif
+            self._pending_notice = "Géométrie inexploitable."
             return None
 
     @staticmethod
@@ -251,9 +285,13 @@ class GeometryEditController(QObject):
         if self._finished:
             return
         self._finished = True
-        wkt = self._read_wkt_4326()
+        wkt, notice = self._read_wkt_4326()
         geom_type = self._geom_type
         self._teardown()
+        if notice:
+            # Après `_teardown`, qui retire la barre de validation : sans quoi le
+            # message serait poussé puis aussitôt masqué.
+            self.iface.messageBar().pushWarning("OccHab", notice)
         if wkt:
             self.edited.emit(wkt, geom_type)
         else:
@@ -314,16 +352,23 @@ class GeometryEditController(QObject):
         self._canvas.refresh()
 
     def _read_wkt_4326(self):
+        """(WKT EPSG:4326 assaini, message) — message non nul si l'utilisateur doit
+        être averti (géométrie corrigée) ou informé d'un refus."""
         if self._layer is None:
-            return None
+            return None, None
         feature = next(self._layer.getFeatures(), None)
         if feature is None or not feature.hasGeometry():
-            return None
+            return None, None
         project_crs = self._canvas.mapSettings().destinationCrs()
         try:
-            return geometry_to_wkt_4326(feature.geometry(), project_crs)
+            wkt, corrigee = assainir_wkt(
+                geometry_to_wkt_4326(feature.geometry(), project_crs)
+            )
+            return wkt, (_MESSAGE_CORRIGEE if corrigee else None)
+        except (CrsIndetermine, GeometrieIrreparable, ValueError) as exc:
+            return None, str(exc)
         except Exception:  # noqa: BLE001
-            return None
+            return None, "Géométrie inexploitable."
 
     def _to_project_geometry(self, wkt_4326):
         geom = QgsGeometry.fromWkt(wkt_4326 or "")

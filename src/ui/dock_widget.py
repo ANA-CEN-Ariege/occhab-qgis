@@ -34,7 +34,12 @@ from qgis.PyQt.QtWidgets import (
 from ..database.sqlite_local import BROUILLON, VALIDE, OccHabDatabase
 from ..processing import correspondances as corresp
 from ..processing.duplicate import habitat_reprise, paste_fields, station_template
-from ..processing.geometry import CrsIndetermine, wkt_en_degres_plausibles
+from ..processing.geometry import (
+    CrsIndetermine,
+    GeometrieIrreparable,
+    assainir_geometrie,
+    wkt_en_degres_plausibles,
+)
 from .connection_dialog import ConnectionDialog
 from .flow_layout import widget_reflowable
 from .station_dialog import StationDialog
@@ -147,6 +152,9 @@ class OccHabDockWidget(QDockWidget):
         self._session_dates = None
         self._geom_editor = None
         self._edit_geom_station_id = None
+        # Géométries réparées lors de la reprise en cours : comptées ici pour
+        # n'avertir qu'une fois par lot (cf. `_signaler_geoms_corrigees`).
+        self._geoms_corrigees = 0
         self._map_filter_installed = False
         self._server_prompt = None
         self._occhab_layers_notice_shown = False
@@ -2134,7 +2142,14 @@ class OccHabDockWidget(QDockWidget):
 
         `transform` : QgsCoordinateTransform déjà prêt (ou None si la couche est en
         EPSG:4326). Écarte silencieusement les entités sans géométrie, de type non
-        géré (ni point/ligne/polygone) ou dont la reprojection échoue.
+        géré (ni point/ligne/polygone), dont la reprojection échoue ou dont la
+        géométrie est irrécupérable.
+
+        C'est le chemin le plus exposé aux tracés douteux : les entités viennent
+        de couches tierces (cadastre, photo-interprétation), là où naissent les
+        slivers auto-intersectants. Les corrections sont comptées dans
+        `self._geoms_corrigees`, pour un seul avertissement par lot — sur une
+        sélection de quarante entités, quarante bandeaux seraient insupportables.
         """
         from qgis.core import QgsGeometry, QgsWkbTypes
 
@@ -2153,7 +2168,13 @@ class OccHabDockWidget(QDockWidget):
         try:
             if transform is not None:
                 geom.transform(transform)
-            wkt = geom.asWkt()
+            assainie, corrigee = assainir_geometrie(geom)
+            if corrigee:
+                self._geoms_corrigees += 1
+            wkt = assainie.asWkt()
+        except GeometrieIrreparable as exc:
+            self.logger.warning("Reprise de géométrie : entité écartée : %s", exc)
+            return None
         except Exception as exc:  # noqa: BLE001
             self.logger.warning("Reprise de géométrie : reprojection échouée : %s", exc)
             return None
@@ -2181,12 +2202,15 @@ class OccHabDockWidget(QDockWidget):
             transform = self._layer_transform_to_4326(layer)
         except CrsIndetermine as exc:
             return None, None, str(exc)
+        self._geoms_corrigees = 0
         result = self._feature_geometry_wkt(features[0], transform)
         if result is None:
             return None, None, (
                 "Géométrie inexploitable : entité sans géométrie, de type non géré "
-                "(ni point/ligne/polygone) ou reprojection impossible."
+                "(ni point/ligne/polygone), tracé irrécupérable ou reprojection "
+                "impossible."
             )
+        self._signaler_geoms_corrigees()
         return result[0], result[1], None
 
     def _reprise_geometries(self):
@@ -2211,6 +2235,7 @@ class OccHabDockWidget(QDockWidget):
             transform = self._layer_transform_to_4326(layer)
         except CrsIndetermine as exc:
             return [], str(exc)
+        self._geoms_corrigees = 0
         geoms = []
         for feature in features:
             result = self._feature_geometry_wkt(feature, transform)
@@ -2218,10 +2243,23 @@ class OccHabDockWidget(QDockWidget):
                 geoms.append(result)
         if not geoms:
             return [], (
-                "Aucune géométrie exploitable dans la sélection (entités vides ou de "
-                "type non géré)."
+                "Aucune géométrie exploitable dans la sélection (entités vides, de "
+                "type non géré ou tracés irrécupérables)."
             )
+        self._signaler_geoms_corrigees()
         return geoms, None
+
+    def _signaler_geoms_corrigees(self):
+        """Un seul avertissement pour tout le lot repris, puis remise à zéro."""
+        nombre, self._geoms_corrigees = self._geoms_corrigees, 0
+        if not nombre:
+            return
+        self.iface.messageBar().pushWarning(
+            "OccHab",
+            "%d géométrie(s) reprise(s) se recoupaient elles-mêmes et ont été "
+            "corrigées automatiquement (elles peuvent être découpées en plusieurs "
+            "parties). Vérifiez les formes sur la carte." % nombre,
+        )
 
     def edit_geometry(self):
         """Éditer la géométrie enregistrée de la station (ou la numériser si absente)."""
@@ -2358,28 +2396,7 @@ class OccHabDockWidget(QDockWidget):
             )
             return metrics
         if geom_type == "polygon":
-            try:
-                from qgis.core import (
-                    QgsCoordinateReferenceSystem,
-                    QgsDistanceArea,
-                    QgsGeometry,
-                    QgsProject,
-                    QgsUnitTypes,
-                )
-
-                calc = QgsDistanceArea()
-                calc.setSourceCrs(
-                    QgsCoordinateReferenceSystem("EPSG:4326"),
-                    QgsProject.instance().transformContext(),
-                )
-                calc.setEllipsoid(QgsProject.instance().ellipsoid() or "WGS84")
-                area = calc.convertAreaMeasurement(
-                    calc.measureArea(QgsGeometry.fromWkt(wkt)),
-                    QgsUnitTypes.AreaUnit.AreaSquareMeters,
-                )
-                metrics["area"] = int(round(area))
-            except Exception as exc:  # noqa: BLE001
-                self.logger.warning("Surface non calculée : %s", exc)
+            metrics["area"] = self._surface_m2(wkt)
         if self.client is not None and self.client.is_authenticated:
             try:
                 from ..processing.geometry import wkt_to_geojson
@@ -2390,8 +2407,42 @@ class OccHabDockWidget(QDockWidget):
                     metrics["altitude_min"] = altitude.get("altitude_min")
                     metrics["altitude_max"] = altitude.get("altitude_max")
             except Exception as exc:  # noqa: BLE001
+                # Ne plus se contenter du journal : c'est parce que cet échec
+                # était muet qu'une géométrie auto-intersectante a pu casser le
+                # calcul d'altitude sur le serveur pendant des mois sans que
+                # personne, sur le terrain, sache que sa station était en cause.
                 self.logger.warning("Altitude non calculée : %s", exc)
+                self.iface.messageBar().pushWarning(
+                    "OccHab",
+                    "Altitude non calculée pour cette station : %s" % exc,
+                )
         return metrics
+
+    def _surface_m2(self, wkt):
+        """Surface ellipsoïdale en m² d'un WKT EPSG:4326, ou None si incalculable."""
+        try:
+            from qgis.core import (
+                QgsCoordinateReferenceSystem,
+                QgsDistanceArea,
+                QgsGeometry,
+                QgsProject,
+                QgsUnitTypes,
+            )
+
+            calc = QgsDistanceArea()
+            calc.setSourceCrs(
+                QgsCoordinateReferenceSystem("EPSG:4326"),
+                QgsProject.instance().transformContext(),
+            )
+            calc.setEllipsoid(QgsProject.instance().ellipsoid() or "WGS84")
+            area = calc.convertAreaMeasurement(
+                calc.measureArea(QgsGeometry.fromWkt(wkt)),
+                QgsUnitTypes.AreaUnit.AreaSquareMeters,
+            )
+            return int(round(area))
+        except Exception as exc:  # noqa: BLE001
+            self.logger.warning("Surface non calculée : %s", exc)
+            return None
 
     def shutdown(self):
         """Nettoyer au déchargement du plugin : capture/édition en cours + couches carte."""
@@ -3467,7 +3518,7 @@ class OccHabDockWidget(QDockWidget):
             parse_server_station,
             server_fingerprint,
         )
-        from ..processing.geometry import wkt_to_geojson
+        from ..processing.geometry import assainir_wkt, wkt_to_geojson
 
         to_delete = self.db.get_all_stations(sync_status="to_delete")
         pending = self.db.get_pending_stations()
@@ -3511,6 +3562,12 @@ class OccHabDockWidget(QDockWidget):
 
         # --- Créations / mises à jour ---
         ok = failed = conflicts = 0
+        # Motifs d'échec, montrés en fin de synchro : le client sait produire un
+        # message lisible (proxy coupé, page HTML, corps JSON…) et il finissait
+        # dans un fichier journal que personne n'ouvre, l'utilisateur ne lisant
+        # que « N échec(s) ».
+        echecs = []
+        geoms_corrigees = 0
         # Stations dont l'id serveur ne correspond plus à rien (supprimées sur
         # GeoNature) : recréées ou laissées en attente selon la réponse de
         # l'utilisateur (None = question pas encore posée pour cette synchro).
@@ -3591,11 +3648,42 @@ class OccHabDockWidget(QDockWidget):
                     self.db.update_station(station["id"], sync_status="conflict")
                     conflicts += 1
                     continue  # ne pas écraser la version serveur
-            geojson = wkt_to_geojson(full.get("geom")) if full.get("geom") else None
-            payload = build_station_payload(
-                full, full["habitats"], full["observers"], geojson
-            )
             try:
+                # DANS le `try` : `build_station_payload` lève par conception
+                # (domaine WGS84, mesures incohérentes), et l'assainissement lève
+                # sur une géométrie irrécupérable. Hors du `try`, la 3e station
+                # d'un lot de 40 interrompait les 37 suivantes avec une trace
+                # QGIS, sans bilan ni journal — l'inverse de ce que promet la
+                # docstring de `build_station_payload`.
+                geom_wkt, corrigee = assainir_wkt(full.get("geom"))
+                if corrigee:
+                    # Persister : sinon on répare à chaque synchro, la carte
+                    # locale continue d'afficher le polygone cassé, et la surface
+                    # stockée reste celle d'un polygone auto-sécant — c'est-à-dire
+                    # aucune surface. `prev_geom` n'est PAS touché : c'est le
+                    # « rétablir la géométrie précédente » de l'utilisateur, pas
+                    # une corbeille interne. `sync_status` non plus :
+                    # `update_station` n'écrit que les colonnes passées.
+                    champs = {"geom": geom_wkt}
+                    if full.get("geom_type") == "polygon":
+                        surface = self._surface_m2(geom_wkt)
+                        if surface is not None:
+                            champs["area"] = surface
+                            full["area"] = surface
+                    full["geom"] = geom_wkt
+                    self.db.update_station(station["id"], **champs)
+                    geoms_corrigees += 1
+                    self.logger.warning(
+                        "Station %s : géométrie invalide réparée avant envoi.",
+                        station["id"],
+                    )
+                    # L'altitude n'est délibérément PAS recalculée ici : ce serait
+                    # un aller-retour réseau par station en pleine boucle. Elle le
+                    # sera à la prochaine édition de la station.
+                geojson = wkt_to_geojson(geom_wkt) if geom_wkt else None
+                payload = build_station_payload(
+                    full, full["habitats"], full["observers"], geojson
+                )
                 if full.get("id_station"):  # déjà synchronisée → mise à jour
                     self.client.update_station(full["id_station"], payload)
                     id_station = full["id_station"]
@@ -3630,6 +3718,9 @@ class OccHabDockWidget(QDockWidget):
             except Exception as exc:  # noqa: BLE001
                 failed += 1
                 self.logger.error("Station %s non synchronisée : %s", station["id"], exc)
+                echecs.append(
+                    (self._station_label(full, full["habitats"]), str(exc))
+                )
 
         parts = []
         if ok or failed:
@@ -3646,6 +3737,9 @@ class OccHabDockWidget(QDockWidget):
             )
         if conflicts:
             parts.append("%d conflit(s)" % conflicts)
+        if geoms_corrigees:
+            # Dans `parts` pour entrer dans `log_sync`, donc dans l'historique.
+            parts.append("dont %d géométrie(s) corrigée(s)" % geoms_corrigees)
         message = " | ".join(parts) or "rien à faire"
         status = (
             "success" if failed == 0 and del_failed == 0 and not orphans_kept
@@ -3679,6 +3773,20 @@ class OccHabDockWidget(QDockWidget):
         else:
             self.iface.messageBar().pushInfo(
                 "OccHab", "Synchronisation : %s.%s" % (message, hint)
+            )
+        if echecs:
+            # Un bandeau ne suffit pas : ces motifs sont longs (message du
+            # serveur) et l'utilisateur doit pouvoir les lire à son rythme.
+            listing = "\n".join(
+                "• %s : %s" % (libelle, motif) for libelle, motif in echecs[:10]
+            )
+            if len(echecs) > 10:
+                listing += "\n… (+%d)" % (len(echecs) - 10)
+            QMessageBox.warning(
+                self,
+                "OccHab",
+                "%d station(s) n'ont pas pu être envoyées :\n\n%s"
+                % (len(echecs), listing),
             )
         self.refresh()
         self._load_server_stations()  # recharger le contexte serveur (données à jour)

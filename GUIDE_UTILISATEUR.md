@@ -487,6 +487,15 @@ sur la carte — **double-clic** / clic avec l'outil **Identifier des entités**
 
 Toute modification repasse la station en **À synchroniser**.
 
+> **« Le tracé se recoupait lui-même » ?** Un contour qui se croise (un « nœud
+> papillon », courant sur un tracé très serré ou repris d'une couche tierce) est
+> refusé par GeoNature au moment de calculer l'altitude. Le plugin le **corrige
+> automatiquement** et vous prévient : la forme obtenue peut être **découpée en
+> plusieurs parties**, et sa **surface change** — vérifiez-la sur la carte, et
+> utilisez *Rétablir la géométrie précédente* ou redessinez si le résultat ne
+> vous convient pas. Un tracé irrécupérable (sommets alignés, polygone aplati)
+> est **refusé** avec son motif : redessinez-le.
+
 > **Annuler une autre modification ?** En dehors de la géométrie, une modification
 > **enregistrée** écrase l'ancienne valeur en local (pas d'historique). Pour une
 > station déjà sur GeoNature, vous pouvez restaurer la version serveur via
