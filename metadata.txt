@@ -3,7 +3,7 @@ name=OccHab GeoNature
 qgisMinimumVersion=3.28
 qgisMaximumVersion=3.99
 description=Offline-first data entry for GeoNature's OccHab module (habitat stations) from QGIS, with local SQLite storage and synchronisation to the GeoNature REST API.
-version=0.11.7
+version=0.11.8
 author=Cédric Roy
 email=it@ariegenature.fr
 license=GPL-3.0-or-later
@@ -32,7 +32,33 @@ icon=resources/icons/occhab.svg
 experimental=True
 deprecated=False
 
-changelog=0.11.7 - Correction : la synchronisation echouait sur la nature de l'objet geographique.
+changelog=0.11.8 - Correction : un trace qui se recoupait faisait echouer le calcul d'altitude.
+    GeoNature calcule l'altitude en croisant la station avec le MNT. Sur un
+    polygone dont le contour se recoupe — un « noeud papillon », frequent sur
+    les traces tres serres ou repris d'une couche tierce — PostGIS repondait une
+    erreur 500 (« TopologyException: Self-intersection »). Ces polygones sont
+    invalides des l'EPSG:4326, avant tout envoi : ni la reprojection ni la
+    precision des coordonnees n'y etaient pour quelque chose.
+    Rien ne le voyait passer : la geometrie etait enregistree, affichee et
+    envoyee telle quelle, et l'echec du calcul d'altitude etait avale sans un
+    mot. Sur le terrain, la station repartait sans altitude et personne ne
+    pouvait savoir laquelle etait en cause.
+    Le plugin controle desormais la validite du trace et le repare
+    automatiquement, a la numerisation, a l'edition des sommets, a la reprise
+    d'une entite d'une autre couche, et une derniere fois avant l'envoi — ce
+    qui couvre aussi les stations deja enregistrees. La forme corrigee peut
+    etre decoupee en plusieurs parties : un message le signale pour que la
+    surface, qui part dans GeoNature, puisse etre verifiee. Un trace
+    irrecuperable (sommets alignes, polygone aplati) est refuse avec son motif,
+    plutot qu'envoye sans geometrie.
+    Aucun arrondi n'est applique : arrondir n'aurait rien corrige et aurait
+    ecrase les stations les plus fines.
+    Corrige aussi deux defauts du meme chemin. La synchronisation s'interrompait
+    entierement des qu'une station levait une erreur avant l'envoi : les
+    suivantes du lot n'etaient plus traitees, sans bilan ni journal. Et le
+    message d'erreur du serveur n'etait jamais montre — l'utilisateur lisait
+    « N echec(s) » sans savoir pourquoi ; les motifs sont desormais affiches.
+    0.11.7 - Correction : la synchronisation echouait sur la nature de l'objet geographique.
     Depuis la 0.11.5, mettre a jour une station dont ce champ etait vide en
     local faisait rejeter l'envoi par GeoNature : la colonne
     id_nomenclature_geographic_object est NOT NULL, et la valeur par defaut
