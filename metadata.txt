@@ -3,7 +3,7 @@ name=OccHab GeoNature
 qgisMinimumVersion=3.28
 qgisMaximumVersion=3.99
 description=Offline-first data entry for GeoNature's OccHab module (habitat stations) from QGIS, with local SQLite storage and synchronisation to the GeoNature REST API.
-version=0.11.8
+version=0.11.9
 author=Cédric Roy
 email=it@ariegenature.fr
 license=GPL-3.0-or-later
@@ -32,7 +32,22 @@ icon=resources/icons/occhab.svg
 experimental=True
 deprecated=False
 
-changelog=0.11.8 - Correction : un trace qui se recoupait faisait echouer le calcul d'altitude.
+changelog=0.11.9 - Correction : l'accrochage ignorait les stations recemment saisies.
+    L'accrochage de QGIS ne prenait pas les stations ajoutees depuis le dernier
+    rafraichissement de la carte. Le symptome etait trompeur : il « se mettait a
+    marcher » une fois la station synchronisee. La synchronisation n'y etait pour
+    rien — une station synchronisee apparait aussi dans la couche de contexte
+    serveur, qui est recreee a chaque chargement et donc reindexee ; l'accrochage
+    fonctionnait sur celle-la, la couche locale restant perimee.
+    Les entites des couches locales sont ecrites directement dans le fournisseur
+    de donnees, ce qui n'avertit pas l'index d'accrochage. Le canevas redessinait
+    les nouvelles stations, bien visibles, pendant que l'accrochage travaillait
+    encore sur l'ancien jeu.
+    Le meme defaut jouait a l'envers, et c'est le plus grave : on pouvait
+    s'accrocher au fantome d'une station supprimee ou deplacee, a l'endroit
+    qu'elle occupait. Un accrochage silencieusement faux est pire qu'une absence
+    d'accrochage, qui, elle, se voit.
+    0.11.8 - Correction : un trace qui se recoupait faisait echouer le calcul d'altitude.
     GeoNature calcule l'altitude en croisant la station avec le MNT. Sur un
     polygone dont le contour se recoupe — un « noeud papillon », frequent sur
     les traces tres serres ou repris d'une couche tierce — PostGIS repondait une
