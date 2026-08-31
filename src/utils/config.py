@@ -20,12 +20,6 @@ DEFAULT_CONFIG = {
         "api_url": "https://geonature.fr/geonature/api",
         "verify_ssl": True,
     },
-    "database": {
-        "host": "localhost",
-        "port": 5432,
-        "database": "geonature",
-        "user": "geonature_user",
-    },
     "local_db": {"path": None},  # renseigné à l'initialisation
     "id_dataset": None,  # JDD par défaut pour la saisie
     # Reprise de la saisie précédente : observateurs, typologie HABREF et
@@ -36,9 +30,15 @@ DEFAULT_CONFIG = {
     # typologie et la façon de déterminer, elles, ne se périment pas : une
     # campagne se mène dans une même typologie (CORINE, EUNIS…).
     "last_entry": {"observers": [], "cd_typo": None, "habitat": None},
-    "projection": "EPSG:2154",
-    "auto_sync_interval": 300,
 }
+# Retirées en 0.12.0 parce qu'aucune n'était lue nulle part, et qu'écrites dans
+# le config.json de chaque utilisateur elles promettaient ce qui n'existe pas :
+# `database` (host/port/database/user) une connexion PostgreSQL directe — le
+# plugin passe exclusivement par l'API REST ; `auto_sync_interval` une synchro
+# automatique — elle se déclenche au bouton ; `projection` un SCR de travail —
+# tout le circuit est en EPSG:4326, la reprojection se fait au cas par cas
+# depuis le SCR de la couche source. Une clé résiduelle dans un config.json
+# existant est simplement ignorée : rien à migrer.
 
 
 def _user_config_dir():
