@@ -3,7 +3,7 @@ name=OccHab GeoNature
 qgisMinimumVersion=3.28
 qgisMaximumVersion=3.99
 description=Data entry for GeoNature's OccHab module (habitat stations) from QGIS, with local SQLite storage and on-demand synchronisation to the GeoNature REST API.
-version=0.12.0
+version=0.13.0
 author=Cédric Roy
 email=it@ariegenature.fr
 license=GPL-3.0-or-later
@@ -34,7 +34,47 @@ icon=resources/icons/occhab.svg
 experimental=True
 deprecated=False
 
-changelog=0.12.0 - Documentation remise en accord avec le plugin, et trois reglages morts retires.
+changelog=0.13.0 - Numerisation jointive : deux stations voisines partagent enfin la meme limite.
+    Les stations d'habitat forment des mosaiques : la limite entre deux stations
+    voisines doit etre la meme ligne des deux cotes. Rien ne l'imposait. Le
+    plugin heritait passivement des reglages de numerisation de l'utilisateur,
+    tout en lui annoncant « accrochage QGIS actif » — promesse qu'il ne tenait
+    pas. Les sommets se posaient « a peu pres » sur la limite du voisin et
+    laissaient des recouvrements ou des fentes d'un metre, invisibles a l'ecran
+    mais bien reels : la somme des surfaces depasse celle du site.
+    Pendant le trace, le curseur s'accroche desormais aux stations deja saisies,
+    sur leurs sommets ET sur leurs limites, et la touche T fait longer le contour
+    de la voisine au lieu de le redessiner sommet par sommet. Sans l'accrochage
+    sur segment, on ne peut pas poser un sommet au milieu d'une limite existante
+    sans creer de fente.
+    A la validation, ce qui deborde sur une station voisine est retire du nouveau
+    trace, et un message le signale. La voisine, elle, n'est jamais modifiee : la
+    couche des stations n'est qu'un miroir en lecture seule, la verite est en
+    base, et modifier la station de quelqu'un d'autre a son insu serait pire que
+    le recouvrement.
+    Un trace entierement contenu dans une station existante est CONSERVE, avec un
+    avertissement, plutot que reduit a rien. Le cas est suspect, mais effacer la
+    saisie de quelqu'un qui rentre du terrain l'est davantage.
+    Les polygones seulement, et seulement entre stations OccHab. Sur une station
+    ponctuelle, l'accrochage au sommet ferait tomber le nouveau point exactement
+    sur une station existante — deux stations aux memes coordonnees, sans que
+    rien ne le signale. Les autres couches du projet ne sont ni accrochees ni
+    decoupees : un fond cadastral charge a cote collerait le trace a la mauvaise
+    limite.
+    QGIS n'a qu'un jeu de reglages de numerisation, celui du projet. Ils sont
+    donc poses le temps de la saisie puis rendus a l'identique, drapeau « projet
+    modifie » compris : sans cela QGIS proposerait d'enregistrer le projet apres
+    chaque station pour un reglage deja rendu.
+    Reglage « numerisation.jointif » a false dans config.json pour revenir a une
+    saisie libre ; le plugin ne touche alors plus du tout aux reglages de QGIS.
+    Aussi dans cette version : hors connexion, « Type de sol » et « Type de
+    mosaique d'habitats » disparaissaient du formulaire sans que rien ne le dise,
+    parce que leur nomenclature etait vide. Un avertissement le signale une fois
+    par session. La documentation cesse par ailleurs d'annoncer une saisie
+    « hors-ligne » que le plugin n'offre pas : la saisie est locale d'abord et
+    synchronisee a la demande, mais les listes de reference, la recherche HABREF
+    et l'altitude demandent une connexion.
+    0.12.0 - Documentation remise en accord avec le plugin, et trois reglages morts retires.
     Le guide et le README avaient pris du retard : 79 divergences avec le code,
     dont une douzaine qui induisaient en erreur. Le guide envoyait vers une
     action de menu supprimee depuis la 0.11.0, et promettait une copie de
