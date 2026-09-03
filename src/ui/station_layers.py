@@ -139,6 +139,45 @@ class StationLayerManager:
                 layers.append(layer)
         return layers
 
+    def couches_reference(self, geom_type):
+        """Couches sur lesquelles s'accrocher pour saisir une géométrie de ce type.
+
+        Les stations du MÊME type : une mosaïque se construit entre polygones.
+        Liste (vide si la couche n'existe pas encore), pour que l'appelant n'ait
+        pas à distinguer le cas « aucune station saisie ».
+        """
+        layer_id = self._layer_ids.get(geom_type)
+        layer = QgsProject.instance().mapLayer(layer_id) if layer_id else None
+        return [layer] if layer is not None else []
+
+    def geometries_wkt(self, geom_type, exclure_id=None):
+        """WKT (EPSG:4326) des entités AFFICHÉES pour ce type, hors `exclure_id`.
+
+        Sert de jeu de voisins à la numérisation jointive. On lit la couche, et
+        non la base : le jeu d'obstacles est alors exactement ce que
+        l'utilisateur voit et sur quoi il peut s'accrocher — même filtre JDD.
+        Une station découpée contre une voisine invisible serait incompréhensible.
+
+        `exclure_id` est l'identifiant LOCAL de la station en cours de
+        re-numérisation : sans lui, elle se découperait contre elle-même.
+        """
+        layer_id = self._layer_ids.get(geom_type)
+        layer = QgsProject.instance().mapLayer(layer_id) if layer_id else None
+        if layer is None:
+            return []
+        wkts = []
+        for feature in layer.getFeatures():
+            if exclure_id is not None:
+                try:
+                    if int(feature["id"]) == int(exclure_id):
+                        continue
+                except (TypeError, ValueError, KeyError):
+                    pass
+            geometry = feature.geometry()
+            if geometry is not None and not geometry.isNull() and not geometry.isEmpty():
+                wkts.append(geometry.asWkt())
+        return wkts
+
     def extent(self):
         """Emprise combinée (EPSG:4326) des couches non vides, ou None."""
         rect = None

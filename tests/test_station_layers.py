@@ -102,3 +102,54 @@ def test_station_retiree_n_est_plus_accrochable():
         assert not locator.nearestVertex(_SOMMET_B, _TOLERANCE).isValid()
     finally:
         manager.cleanup()
+
+
+def test_voisines_lues_depuis_la_couche_affichee():
+    """La numérisation jointive se découpe contre ce que l'utilisateur VOIT.
+
+    Lire la base plutôt que la couche découperait la station contre une voisine
+    hors du jeu de données filtré — invisible sur la carte, impossible à
+    s'accrocher dessus, et pourtant elle mangerait le tracé.
+    """
+    QgsProject.instance().clear()
+    manager = StationLayerManager()
+    try:
+        manager.refresh([_station(1, _CARRE_A), _station(2, _CARRE_B)])
+
+        wkts = manager.geometries_wkt("polygon")
+
+        assert len(wkts) == 2
+    finally:
+        manager.cleanup()
+
+
+def test_station_re_numerisee_exclue_de_ses_propres_voisines():
+    """Sans cette exclusion, la station se découperait contre sa PROPRE géométrie,
+    encore affichée sur la carte, et il ne resterait rien du nouveau tracé."""
+    QgsProject.instance().clear()
+    manager = StationLayerManager()
+    try:
+        manager.refresh([_station(1, _CARRE_A), _station(2, _CARRE_B)])
+
+        wkts = manager.geometries_wkt("polygon", exclure_id=1)
+
+        assert len(wkts) == 1
+        assert "2.2" in wkts[0]  # il ne reste que le carré B
+    finally:
+        manager.cleanup()
+
+
+def test_couches_reference_absentes_avant_toute_station():
+    """Aucune station saisie : rien où s'accrocher, et surtout aucune exception —
+    la première station d'un secteur se numérise comme avant."""
+    QgsProject.instance().clear()
+    manager = StationLayerManager()
+    try:
+        assert manager.couches_reference("polygon") == []
+        assert manager.geometries_wkt("polygon") == []
+
+        manager.refresh([_station(1, _CARRE_A)])
+
+        assert len(manager.couches_reference("polygon")) == 1
+    finally:
+        manager.cleanup()

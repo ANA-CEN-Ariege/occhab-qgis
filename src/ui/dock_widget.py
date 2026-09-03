@@ -35,9 +35,12 @@ from ..database.sqlite_local import BROUILLON, VALIDE, OccHabDatabase
 from ..processing import correspondances as corresp
 from ..processing.duplicate import habitat_reprise, paste_fields, station_template
 from ..processing.geometry import (
+    JOINTIF_DECOUPE,
+    JOINTIF_RECOUVERT,
     CrsIndetermine,
     GeometrieIrreparable,
     assainir_geometrie,
+    decouper_contre_voisins,
     wkt_en_degres_plausibles,
 )
 from .connection_dialog import ConnectionDialog
@@ -2276,7 +2279,9 @@ class OccHabDockWidget(QDockWidget):
         wkt, geom_type = full.get("geom"), full.get("geom_type")
         if wkt and geom_type:  # géométrie existante → édition des sommets
             self._edit_geom_station_id = station_id
-            self._ensure_geom_editor().start(wkt, geom_type)
+            self._ensure_geom_editor().start(
+                wkt, geom_type, self._couches_accrochage(geom_type)
+            )
         else:  # pas de géométrie → numérisation d'une nouvelle (polygone par défaut)
             self._capture_target = station_id
             self._start_capture("polygon")
@@ -2285,7 +2290,7 @@ class OccHabDockWidget(QDockWidget):
         if self._geom_editor is None:
             from .map_tools import GeometryEditController
 
-            self._geom_editor = GeometryEditController(self.iface, self)
+            self._geom_editor = GeometryEditController(self.iface, self, self.logger)
             self._geom_editor.edited.connect(self._on_geometry_edited)
             self._geom_editor.cancelled.connect(self._on_geometry_edit_cancelled)
         return self._geom_editor
@@ -2294,6 +2299,7 @@ class OccHabDockWidget(QDockWidget):
         station_id = self._edit_geom_station_id
         self._edit_geom_station_id = None
         if station_id is not None:
+            wkt = self._rendre_jointif(wkt, geom_type, exclure_id=station_id)
             metrics = self._geo_metrics(wkt or None, geom_type)
             self._update_geometry(station_id, wkt or None, geom_type, metrics)
 
@@ -2305,22 +2311,88 @@ class OccHabDockWidget(QDockWidget):
         if self._capture is None:
             from .map_tools import GeometryCaptureController
 
-            self._capture = GeometryCaptureController(self.iface, self)
+            self._capture = GeometryCaptureController(self.iface, self, self.logger)
             self._capture.captured.connect(self._on_geometry_captured)
             self._capture.cancelled.connect(self._on_capture_cancelled)
         return self._capture
 
+    def _rendre_jointif(self, wkt, geom_type, exclure_id=None):
+        """Retirer du tracé ce qui recouvre les stations voisines affichées.
+
+        Les stations d'habitat forment des mosaïques : la limite entre deux
+        stations voisines doit être la MÊME ligne. L'accrochage y aide pendant le
+        tracé, mais ne l'impose pas — c'est ici que le recouvrement est retiré,
+        une fois pour toutes, avant enregistrement.
+
+        La station voisine n'est jamais modifiée : c'est le nouveau tracé qui
+        s'efface devant elle. Rend toujours un WKT exploitable — un tracé
+        entièrement contenu dans une voisine est CONSERVÉ et signalé, plutôt que
+        réduit à rien : perdre la saisie serait pire que le recouvrement.
+        """
+        if not wkt or geom_type != "polygon" or not self._jointif_actif():
+            return wkt
+        try:
+            voisins = self.layers.geometries_wkt("polygon", exclure_id=exclure_id)
+            nouveau, statut = decouper_contre_voisins(wkt, voisins)
+        except Exception as exc:  # noqa: BLE001 - ne jamais perdre une saisie
+            self.logger.warning("Découpe jointive impossible : %s", exc)
+            return wkt
+        if statut == JOINTIF_DECOUPE:
+            self.iface.messageBar().pushInfo(
+                "OccHab",
+                "Le tracé débordait sur une station voisine : la limite commune a "
+                "été ajustée. Vérifiez la forme sur la carte.",
+            )
+        elif statut == JOINTIF_RECOUVERT:
+            self.iface.messageBar().pushWarning(
+                "OccHab",
+                "Le tracé est entièrement contenu dans une station existante : il "
+                "a été conservé tel quel, mais les deux stations se recouvrent.",
+            )
+        return nouveau
+
+    def _couches_accrochage(self, geom_type):
+        """Couches de stations à accrocher pendant la saisie ([] si sans objet).
+
+        Les POLYGONES seulement. Sur une station ponctuelle, l'accrochage au
+        sommet ferait tomber le nouveau point exactement sur une station
+        existante — deux stations aux mêmes coordonnées, sans que rien ne le
+        signale. Ce n'est pas ce que « jointif » veut dire.
+        """
+        if geom_type != "polygon" or not self._jointif_actif():
+            return []
+        try:
+            return self.layers.couches_reference(geom_type)
+        except Exception as exc:  # noqa: BLE001 - l'aide au tracé n'est pas critique
+            self.logger.warning("Couches d'accrochage indisponibles : %s", exc)
+            return []
+
+    def _jointif_actif(self):
+        return bool(self.config.get("numerisation.jointif", True))
+
     def _start_capture(self, geom_type):
-        self._ensure_capture().start(geom_type)
-        self.iface.messageBar().pushInfo(
-            "OccHab",
+        self._ensure_capture().start(geom_type, self._couches_accrochage(geom_type))
+        message = (
             "Numérisez la station (accrochage QGIS actif, clic droit pour "
-            "terminer, Échap pour annuler).",
+            "terminer, Échap pour annuler)."
         )
+        if self._jointif_actif() and geom_type == "polygon":
+            message = (
+                "Numérisez la station : le tracé s'accroche aux stations voisines "
+                "(touche T pour longer leur contour), clic droit pour terminer, "
+                "Échap pour annuler."
+            )
+        self.iface.messageBar().pushInfo("OccHab", message)
 
     def _on_geometry_captured(self, wkt, geom_type):
         target = self._capture_target
         self._capture_target = None
+        # `target` est l'id de la station qu'on re-numérise, le cas échéant : sans
+        # l'exclure, elle se découperait contre sa PROPRE géométrie, encore
+        # affichée sur la carte, et il ne resterait rien du nouveau tracé.
+        wkt = self._rendre_jointif(
+            wkt, geom_type, exclure_id=target if isinstance(target, int) else None
+        )
         metrics = self._geo_metrics(wkt or None, geom_type)
         if isinstance(target, int):
             self._update_geometry(target, wkt or None, geom_type, metrics)

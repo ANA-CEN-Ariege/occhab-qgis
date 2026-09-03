@@ -42,9 +42,12 @@ Développée par l'**ANA-CEN Ariège**.
   local** et synchronisée à la demande — perdre le réseau en cours de session
   n'interrompt rien.
 - **Numérisation native QGIS** de la géométrie (polygone / point), **reprise**
-  d'une géométrie depuis une autre couche, avec accrochage ; **édition des
-  sommets** d'une géométrie existante ; **ouverture d'une station au clic sur la
-  carte** (double-clic ou outil *Identifier*).
+  d'une géométrie depuis une autre couche ; **édition des sommets** d'une
+  géométrie existante ; **ouverture d'une station au clic sur la carte**
+  (double-clic ou outil *Identifier*).
+- **Saisie jointive** des polygones : accrochage sommet + segment sur les
+  stations voisines, suivi de contour, et retrait du recouvrement à la
+  validation — une mosaïque de stations sans fente ni superposition.
 - **Formulaires alignés** sur le formulaire web OccHab : `cd_hab` (recherche
   HABREF), nom cité, nomenclatures (technique de collecte, détermination,
   abondance, intérêt communautaire, exposition, méthode de calcul de surface,
@@ -232,7 +235,8 @@ stations du JDD que vos permissions GeoNature vous autorisent à voir.
 
 ### Saisir une station
 1. **« ＋ Nouvelle station ▾ »** propose : *Dessiner un polygone* / *Dessiner un
-   point* (tracé sur la carte, accrochage actif, clic droit pour terminer),
+   point* (tracé sur la carte, saisie **jointive** — cf. « Numérisation
+   jointive » ci-dessous —, clic droit pour terminer),
    *Copier la ou les entités sélectionnées (autre couche)* (reprend la géométrie
    d'une entité sélectionnée dans une autre couche, reprojetée en 4326 ;
    **sélection multiple → une station par entité**, métadonnées communes saisies
@@ -268,6 +272,48 @@ stations du JDD que vos permissions GeoNature vous autorisent à voir.
    lui sont propres (`habitat_reprise`, cf. `src/processing/duplicate.py`).
 3. La station apparaît dans **« Mes stations »**, identifiée par son habitat
    (« 41.2 - Chênaies-charmaies (+N) »), état *À synchroniser*.
+
+### Numérisation jointive
+Les stations d'habitat forment des **mosaïques** : deux stations voisines
+partagent une limite, qui doit être **la même ligne** des deux côtés. Sans aide,
+l'utilisateur repose ses sommets « à peu près » sur la limite du voisin et laisse
+des recouvrements ou des fentes d'un mètre — invisibles à l'écran, mais la somme
+des surfaces dépasse celle du site.
+
+Le plugin s'en charge en deux temps, pour les **polygones** seulement :
+
+1. **Pendant le tracé** — accrochage **sommet *et* segment** (12 px, cf.
+   `TOLERANCE_ACCROCHAGE_PX`) sur la seule couche « OccHab – Stations
+   (polygones) », et **suivi de contour** (touche **T**) pour longer la limite
+   d'une voisine au lieu de la redessiner. Sans l'accrochage sur *segment*, on ne
+   peut pas poser un sommet au milieu d'une limite existante sans créer de fente.
+2. **À la validation** — ce qui recouvre une station voisine est **retiré du
+   nouveau tracé** (`decouper_contre_voisins`, `src/processing/geometry.py`), et
+   un message le signale. La **voisine n'est jamais modifiée** : la couche des
+   stations est un miroir en lecture seule, la vérité est en base, et modifier
+   une station d'autrui à son insu serait pire que le recouvrement.
+
+Trois choix qui méritent d'être dits :
+
+- **Les voisines sont lues sur la COUCHE, pas en base.** Le jeu d'obstacles est
+  donc exactement ce que l'utilisateur voit et sur quoi il peut s'accrocher —
+  même filtre JDD. Une station découpée contre une voisine invisible serait
+  incompréhensible.
+- **La station qu'on re-numérise est exclue** de ses propres voisines : sans
+  cela, elle se découperait contre sa géométrie encore affichée, et il ne
+  resterait rien du nouveau tracé.
+- **Un tracé entièrement contenu dans une voisine est CONSERVÉ**, avec un
+  avertissement, au lieu d'être réduit à rien. Le cas est suspect, mais effacer
+  la saisie de quelqu'un qui revient du terrain l'est davantage.
+
+L'accrochage est posé sur le **projet** (QGIS n'a pas d'autre endroit) le temps
+de la saisie, puis **rendu à l'identique** — drapeau « projet modifié » compris,
+sans quoi QGIS proposerait d'enregistrer le projet après chaque station pour un
+réglage déjà rendu. Mode *configuration avancée* limité aux couches de stations :
+un fond cadastral chargé à côté collerait le tracé à la mauvaise limite.
+
+Pour désactiver : `numerisation.jointif` à `false` dans `config.json`. Le plugin
+ne touche alors plus du tout aux réglages de numérisation de QGIS.
 
 ### Recopier une station
 Un même modèle (`station_template` / `paste_fields`) sert trois gestes :
@@ -2370,11 +2416,12 @@ avancés (non exposés dans l'UI) :
 | `local_db.path` | auto | Chemin de la base SQLite |
 | `geonature.reconnexion_auto` | `true` | Reconnexion silencieuse à l'ouverture |
 | `mise_en_page.dossier_gabarits` | — | Dernier dossier de gabarits `.qpt` retenu |
+| `numerisation.jointif` | `true` | Saisie jointive des polygones : accrochage sur les stations voisines et retrait du recouvrement (cf. « Numérisation jointive ») |
 
 > **Toutes ces clés ne sont pas écrites dans le fichier.** Seuls
-> `geonature.api_url`, `geonature.verify_ssl`, `local_db.path`, `id_dataset` et
-> `last_entry.*` figurent dans `DEFAULT_CONFIG`, donc dans un `config.json`
-> neuf. Les autres n'existent que comme valeur de repli passée à l'appel : pour
+> `geonature.api_url`, `geonature.verify_ssl`, `local_db.path`, `id_dataset`,
+> `last_entry.*` et `numerisation.jointif` figurent dans `DEFAULT_CONFIG`, donc
+> dans un `config.json` neuf. Les autres n'existent que comme valeur de repli passée à l'appel : pour
 > les régler, il faut **les ajouter à la main**.
 
 > **Clés retirées en 0.12.0** : `database` (host/port/database/user),
@@ -2438,7 +2485,7 @@ occhab/
                       export_layers.py           # couches d'export : bandes, damier, enjeux, PEE
                       flow_layout.py · no_wheel.py           # utilitaires Qt
                       connection_dialog.py
-                      map_tools.py               # capture + édition de géométrie
+                      map_tools.py               # capture + édition de géométrie, accrochage jointif
                       station_layers.py · server_layers.py   # couches carte
 ```
 
@@ -2470,8 +2517,11 @@ seul nom (`import payload`), un module d'interface par son chemin complet.
 
 **PyQGIS est requis pour une partie de la suite.** Lancez `pytest` avec le
 Python qui voit `qgis.core` (celui de l'installation QGIS). Sont concernés
-`test_geometry.py` (réparation topologique), `test_station_layers.py`
-(invalidation de l'index d'accrochage), `test_export_layers.py` et
+`test_geometry.py` (réparation topologique), `test_jointif.py` (découpe contre
+les stations voisines), `test_station_layers.py` (invalidation de l'index
+d'accrochage, lecture des voisines), `test_aide_au_trace.py` (réglages
+d'accrochage posés puis **rendus** — ce qu'aucun test de fonction pure
+n'attrape : l'état laissé derrière soi), `test_export_layers.py` et
 `test_interface_habitat.py`, qui construit de vrais widgets hors écran — une
 suite qui ne testerait que les modules purs laisserait passer une extension qui
 ne se charge plus.

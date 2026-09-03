@@ -135,6 +135,94 @@ def assainir_wkt(wkt):
     return assainie.asWkt(), corrige
 
 
+#: Résultats de `decouper_contre_voisins`, dans l'ordre de gravité croissante.
+JOINTIF_INCHANGE = "inchange"    # le tracé ne recouvrait aucune station voisine
+JOINTIF_DECOUPE = "decoupe"      # le recouvrement a été retiré du tracé
+JOINTIF_RECOUVERT = "recouvert"  # tracé entièrement dans un voisin : rien retiré
+
+
+def _voisin_exploitable(wkt, emprise):
+    """QgsGeometry surfacique valide intersectant `emprise`, ou None.
+
+    Les stations déjà enregistrées ne sont pas toutes saines : celles saisies
+    avant `assainir_wkt` peuvent être auto-intersectantes, et GEOS refuserait
+    alors l'union entière. Un voisin irrécupérable est ignoré — mieux vaut une
+    découpe contre les autres que pas de découpe du tout.
+    """
+    geom = QgsGeometry.fromWkt(wkt or "")
+    if geom.isNull() or geom.isEmpty():
+        return None
+    if geom.type() != QgsWkbTypes.GeometryType.PolygonGeometry:
+        return None
+    if not geom.boundingBox().intersects(emprise):
+        return None  # écarté avant tout calcul GEOS (le cas de l'immense majorité)
+    if not geom.isGeosValid():
+        try:
+            geom, _ = assainir_geometrie(geom)
+        except GeometrieIrreparable:
+            return None
+    return geom
+
+
+def decouper_contre_voisins(wkt, wkts_voisins):
+    """(WKT à enregistrer, statut) — rendre un polygone jointif de ses voisins.
+
+    Retire du tracé ce qui recouvre les stations voisines, pour que la limite
+    commune soit EXACTEMENT celle du voisin : c'est ce qui fait une mosaïque
+    sans recouvrement ni fente. Le voisin, lui, n'est jamais modifié — la
+    couche des stations est un miroir en lecture seule et la vérité est en base.
+
+    Tout se joue en EPSG:4326 : le tracé y a déjà été reprojeté par
+    `geometry_to_wkt_4326`, et les voisins en viennent. Passer par
+    l'avoid-intersections natif de QGIS aurait comparé des géométries de SCR
+    différents (la couche de saisie est au SCR du canevas) sans reprojeter.
+
+    Le statut `JOINTIF_RECOUVERT` rend le tracé INCHANGÉ : une station
+    entièrement contenue dans une autre est certes suspecte, mais la découper
+    ne laisserait rien du travail de l'utilisateur. On le lui signale, il
+    tranche. Ne s'applique qu'aux polygones ; points et lignes ressortent tels
+    quels.
+    """
+    if not wkt:
+        return wkt, JOINTIF_INCHANGE
+    geom = QgsGeometry.fromWkt(wkt)
+    if geom.isNull() or geom.isEmpty():
+        return wkt, JOINTIF_INCHANGE
+    if geom.type() != QgsWkbTypes.GeometryType.PolygonGeometry:
+        return wkt, JOINTIF_INCHANGE
+
+    emprise = geom.boundingBox()
+    voisins = [
+        voisin for voisin in (
+            _voisin_exploitable(w, emprise) for w in (wkts_voisins or [])
+        ) if voisin is not None
+    ]
+    if not voisins:
+        return wkt, JOINTIF_INCHANGE
+
+    obstacle = QgsGeometry.unaryUnion(voisins)
+    if obstacle is None or obstacle.isNull() or obstacle.isEmpty():
+        return wkt, JOINTIF_INCHANGE
+    reste = geom.difference(obstacle)
+    if reste is None or reste.isNull():
+        # Échec GEOS : ne pas bloquer la saisie sur un calcul qui n'aboutit pas.
+        return wkt, JOINTIF_INCHANGE
+    if reste.isEmpty():
+        return wkt, JOINTIF_RECOUVERT
+    try:
+        assainie, _ = assainir_geometrie(reste)
+    except GeometrieIrreparable:
+        # La découpe ne laisse que des miettes sans surface : garder le tracé.
+        return wkt, JOINTIF_RECOUVERT
+    # `isGeosEqual` et non `equals` : la différence renvoie le même contour avec
+    # un autre point de départ et un autre sens de parcours. `equals` compare
+    # sommet à sommet et jugerait « découpé » un tracé déjà jointif — l'utilisateur
+    # aurait reçu l'avertissement à chaque station posée le long de sa voisine.
+    if geom.isGeosEqual(assainie):
+        return wkt, JOINTIF_INCHANGE  # tracé déjà jointif : garder le WKT d'origine
+    return assainie.asWkt(), JOINTIF_DECOUPE
+
+
 def geometry_to_wkt_4326(geometry, source_crs):
     """Reprojeter une géométrie vers EPSG:4326 et renvoyer son WKT.
 

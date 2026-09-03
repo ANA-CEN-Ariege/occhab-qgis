@@ -28,9 +28,11 @@ from qgis.core import (
     QgsFeature,
     QgsGeometry,
     QgsProject,
+    QgsSnappingConfig,
+    QgsTolerance,
     QgsVectorLayer,
 )
-from qgis.gui import QgsMapToolCapture, QgsMapToolDigitizeFeature
+from qgis.gui import QgsMapCanvasTracer, QgsMapToolCapture, QgsMapToolDigitizeFeature
 
 from ..processing.geometry import (
     CrsIndetermine,
@@ -55,16 +57,145 @@ _MESSAGE_CORRIGEE = (
 )
 
 
+#: Tolérance d'accrochage, en PIXELS : indépendante du zoom, donc identique à
+#: toutes les échelles d'affichage. C'est le défaut de QGIS, et le seul réglage
+#: utilisable sur le terrain, où l'on numérise aussi bien au 1:500 qu'au 1:5000.
+TOLERANCE_ACCROCHAGE_PX = 12
+
+
+class AideAuTrace:
+    """Accrocher aux stations voisines et suivre leur contour, le temps d'une saisie.
+
+    Les stations d'habitat forment des mosaïques : deux polygones voisins doivent
+    partager EXACTEMENT leur limite. Sans accrochage sur segment, l'utilisateur
+    repose ses sommets « à peu près » sur la limite du voisin et laisse des fentes
+    d'un mètre, invisibles à l'écran.
+
+    Les réglages sont posés sur le PROJET (QGIS n'en a pas d'autre) puis rendus à
+    l'identique en fin de session : le reste du travail de l'utilisateur dans QGIS
+    ne doit pas se retrouver avec un accrochage qu'il n'a pas demandé.
+
+    Deux précautions :
+
+    1. Mode « configuration avancée » avec les seules couches de stations, la liste
+       des réglages par couche étant vidée d'abord. Sinon l'accrochage attraperait
+       aussi le cadastre ou un fond de plan chargé à côté, et le tracé se collerait
+       à la mauvaise limite.
+    2. Changer la configuration d'accrochage marque le projet comme MODIFIÉ, et
+       QGIS proposerait de l'enregistrer à la fermeture pour un réglage qu'on a
+       déjà rendu. On restaure donc aussi ce drapeau — sans écraser un état
+       « modifié » légitime, mesuré juste avant.
+    """
+
+    def __init__(self, canvas, logger=None):
+        self._canvas = canvas
+        self._logger = logger
+        self._config_precedente = None
+        self._tracage_precedent = None
+
+    def appliquer(self, couches):
+        """Poser l'accrochage sur `couches` et activer le suivi de contour."""
+        couches = [c for c in (couches or []) if c is not None]
+        if not couches or self._config_precedente is not None:
+            return  # rien où s'accrocher, ou réglages déjà posés
+        projet = QgsProject.instance()
+        modifie = projet.isDirty()
+        try:
+            self._config_precedente = QgsSnappingConfig(projet.snappingConfig())
+            projet.setSnappingConfig(self._config_jointive(couches))
+            self._activer_tracage()
+        except Exception as exc:  # noqa: BLE001 - une aide ne doit pas bloquer la saisie
+            self._avertir("Accrochage non configuré : %s", exc)
+        finally:
+            projet.setDirty(modifie)
+
+    def restaurer(self):
+        """Rendre les réglages de numérisation tels qu'ils étaient."""
+        if self._config_precedente is None:
+            return
+        projet = QgsProject.instance()
+        modifie = projet.isDirty()
+        try:
+            projet.setSnappingConfig(self._config_precedente)
+            self._restaurer_tracage()
+        except Exception as exc:  # noqa: BLE001
+            self._avertir("Accrochage non restauré : %s", exc)
+        finally:
+            projet.setDirty(modifie)
+            self._config_precedente = None
+            self._tracage_precedent = None
+
+    # ------------------------------------------------------------- interne
+    def _config_jointive(self, couches):
+        config = QgsSnappingConfig(QgsProject.instance().snappingConfig())
+        # Les réglages par couche se lisent AVANT le vidage : ils portent les
+        # valeurs par défaut de QGIS (échelles), qu'on ne fait que compléter.
+        modeles = {c.id(): config.individualLayerSettings(c) for c in couches}
+        config.setEnabled(True)
+        config.setMode(QgsSnappingConfig.AdvancedConfiguration)
+        config.clearIndividualLayerSettings()
+        for couche in couches:
+            config.setIndividualLayerSettings(
+                couche, self._reglages_couche(modeles.get(couche.id()))
+            )
+        return config
+
+    @staticmethod
+    def _reglages_couche(modele):
+        # Sommet ET segment : sans le segment, on ne peut poser un sommet au
+        # milieu de la limite d'une station voisine sans créer de fente.
+        types = QgsSnappingConfig.VertexFlag | QgsSnappingConfig.SegmentFlag
+        if modele is not None and modele.valid():
+            # Un réglage existant est déjà valide : le compléter évite le
+            # constructeur paramétré, déprécié à partir de QGIS 3.40.
+            reglages = modele
+        else:
+            # Le constructeur SANS argument rend un réglage `valid() == False`,
+            # que l'accrochage ignore : il faut celui-ci, disponible dès la 3.28.
+            reglages = QgsSnappingConfig.IndividualLayerSettings(
+                True, types, TOLERANCE_ACCROCHAGE_PX, QgsTolerance.Pixels
+            )
+        reglages.setEnabled(True)
+        reglages.setTypeFlag(types)
+        reglages.setTolerance(TOLERANCE_ACCROCHAGE_PX)
+        reglages.setUnits(QgsTolerance.Pixels)
+        return reglages
+
+    def _action_tracage(self):
+        tracer = QgsMapCanvasTracer.tracerForCanvas(self._canvas)
+        return tracer.actionEnableTracing() if tracer is not None else None
+
+    def _activer_tracage(self):
+        # Suivi de contour (touche T) : entre deux points posés sur des limites
+        # existantes, le tracé les LONGE au lieu de couper tout droit. C'est ce
+        # qui permet d'épouser une station voisine sans la redessiner sommet
+        # par sommet. Ailleurs, le tracé reste rectiligne : rien n'est perdu.
+        action = self._action_tracage()
+        if action is not None:
+            self._tracage_precedent = action.isChecked()
+            action.setChecked(True)
+
+    def _restaurer_tracage(self):
+        action = self._action_tracage()
+        if action is not None and self._tracage_precedent is not None:
+            action.setChecked(self._tracage_precedent)
+
+    def _avertir(self, message, exc):
+        if self._logger is not None:
+            self._logger.warning(message, exc)
+
+
 class GeometryCaptureController(QObject):
     """Pilote une session de numérisation et émet la géométrie en EPSG:4326."""
 
     captured = pyqtSignal(str, str)  # wkt (EPSG:4326), geom_type
     cancelled = pyqtSignal()
 
-    def __init__(self, iface, parent=None):
+    def __init__(self, iface, parent=None, logger=None):
         super().__init__(parent)
         self.iface = iface
         self._canvas = iface.mapCanvas()
+        self._aide = AideAuTrace(self._canvas, logger)
         self._tool = None
         self._layer = None
         self._prev_tool = None
@@ -75,8 +206,13 @@ class GeometryCaptureController(QObject):
         self._session = 0
 
     # --------------------------------------------------------------- API
-    def start(self, geom_type):
-        """Démarrer une numérisation (nettoie proprement une session résiduelle)."""
+    def start(self, geom_type, couches_reference=None):
+        """Démarrer une numérisation (nettoie proprement une session résiduelle).
+
+        `couches_reference` : couches sur lesquelles s'accrocher pendant le tracé
+        (les stations déjà saisies), pour une saisie jointive. Les réglages de
+        numérisation du projet sont rendus à l'identique en fin de session.
+        """
         self._session += 1  # invalide les callbacks différés en attente
         # Conserver l'outil d'origine réel si une session traîne encore.
         original_prev = self._prev_tool if self._tool is not None else None
@@ -86,6 +222,7 @@ class GeometryCaptureController(QObject):
         self._geom_type = geom_type if geom_type in _CAPTURE_MODE else "polygon"
         self._pending_wkt = None
 
+        self._aide.appliquer(couches_reference)
         crs = self._canvas.mapSettings().destinationCrs()
         self._layer = self._make_layer(self._geom_type, crs)
         # La couche doit être dans le projet ET éditable pour l'outil natif.
@@ -149,6 +286,7 @@ class GeometryCaptureController(QObject):
     # ------------------------------------------------------------- interne
     def _teardown(self, restore_tool):
         """Déconnecter, (option) restaurer l'outil, retirer la couche jetable."""
+        self._aide.restaurer()
         tool = self._tool
         self._disconnect(tool)
         if restore_tool and self._prev_tool is not None:
@@ -231,10 +369,11 @@ class GeometryEditController(QObject):
     edited = pyqtSignal(str, str)  # wkt (EPSG:4326), geom_type
     cancelled = pyqtSignal()
 
-    def __init__(self, iface, parent=None):
+    def __init__(self, iface, parent=None, logger=None):
         super().__init__(parent)
         self.iface = iface
         self._canvas = iface.mapCanvas()
+        self._aide = AideAuTrace(self._canvas, logger)
         self._layer = None
         self._prev_tool = None
         self._prev_active = None
@@ -243,7 +382,12 @@ class GeometryEditController(QObject):
         self._finished = False
 
     # --------------------------------------------------------------- API
-    def start(self, wkt_4326, geom_type):
+    def start(self, wkt_4326, geom_type, couches_reference=None):
+        """Éditer les sommets d'une géométrie existante.
+
+        `couches_reference` : couches sur lesquelles s'accrocher (les stations
+        voisines), pour recoller une limite commune sans laisser de fente.
+        """
         if self._layer is not None and not self._finished:
             self._teardown()  # session résiduelle
         self._finished = False
@@ -254,6 +398,7 @@ class GeometryEditController(QObject):
             self.cancelled.emit()
             return
 
+        self._aide.appliquer(couches_reference)
         project_crs = self._canvas.mapSettings().destinationCrs()
         self._layer = self._make_edit_layer(self._geom_type, project_crs)
         feature = QgsFeature(self._layer.fields())
@@ -320,6 +465,7 @@ class GeometryEditController(QObject):
         self._msg_item = bar.pushWidget(widget, Qgis.MessageLevel.Info)
 
     def _teardown(self):
+        self._aide.restaurer()
         if self._msg_item is not None:
             try:
                 self.iface.messageBar().popWidget(self._msg_item)

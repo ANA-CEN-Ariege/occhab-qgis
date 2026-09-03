@@ -30,6 +30,12 @@ DEFAULT_CONFIG = {
     # typologie et la façon de déterminer, elles, ne se périment pas : une
     # campagne se mène dans une même typologie (CORINE, EUNIS…).
     "last_entry": {"observers": [], "cd_typo": None, "habitat": None},
+    # Numérisation jointive : accrochage sommet + segment sur les stations
+    # voisines pendant le tracé, et retrait du recouvrement à la validation.
+    # Les stations d'habitat forment des mosaïques ; deux polygones voisins
+    # doivent partager exactement leur limite. Passer à false rend la saisie
+    # libre et ne touche plus aux réglages de numérisation de QGIS.
+    "numerisation": {"jointif": True},
 }
 # Retirées en 0.12.0 parce qu'aucune n'était lue nulle part, et qu'écrites dans
 # le config.json de chaque utilisateur elles promettaient ce qui n'existe pas :

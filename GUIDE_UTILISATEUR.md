@@ -324,8 +324,24 @@ la première dit où en est *votre travail*, la seconde où en est *l'envoi*.
 Cliquez **« ＋ Nouvelle station ▾ »** et choisissez d'où vient la géométrie :
 
 - **Dessiner un polygone** / **Dessiner un point** — dessinez sur la carte : clic
-  gauche pour poser les sommets (l'**accrochage** QGIS est actif, pratique pour se
-  caler sur des objets existants), **clic droit** pour terminer.
+  gauche pour poser les sommets, **clic droit** pour terminer.
+
+  Pour un polygone, la saisie est **jointive** : le curseur s'**accroche** aux
+  stations déjà saisies (sommets *et* limites), et la touche **T** fait **longer
+  le contour** de la station voisine au lieu de le redessiner sommet par sommet —
+  posez un point sur sa limite, un autre plus loin sur cette même limite, et tout
+  ce qui est entre les deux épouse exactement son tracé.
+
+  À la validation, ce qui **déborde** sur une station voisine est **retiré** de
+  votre tracé : la limite entre les deux stations devient la même ligne, sans
+  recouvrement ni fente. Un message vous le signale ; la **station voisine, elle,
+  n'est jamais modifiée**. Si votre tracé est **entièrement contenu** dans une
+  station existante, il est **conservé tel quel** et vous êtes averti du
+  recouvrement — à vous de trancher.
+
+  Cela ne concerne que les **polygones**, et seulement entre **stations OccHab** :
+  les autres couches du projet ne sont ni accrochées ni découpées. Vos réglages
+  de numérisation QGIS sont remis en place dès la fin de la saisie.
 - **Copier la ou les entités sélectionnées d'une autre couche** — sélectionnez d'abord
   une **ou plusieurs** entités dans une **autre couche** (parcellaire, ancien relevé,
   trace GPS…), puis choisissez ceci : leur forme est reprise (et reprojetée) pour la
