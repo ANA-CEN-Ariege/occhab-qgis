@@ -158,6 +158,9 @@ class OccHabDockWidget(QDockWidget):
         self._map_filter_installed = False
         self._server_prompt = None
         self._occhab_layers_notice_shown = False
+        # Listes de référence absentes : signalé une seule fois par session, à
+        # l'ouverture d'un formulaire (cf. `_avertir_listes_absentes`).
+        self._listes_notice_shown = False
         self._build_ui()
         self._install_map_interaction()
         self._oublier_ancien_cache_habref()
@@ -2513,6 +2516,7 @@ class OccHabDockWidget(QDockWidget):
         l'édition, pour éviter que les appels divergent.
         """
         en_cours = (station or {}).get("id")
+        self._avertir_listes_absentes()
         return StationDialog(
             self.config,
             geom_wkt=geom_wkt,
@@ -2540,6 +2544,31 @@ class OccHabDockWidget(QDockWidget):
             user_names=self._user_names(),
             default_determiner=self._current_user_name(),
             parent=self,
+        )
+
+    def _avertir_listes_absentes(self):
+        """Prévenir, une fois par session, que les listes du serveur manquent.
+
+        `station_form` ne crée « Type de sol » et « Type de mosaïque d'habitats »
+        que si leur nomenclature porte des valeurs — repli voulu pour les
+        instances GeoNature anciennes, qui ne les fournissent pas. Hors
+        connexion, la même condition les fait disparaître alors qu'elles
+        existent : on pouvait saisir une journée entière sans s'apercevoir qu'il
+        manquait des champs.
+
+        L'avertissement ne se déclenche que si AUCUNE nomenclature n'est
+        chargée : quelques listes vides parmi d'autres, c'est l'instance qui ne
+        les fournit pas, et c'est un comportement documenté qu'il ne faut pas
+        signaler comme une anomalie.
+        """
+        if self._listes_notice_shown or any(self.nomenclatures.values()):
+            return
+        self._listes_notice_shown = True
+        self.iface.messageBar().pushWarning(
+            "OccHab",
+            "Listes de référence non chargées : les menus déroulants sont vides "
+            "et certains champs sont masqués (type de sol, type de mosaïque). "
+            "Connectez-vous, puis rouvrez le formulaire pour les retrouver.",
         )
 
     def _open_station_dialog(self, geom_wkt, geom_type, metrics=None):

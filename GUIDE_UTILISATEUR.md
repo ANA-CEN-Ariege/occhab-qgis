@@ -21,7 +21,7 @@ QGIS. Il couvre l'installation, la première configuration et l'usage quotidien.
 8. [Récupérer des stations depuis le serveur](#8-récupérer-des-stations-depuis-le-serveur)
 9. [Synchroniser avec GeoNature](#9-synchroniser-avec-geonature)
 10. [Supprimer : base locale ou serveur](#10-supprimer--base-locale-ou-serveur)
-11. [Travailler hors-ligne](#11-travailler-hors-ligne)
+11. [Quand le réseau tombe](#11-quand-le-réseau-tombe)
 12. [Sauvegarde et export des données](#12-sauvegarde-et-export-des-données)
 13. [Les champs « enjeu / état / zone humide / recouvrement »](#13-les-champs--enjeu--état--zone-humide--recouvrement-)
 14. [Brouillon, validé, et la table des stations](#14-brouillon-validé-et-la-table-des-stations)
@@ -171,8 +171,9 @@ Deux cas où la reconnexion n'a pas lieu, et c'est voulu :
   *Astuce* : dans **Préférences ▸ Options ▸ Authentification**, QGIS peut retenir
   ce mot de passe principal dans le trousseau du système ; la reconnexion devient
   alors totalement automatique.
-- **Vous êtes hors ligne.** Le plugin démarre déconnecté, ce qui est son mode de
-  travail normal : vous saisissez, vous synchroniserez plus tard.
+- **Vous êtes hors ligne.** Le plugin démarre alors déconnecté. Vous pouvez
+  saisir et synchroniser plus tard, mais avec les limites du §11 : connectez-vous
+  une fois avant de partir sur le terrain.
 
 Pour désactiver la reconnexion automatique, ajoutez `geonature.reconnexion_auto`
 à `false` dans le fichier `config.json` du plugin (menu **Base locale… ▸ Ouvrir
@@ -851,19 +852,47 @@ stations déjà synchronisées, les autres de la sélection ne sont pas touchée
 
 ---
 
-## 11. Travailler hors-ligne
+## 11. Quand le réseau tombe
 
-Le plugin est **hors-ligne par défaut** : toutes vos saisies sont écrites dans une
-base locale (`occhab_local.db`), **connecté ou non**.
+Vos saisies sont **toujours** écrites dans la base locale (`occhab_local.db`),
+connecté ou non, et ne partent sur GeoNature qu'au bouton **« Synchroniser »**.
+Perdre le réseau ne vous fait donc jamais perdre de donnée. Mais le plugin
+**n'est pas pour autant utilisable sans connexion** : ce qui suit dépend du
+moment où vous perdez le réseau.
 
-- **Sans réseau** : créez et éditez vos stations/habitats
-  normalement. Elles restent en état **À synchroniser**.
-- **De retour au bureau** : connectez-vous et cliquez **« Synchroniser »**.
+### Vous vous êtes connecté, puis vous perdez le réseau
 
-Quelques listes (JDD, HABREF, observateurs, nomenclatures) et le calcul
-d'altitude nécessitent d'être **connecté**. Hors-ligne, certaines listes peuvent
-être vides ; elles seront complétées à la synchronisation (ex. la technique de
-collecte est fixée à « In situ » à l'envoi si elle n'a pas pu être renseignée).
+C'est le cas du terrain, et il se passe bien. Les listes (JDD, nomenclatures,
+observateurs) sont déjà chargées et restent disponibles. Vous créez et éditez
+vos stations normalement ; elles restent **À synchroniser**, et vous
+synchronisez de retour au bureau.
+
+Deux choses continuent même de fonctionner : les propositions **★ Catalogue
+ANA**, qui viennent d'un fichier livré avec le plugin, et les libellés d'habitat
+déjà obtenus, retenus dans votre base. Vous ne perdez que le **calcul
+d'altitude** et la **recherche HABREF** d'un habitat que vous n'avez pas encore
+rencontré.
+
+### Vous démarrez QGIS sans réseau
+
+Là, c'est nettement plus limité, et il faut le savoir :
+
+- **la recherche HABREF ne répond pas** : tapez le nom cité et le `cd_hab` à la
+  main, ou déterminez dans le catalogue, qui lui est sur votre disque ;
+- **les menus déroulants sont vides** (technique, détermination, exposition,
+  abondance…), et **« Type de sol » et « Type de mosaïque d'habitats »
+  disparaissent** du formulaire ;
+- **le jeu de données** se saisit par son identifiant, à la place de la liste ;
+- vos **observateurs de la dernière saisie** sont tout de même repris.
+
+Un message vous prévient à l'ouverture du premier formulaire. Ces listes ne sont
+pas conservées d'une session à l'autre : connectez-vous une fois, ne serait-ce
+qu'un instant, avant de partir sur le terrain — tout sera alors chargé pour la
+journée.
+
+Les valeurs manquantes sont complétées à la synchronisation quand c'est
+possible : la technique de collecte est fixée à « In situ » à l'envoi si elle
+n'a pas pu être renseignée.
 
 ---
 
@@ -1287,8 +1316,9 @@ Reconnectez-vous, sélectionnez vos stations dans la couche serveur et
 - **CRUVED** : les 6 droits GeoNature — **C**réer, **R**ead (lire), **U**pdate
   (modifier), **V**alider, **E**xporter, **D**elete (supprimer).
 - **Synchroniser** : envoyer vos saisies locales vers GeoNature.
-- **Hors-ligne (offline-first)** : tout est d'abord stocké localement, puis
-  envoyé au serveur à la demande.
+- **Saisie locale, synchronisation différée** : tout est d'abord écrit dans
+  votre base SQLite, puis envoyé au serveur à la demande. À ne pas confondre
+  avec « fonctionne sans connexion » : voir §11.
 - **id_digitiser** : identifiant de l'utilisateur qui a **numérisé** (créé) une
   station ; sert à savoir ce qui est « à vous ».
 

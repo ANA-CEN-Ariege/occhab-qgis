@@ -1,8 +1,11 @@
 # OccHab GeoNature — extension QGIS de saisie d'habitats
 
 Extension QGIS pour saisir les données du module **OccHab** de GeoNature
-directement depuis QGIS : saisie **hors-ligne** dans une base SQLite locale, puis
-**synchronisation** (création / mise à jour / suppression) avec l'API GeoNature.
+directement depuis QGIS : saisie dans une base **SQLite locale**, puis
+**synchronisation** (création / mise à jour / suppression) avec l'API GeoNature,
+à la demande. Une connexion est nécessaire pour rechercher un habitat dans
+HABREF et charger les listes de référence ; la perdre en cours de session
+n'interrompt pas la saisie.
 Développée par l'**ANA-CEN Ariège**.
 
 - **Guide utilisateur** (installation + usage pas à pas) : [GUIDE_UTILISATEUR.md](GUIDE_UTILISATEUR.md)
@@ -35,8 +38,9 @@ Développée par l'**ANA-CEN Ariège**.
 
 ## 1. Ce que fait le plugin
 
-- **Saisie hors-ligne** de stations (spatiales) et de leurs habitats, stockée en
-  SQLite local — utilisable sans connexion.
+- **Saisie** de stations (spatiales) et de leurs habitats, écrite en **SQLite
+  local** et synchronisée à la demande — perdre le réseau en cours de session
+  n'interrompt rien.
 - **Numérisation native QGIS** de la géométrie (polygone / point), **reprise**
   d'une géométrie depuis une autre couche, avec accrochage ; **édition des
   sommets** d'une géométrie existante ; **ouverture d'une station au clic sur la
@@ -135,10 +139,22 @@ Deux constantes de rétention : `SYNC_LOG_KEEP = 500` lignes de journal,
 
 ## 3. Architecture
 
-**Offline-first.** Tout est d'abord écrit en SQLite local (connecté ou non). La
-synchronisation pousse vers GeoNature à la demande (bouton **Synchroniser**).
-Être « connecté » (authentifié) débloque le chargement des JDD, nomenclatures,
-HABREF, observateurs, l'altitude, la couche serveur et la synchro.
+**Local d'abord, synchronisé ensuite.** Tout est écrit en SQLite local, connecté
+ou non, et poussé vers GeoNature à la demande (bouton **Synchroniser**).
+
+Ce n'est pas pour autant un plugin hors-ligne, et il ne faut pas le promettre :
+être authentifié conditionne le chargement des JDD, des nomenclatures, des
+observateurs, la recherche HABREF, l'altitude, la couche serveur et la synchro.
+Ces listes ne vivent qu'**en mémoire** — aucun cache disque — si bien qu'un
+démarrage de QGIS sans réseau donne des menus déroulants vides (un message le
+signale) et prive de la recherche d'habitat.
+
+Deux choses tiennent malgré tout sans réseau, et ce sont elles qui rendent une
+journée de terrain possible après une connexion initiale : le **catalogue des
+végétations**, lu depuis un CSV livré avec le plugin (il nomme 184 alliances et
+restitue 97,7 % des libellés de correspondance), et le **cache des libellés
+HABREF** déjà obtenus (table `habref_libelles`). Perdre le réseau APRÈS s'être
+connecté ne coûte donc que l'altitude et la recherche d'un habitat inconnu.
 
 ```
 Formulaires (PyQt)  ──►  SQLite local  ──►  Synchronisation  ──►  API GeoNature
@@ -2112,8 +2128,8 @@ fait vite détester :
   d'authentification le réclame, et le demander de nous-même ferait surgir une
   fenêtre que personne n'a appelée. `masterPasswordIsSet()` sert de test ; s'il
   est faux, on ne tente rien et le bouton « Connexion » reste le chemin normal ;
-- **aucun message en cas d'échec.** Hors ligne — le cas d'usage même de cette
-  extension — la tentative échoue, et c'est normal. Mesuré à 0,3 s de démarrage
+- **aucun message en cas d'échec.** Sans réseau — situation courante au
+  démarrage — la tentative échoue, et c'est normal. Mesuré à 0,3 s de démarrage
   supplémentaire contre un serveur injoignable, sans exception ni fenêtre ;
 - **désactivable** par `geonature.reconnexion_auto = false`.
 
