@@ -3,7 +3,7 @@ name=OccHab GeoNature
 qgisMinimumVersion=3.28
 qgisMaximumVersion=3.99
 description=Data entry for GeoNature's OccHab module (habitat stations) from QGIS, with local SQLite storage and on-demand synchronisation to the GeoNature REST API.
-version=0.13.0
+version=0.13.1
 author=Cédric Roy
 email=it@ariegenature.fr
 license=GPL-3.0-or-later
@@ -34,7 +34,19 @@ icon=resources/icons/occhab.svg
 experimental=True
 deprecated=False
 
-changelog=0.13.0 - Numerisation jointive : deux stations voisines partagent enfin la meme limite.
+changelog=0.13.1 - Correction : sur les QGIS anciennes, les exports perdaient toutes leurs couleurs.
+    Le figure des mosaiques nomme la couleur de remplissage d'une facon que les
+    QGIS recentes seules comprennent. Ailleurs, la construction du rendu
+    echouait — et comme elle echouait AVANT d'etre posee sur la couche, c'est
+    tout le style qui tombait, pas seulement les bandes : l'export s'affichait
+    dans le gris uni de QGIS, sans couleur par habitat ni legende, alors que le
+    chargement annoncait ses entites comme si tout allait bien. Le journal le
+    disait sous « Symbologie non appliquee », mais la carte montrant tout de
+    meme quelque chose, l'avertissement passait inapercu.
+    Rien a faire de particulier : recharger l'export depuis le serveur suffit a
+    retrouver les couleurs. Une couche deja chargee garde son rendu gris, le
+    style n'etant pose qu'au chargement.
+    0.13.0 - Numerisation jointive : deux stations voisines partagent enfin la meme limite.
     Les stations d'habitat forment des mosaiques : la limite entre deux stations
     voisines doit etre la meme ligne des deux cotes. Rien ne l'imposait. Le
     plugin heritait passivement des reglages de numerisation de l'utilisateur,
