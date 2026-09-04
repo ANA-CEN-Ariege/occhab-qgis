@@ -56,6 +56,18 @@ if _SYMBOLE_SURFACIQUE is None:
 _SYMBOLE_PONCTUEL = getattr(getattr(Qgis, "SymbolType", None), "Marker", None)
 if _SYMBOLE_PONCTUEL is None:
     _SYMBOLE_PONCTUEL = QgsSymbol.Marker
+#: Même histoire, mais celle-là s'est vue sur le terrain : là où l'énumération
+#: est encore un `sip.enumtype` — les QGIS d'avant les énumérations Python — ses
+#: membres gardent le préfixe du type (`PropertyFillColor`). Le nom court y
+#: échouait AVANT que le rendu soit posé : plus de couleurs d'habitats, plus de
+#: légende, la couche s'affichait dans le gris uni de QGIS.
+#: `try` plutôt que `getattr` : sip ne lève pas forcément une `AttributeError`
+#: sur un membre inconnu, et une exception ici empêcherait le module de
+#: s'importer — donc l'extension de se charger du tout.
+try:
+    _PROP_COULEUR_FOND = QgsSymbolLayer.Property.FillColor
+except Exception:  # noqa: BLE001
+    _PROP_COULEUR_FOND = QgsSymbolLayer.PropertyFillColor
 
 
 
@@ -419,7 +431,7 @@ def _decoupe(couleur, expression, mosaique, flou=True):
     # l'expression rendrait NULL — donc une couche invisible, et une carte
     # blanche. Le repli garde la couleur d'origine, celle d'avant ce correctif.
     remplissage.symbolLayer(0).setDataDefinedProperty(
-        QgsSymbolLayer.Property.FillColor,
+        _PROP_COULEUR_FOND,
         QgsProperty.fromExpression(
             "if(\"%s\" %s 1, coalesce(@symbol_color, '%s'), color_rgba(0,0,0,0))"
             % (hs.CHAMP_MOSAIQUE, condition, couleur)
