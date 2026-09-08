@@ -566,6 +566,11 @@ données station + habitat, **identifiants résolus en libellés** (JDD, habitat
 observateurs, numérisateur, nomenclatures) et champs ANA-EVAL extraits. La géométrie
 (`geom`) est incluse → la vue est chargeable telle quelle dans QGIS.
 
+Une **seconde** vue, facultative, déplie la mosaïque en colonnes plates pour les
+livrables à gabarit imposé — une ligne par station : voir
+[Un second gabarit](#un-second-gabarit--lexport-à-colonnes-plates) à la fin de
+cette section.
+
 > **Déclaration dans l'admin GeoNature** (module Exports) : schéma `gn_exports`,
 > vue `v_occhab_complet`, **colonne clé primaire `id_ligne`**, champ géométrie
 > `geom` (SRID 4326). La clé primaire est obligatoire et sert d'`ORDER BY` à la
@@ -1412,6 +1417,108 @@ LEFT JOIN ref_habitats.bib_habref_typo_rel rel ON rel.cd_type_rel = c.cd_type_re
 ORDER BY f.o_dist, t_cib.lb_nom_typo, cible.lb_code;
 ```
 
+### Un second gabarit : l'export à colonnes plates
+
+`v_occhab_complet` rend **une ligne par habitat**. Les donneurs d'ordre, eux,
+réclament souvent l'inverse : **une ligne par station**, la mosaïque dépliée en
+colonnes `Syntaxon_1 … Syntaxon_n`, et une géométrie surfacique en Lambert 93.
+[`sql/v_habitats_mosaique.sql`](sql/v_habitats_mosaique.sql) produit ce
+gabarit-là, en relisant `v_occhab_complet` — à poser **après** elle.
+
+**Pourquoi la relire plutôt qu'être autonome ?** Parce que le coûteux n'est pas
+l'aplatissement en colonnes, c'est ce qu'il y a *dans* les colonnes. Un
+`CodeEUNIS_n` juste suppose de savoir que l'arbitrage manuel prime sur la
+correspondance calculée, que le bloc ANA-EVAL ne porte plus que le `cd_hab`
+depuis la 0.11.0, qu'un habitat déjà dans la typologie visée est son propre
+équivalent, et que HABREF ne se joint jamais sur autre chose que sa clé primaire
+— sous peine du hachage de table entière qui avait effondré l'export en 0.8.0.
+Recopier tout cela ferait une seconde source de vérité, qui dériverait de la
+première au premier correctif, et la copie fautive serait celle que personne ne
+relit. Ce qu'on paie en échange se limite à un **ordre de pose**, pas à du temps
+de calcul : la CTE n'énumère que les vingt colonnes utiles, ce qui suffit à
+sortir du plan les Cahiers d'habitats, les sept nomenclatures, le numérisateur
+et la sous-requête `habitat_pee`.
+
+> **Déclaration dans l'admin GeoNature** (module Exports) : schéma `gn_exports`,
+> vue `v_habitats_mosaique`, **colonne clé primaire `fid`** (l'`id_station` :
+> une ligne par station suffit à l'identifier), champ géométrie `geom_local`
+> (SRID 2154).
+
+**Le script se génère lui-même**, et c'est le point à comprendre. Le nombre
+d'habitats par station est *dynamique* ; une vue SQL a un nombre de colonnes
+*figé*. Cinq blocs en dur perdraient les mosaïques plus riches sans le moindre
+message ; trente noieraient le gabarit sous des colonnes vides. Le bloc `DO`
+compte donc le maximum réellement saisi et fabrique la vue à cette taille —
+plancher `MIN_BLOCS` (5, pour qu'une base neuve produise quand même un fichier
+conforme), plafond `MAX_BLOCS` (15, au-delà duquel un `WARNING` est levé).
+
+**À relancer quand une station plus riche que le maximum précédent est saisie.**
+Rien ne le signale tout seul, d'où la colonne `Nb_Habitat` : elle porte le
+compte **réel** des habitats de la station, y compris au-delà du nombre de blocs.
+
+```sql
+-- Faut-il rejouer le script ? Comparez au nombre de blocs Syntaxon_n de la vue.
+SELECT max("Nb_Habitat") AS habitats_max FROM gn_exports.v_habitats_mosaique;
+```
+
+Ce que la vue décide, et pourquoi :
+
+| Colonne | Source | Pourquoi |
+|---|---|---|
+| `Syntaxon_n` | `habitat_alliance`, sinon `habitat`, sinon `nom_cite` | L'alliance déterminée prime : elle n'est renseignée que quand le `cd_hab` est une **ancre** (§11), auquel cas le libellé HABREF ne dit pas ce qui a été déterminé. |
+| `Rec_n` | `recouvrement_pct` | Le gabarit reçu oubliait `Rec_2` ; la vue le produit — un recouvrement absent sur le seul 2ᵉ habitat n'aurait pas de sens. |
+| ordre des blocs | recouvrement décroissant | Le rang 1 est l'habitat **dominant**. En cas de troncature par le plafond, ce sont les moins recouvrants qui sortent. |
+| `Description` | `comment` de la station, bloc ANA-EVAL retiré | Sans ce nettoyage, le destinataire recevrait du JSON technique dans un champ de texte libre. |
+| `Comment` | remarques des habitats, préfixées de leur rang | Une remarque sans son habitat ne se rattache plus à rien une fois les colonnes aplaties. |
+| `EtatConser`, `Enjeu` | station d'abord, à défaut l'habitat dominant | Libellés du référentiel ANA **tels quels** (`processing.referentiels`), pas l'échelle du rapportage N2000 : la saisie distingue Excellent de Bon, les fondre en « Favorable » perdrait une information irrécupérable ensuite. |
+| `Source` | `nature_observation` | Traduite dans la liste fermée du gabarit. « Inconnu », « Autre » et l'absence de saisie tombent sur « Ne sait pas », seule case que la liste leur laisse. |
+| `geom_local` | `MultiPolygon` 2154, point/ligne tamponné de 5 m | Le gabarit ne connaît que le polygone. Mieux vaut une surface conventionnelle — reconnaissable à sa forme — qu'une station absente du rendu. |
+
+> **Noms de colonnes** : ceux du gabarit, à la lettre et à la casse. Plusieurs
+> dépassent les 10 caractères d'un shapefile (`Observateur`, `Description`,
+> `CodeEUNIS_1`…) : **exportez en GeoPackage**, ou acceptez la troncature
+> d'ESRI.
+
+#### Sortir le livrable depuis le plugin
+
+Déclarez la vue dans l'admin GeoNature, et « Cartographier… ▸ **Charger un export
+du serveur (couche)** » la propose au même titre que `v_occhab_complet` : mêmes
+filtres **jeu de données** et **période**, puis clic droit sur la couche ▸
+Exporter ▸ Sauvegarder sous… ▸ GeoPackage.
+
+La couche arrive **telle quelle** — pas de découpe des mosaïques ni de couleur
+par habitat, et le dialogue masque ces options plutôt que de les proposer sans
+effet (cf. §9). C'est la conséquence directe de l'aplatissement : il n'y a plus
+une ligne par habitat à colorier.
+
+C'est aussi ce qui vaut à la vue **trois colonnes hors gabarit**, en minuscules
+à la fin : `id_dataset`, `date_min`, `date_max`. La route `GET /exports/api/{id}`
+filtre **sur les colonnes de la vue** et **ignore en silence** un filtre portant
+sur une colonne absente — sans elles, le plugin croirait tenir le JDD et l'année
+demandés alors qu'il aurait rapatrié l'export entier. Trois colonnes à décocher
+au moment de livrer, contre un filtrage qui ment : le choix est vite fait. Un
+test (`test_export_choix.py`) vérifie que les noms attendus côté plugin sont bien
+ceux que le SQL produit — les renommer d'un côté casse la suite, pas le filtrage
+en silence.
+
+À l'inverse, pour **cartographier** (bandes, damier, carte des enjeux, typologie
+de restitution), prenez `v_occhab_complet` : c'est elle qui porte une ligne par
+habitat. Le gabarit sert à **livrer**.
+
+**L'ordre des colonnes est rétabli au chargement.** La route `/exports/api/{id}`
+rend les propriétés **par ordre alphabétique**, quel que soit l'ordre des
+colonnes de la vue — ni QGIS ni le pilote OGR n'y sont pour rien, ils relisent
+un GeoJSON dans l'ordre où il est écrit, et le plugin ne trie rien non plus :
+c'est la sérialisation du serveur qui perd l'ordre en route. Sans importance
+pour cartographier ; décisif pour livrer, un gabarit imposé se lisant colonne
+après colonne — `CodeCB_1` coincé entre `Comment` et `CodeEUNIS_1` donne un
+fichier que le destinataire ne reconnaît pas comme le sien. L'ordre étant connu
+et stable, `processing/ordre_colonnes.py` le rétablit **avant l'écriture du
+GeoJSON**, blocs de mosaïque groupés par rang et colonnes techniques en queue.
+Rien n'est jamais supprimé : une colonne inattendue passe en fin de liste plutôt
+que de disparaître.
+
+
 ## 8. Brouillon / validé, et la table attributaire
 
 ### Deux états, à ne pas confondre
@@ -1591,11 +1698,22 @@ sous les couches déjà présentes — un deuxième export se retrouvait caché 
 premier, et on le croyait vide. Le groupe est distinct de « OccHab (serveur) »,
 qui est lui reconstruit à chaque rafraîchissement.
 
-**Seuls les exports bâtis sur `v_occhab_complet` sont proposés** (filtrage sur le
-`view_name` renvoyé par `GET /exports/`). Les autres exports d'une instance —
-synthèse, taxons, métadonnées — n'ont ni les colonnes `id_dataset`/`date_min`/
-`date_max` que les filtres supposent, ni une structure que le plugin saurait
-présenter : les lister reviendrait à promettre un filtrage qui n'aurait pas lieu.
+**Seuls les exports bâtis sur une vue connue sont proposés** (filtrage sur le
+`view_name` renvoyé par `GET /exports/`) — `v_occhab_complet` et le gabarit
+`v_habitats_mosaique`. Les autres exports d'une instance — synthèse, taxons,
+métadonnées — n'ont ni les colonnes `id_dataset`/`date_min`/`date_max` que les
+filtres supposent, ni une structure que le plugin saurait présenter : les lister
+reviendrait à promettre un filtrage qui n'aurait pas lieu.
+
+**Une seule des deux se cartographie.** Les représentations de mosaïque (bandes,
+damier, enjeux, PEE) et la typologie de restitution supposent **une ligne par
+habitat** ; le gabarit à colonnes plates n'en a plus qu'une par station, et
+aucune colonne à colorier. Le dialogue **masque** donc ces options quand le
+gabarit est choisi, et la couche arrive **telle quelle** (`MODE_BRUT`) : ni
+enrichissement, ni palette, ni découpe. Les proposer sans effet aurait fait
+attendre un damier qui ne serait jamais venu ; les appliquer quand même aurait
+rendu une couche uniformément grise, qu'on aurait prise pour une donnée
+manquante côté serveur.
 
 Trois pièges de cette route, traités dans `geonature_client.py` :
 
@@ -2443,7 +2561,8 @@ occhab/
 ├── plugin.py                 # OccHabPlugin : menu/toolbar + dock
 ├── package.py                # construit dist/occhab.<version>.zip (cf. §15)
 ├── requirements.txt · LICENSE · README.md · GUIDE_UTILISATEUR.md
-├── sql/             v_occhab_complet.sql       # vue d'export (PostgreSQL 15)
+├── sql/             v_occhab_complet.sql       # vue d'export, 1 ligne/habitat (PG 15)
+│                  v_habitats_mosaique.sql    # gabarit à colonnes plates, 1 ligne/station
 ├── scripts/         import_typologie.py        # catalogue des végétations → CSV
 ├── tests/                                      # suite pytest (cf. §15)
 ├── resources/       icons/occhab.svg
@@ -2460,6 +2579,8 @@ occhab/
     │                 correspondances.py         # catalogue ANA, arbitrage, allègement (pur, testé)
     │                 grille.py                  # tampon d'édition en masse (pur, testé)
     │                 export.py                  # aplatissement cartographie (pur, testé)
+    │                 ordre_colonnes.py          # remet le gabarit livré dans son ordre
+    │                                            #   (pur, testé)
     │                 duplicate.py               # duplication / collage / reprise (pur, testé)
     │                 geojson_wkt.py             # GeoJSON → WKT, sans QgsJsonUtils (pur, testé)
     │                 tableur.py                 # mise en TSV pour le presse-papiers (pur, testé)

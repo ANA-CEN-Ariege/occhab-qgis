@@ -29,7 +29,7 @@ from qgis.PyQt.QtWidgets import (
 from ..processing.referentiels import TYPOLOGIES_CORRESPONDANCE
 from .dialog_size import (ajuster_a_l_ecran, borner_largeur_combos,
                           rendre_defilant)
-from .export_layers import MODE_DEFAUT, MODES
+from .export_layers import MODE_BRUT, MODE_DEFAUT, MODES
 from .no_wheel import proteger_du_defilement
 
 #: Colonnes attendues dans la vue exportée pour que les filtres s'appliquent.
@@ -37,27 +37,58 @@ from .no_wheel import proteger_du_defilement
 COLONNE_JDD = "id_dataset"
 COLONNE_DATE_DEBUT = "date_min"
 COLONNE_DATE_FIN = "date_max"
-#: Seule vue exploitée. Une instance GeoNature publie souvent des exports sans
-#: rapport avec OccHab (synthèse, taxons, métadonnées…) : les proposer ici
-#: reviendrait à promettre des filtres « JDD » et « période » qui ne
-#: s'appliqueraient pas, et une couche dont on ne saurait rien.
+#: Vue pivot : une ligne par habitat, colonnes que la cartographie sait lire.
 VUE_EXPORT = "v_occhab_complet"
+#: Gabarit à colonnes plates — une ligne par STATION, la mosaïque dépliée en
+#: `Syntaxon_1 … Syntaxon_n` (README §7). Sert à LIVRER, pas à cartographier.
+VUE_GABARIT = "v_habitats_mosaique"
+#: Vues que le plugin sait charger. Une instance GeoNature publie souvent des
+#: exports sans rapport avec OccHab (synthèse, taxons, métadonnées…) : les
+#: proposer ici reviendrait à promettre des filtres « JDD » et « période » qui
+#: ne s'appliqueraient pas, et une couche dont on ne saurait rien.
+VUES_EXPORT = (VUE_EXPORT, VUE_GABARIT)
+#: Vues dont on sait CARTOGRAPHIER les mosaïques. Les représentations (bandes,
+#: damier, enjeux, PEE) et la typologie de restitution supposent une ligne PAR
+#: HABITAT ; le gabarit à colonnes plates n'en a plus qu'une par station, et
+#: aucune colonne à colorier. Les options sont donc masquées pour lui plutôt
+#: que proposées et sans effet.
+VUES_CARTOGRAPHIABLES = (VUE_EXPORT,)
 
 
-def exports_occhab(exports, vue=VUE_EXPORT):
-    """Ne garder que les exports bâtis sur la vue OccHab.
+def exports_occhab(exports, vues=VUES_EXPORT):
+    """Ne garder que les exports bâtis sur une vue connue du plugin.
 
     Le module Exports sérialise tout le modèle : `view_name` est donc présent.
     Repli sur le libellé si une version plus ancienne ne l'exposait pas — mieux
     vaut une correspondance approximative qu'une liste vide.
     """
-    retenus = [e for e in exports or [] if (e or {}).get("view_name") == vue]
+    retenus = [e for e in exports or [] if (e or {}).get("view_name") in vues]
     if retenus:
         return retenus
     return [
         e for e in exports or []
-        if not (e or {}).get("view_name") and vue in (e or {}).get("label", "")
+        if not (e or {}).get("view_name")
+        and any(vue in (e or {}).get("label", "") for vue in vues)
     ]
+
+
+def vue_de(export, vues=VUES_EXPORT):
+    """Nom de vue d'un export, deviné du libellé si le modèle ne le donne pas.
+
+    Le repli compte autant que le cas nominal : c'est lui qui décide si les
+    options de carte s'affichent, et une vue mal devinée les proposerait sur
+    une couche qui ne peut pas les honorer.
+    """
+    nom = (export or {}).get("view_name")
+    if nom:
+        return nom
+    libelle = (export or {}).get("label") or ""
+    return next((vue for vue in vues if vue in libelle), None)
+
+
+def est_cartographiable(vue):
+    """La vue porte-t-elle une ligne par habitat, donc de quoi cartographier ?"""
+    return vue in VUES_CARTOGRAPHIABLES
 
 
 def periode_annee_en_cours(aujourdhui=None):
@@ -98,14 +129,11 @@ class ExportPicker(QDialog):
         corps = QWidget()
         layout_corps = QVBoxLayout(corps)
         layout_corps.setContentsMargins(0, 0, 0, 0)
-        intro = QLabel(
-            "Chargement de l'export bâti sur la vue « %s » : données "
-            "consolidées, identifiants déjà résolus en libellés, équivalents "
-            "CORINE et EUNIS. Le résultat arrive en couche QGIS, en lecture "
-            "seule." % VUE_EXPORT
-        )
-        intro.setWordWrap(True)
-        layout_corps.addWidget(intro)
+        # Le texte suit l'export choisi : les deux vues ne promettent pas la
+        # même chose, et une seule des deux se cartographie.
+        self.intro = QLabel()
+        self.intro.setWordWrap(True)
+        layout_corps.addWidget(self.intro)
 
         self._compter_en_attente = en_attente
         self.label_attente = QLabel()
@@ -119,12 +147,17 @@ class ExportPicker(QDialog):
         form = QFormLayout()
 
         self.combo_export = QComboBox()
+        #: Vue de chaque export, par identifiant : c'est elle qui décide des
+        #: options de carte, pas le libellé que l'administrateur a choisi.
+        self._vues = {}
         for export in self._exports:
             libelle = export.get("label") or "export %s" % export.get("id")
             self.combo_export.addItem(libelle, export.get("id"))
+            self._vues[export.get("id")] = vue_de(export)
         # Un seul export sur cette vue : le montrer, mais ne pas faire mine de
         # proposer un choix qui n'existe pas.
         self.combo_export.setEnabled(len(self._exports) > 1)
+        self.combo_export.currentIndexChanged.connect(self._maj_options_carte)
         form.addRow("Export", self.combo_export)
 
         self._id_dataset = id_dataset
@@ -161,7 +194,10 @@ class ExportPicker(QDialog):
         if position >= 0:
             self.combo_mode.setCurrentIndex(position)
         self.combo_mode.currentIndexChanged.connect(self._maj_aide_mode)
-        form.addRow("Mosaïques", self.combo_mode)
+        # Étiquettes gardées sous la main : masquer un champ sans son étiquette
+        # laisserait « Mosaïques » en face du champ suivant.
+        self.label_mosaiques = QLabel("Mosaïques")
+        form.addRow(self.label_mosaiques, self.combo_mode)
 
         # Typologie de la CARTE, distincte de celle de saisie : un botaniste
         # détermine en PVF ou en CORINE, mais une restitution Natura 2000 se lit
@@ -177,15 +213,18 @@ class ExportPicker(QDialog):
             "correspondance garde son habitat saisi plutôt que de disparaître "
             "de la légende."
         )
-        form.addRow("Typologie de la carte", self.combo_typologie)
+        self.label_typologie = QLabel("Typologie de la carte")
+        form.addRow(self.label_typologie, self.combo_typologie)
 
         self._maj_avertissement()
 
         self.label_mode = QLabel()
         self.label_mode.setWordWrap(True)
         self.label_mode.setStyleSheet("color: palette(mid); font-style: italic;")
-        form.addRow("", self.label_mode)
+        self.label_mode_etiquette = QLabel("")
+        form.addRow(self.label_mode_etiquette, self.label_mode)
         self._maj_aide_mode()
+        self._maj_options_carte()
 
         self.date_debut = _date_edit(debut)
         self.date_fin = _date_edit(fin)
@@ -240,20 +279,72 @@ class ExportPicker(QDialog):
         """
         return self._id_dataset
 
+    def vue(self):
+        """Vue sur laquelle est bâti l'export choisi (None si indevinable)."""
+        return self._vues.get(self.id_export())
+
+    def cartographiable(self):
+        """L'export choisi se prête-t-il aux représentations de mosaïque ?"""
+        return est_cartographiable(self.vue())
+
     def typologie(self):
         """Nom court de la typologie de restitution, ou None (habitat saisi)."""
+        if not self.cartographiable():
+            return None
         return self.combo_typologie.currentData()
 
     def libelle_typologie(self):
         """Libellé du choix, pour le nom de la couche."""
+        if not self.cartographiable():
+            return ""
         return self.combo_typologie.currentText()
 
     def mode(self):
-        """Représentation retenue pour les stations à plusieurs habitats."""
+        """Représentation retenue pour les stations à plusieurs habitats.
+
+        `MODE_BRUT` sur une vue qui n'a plus une ligne par habitat : c'est le
+        dialogue qui tranche, l'appelant n'a pas à connaître les vues.
+        """
+        if not self.cartographiable():
+            return MODE_BRUT
         return self.combo_mode.currentData() or MODE_DEFAUT
 
     def libelle_mode(self):
+        """Vide en mode brut : rien à annoncer dans le nom de la couche."""
+        if not self.cartographiable():
+            return ""
         return self.combo_mode.currentText()
+
+    def _maj_options_carte(self):
+        """Montrer les options de carte si, et seulement si, elles s'appliquent.
+
+        Les désactiver au lieu de les masquer laisserait croire qu'un réglage
+        manque quelque part ; les laisser actives serait pire — on choisirait
+        un damier qui n'arriverait jamais.
+        """
+        cartographiable = self.cartographiable()
+        for widget in (self.label_mosaiques, self.combo_mode,
+                       self.label_typologie, self.combo_typologie,
+                       self.label_mode_etiquette, self.label_mode):
+            widget.setVisible(cartographiable)
+        if cartographiable:
+            self.intro.setText(
+                "Chargement de l'export bâti sur la vue « %s » : données "
+                "consolidées, identifiants déjà résolus en libellés, "
+                "équivalents CORINE et EUNIS. Le résultat arrive en couche "
+                "QGIS, en lecture seule." % VUE_EXPORT
+            )
+            return
+        self.intro.setText(
+            "Chargement du <b>gabarit à colonnes plates</b> (« %s ») : une "
+            "ligne par station, la mosaïque dépliée en colonnes "
+            "« Syntaxon_1 … », géométrie en Lambert 93. Destiné à être "
+            "<b>livré</b> — clic droit sur la couche ▸ Exporter ▸ Sauvegarder "
+            "sous… ▸ GeoPackage. La couche arrive <b>telle quelle</b> : ni "
+            "découpe des mosaïques, ni couleur par habitat, ces "
+            "représentations ayant besoin d'une ligne par habitat."
+            % (self.vue() or VUE_GABARIT)
+        )
 
     def _maj_avertissement(self):
         """Compter les saisies en attente DANS LA PORTÉE choisie.

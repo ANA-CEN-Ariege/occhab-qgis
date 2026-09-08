@@ -598,6 +598,16 @@ décodés), chargée en **couche QGIS en lecture seule**.
 1. L'**export** est celui bâti sur la vue OccHab complète : le plugin ne propose
    pas les autres exports de l'instance (synthèse, taxons, métadonnées…), dont il
    ne saurait ni filtrer ni présenter le contenu.
+
+   > **Si votre administrateur a aussi publié le « gabarit à colonnes plates »**
+   > (une ligne par station, les habitats dépliés en colonnes `Syntaxon_1`,
+   > `Syntaxon_2`…), il apparaît lui aussi dans la liste. Il sert à **livrer** un
+   > fichier à un donneur d'ordre, pas à cartographier : la couche arrive telle
+   > quelle, et les réglages « Mosaïques » et « Typologie de la carte »
+   > disparaissent de la fenêtre — ils n'auraient rien à colorier. Une fois la
+   > couche chargée : clic droit ▸ **Exporter ▸ Sauvegarder les entités sous…** ▸
+   > **GeoPackage** (plutôt que Shapefile, qui raccourcit les noms de colonnes à
+   > 10 caractères). Pour faire une **carte**, revenez à l'export complet.
 2. Le **jeu de données** est rappelé, sans être modifiable : c'est celui du
    panneau (voir l'encadré ci-dessus).
 3. Choisissez la **période**. Par défaut **l'année en cours** (1ᵉʳ janvier →

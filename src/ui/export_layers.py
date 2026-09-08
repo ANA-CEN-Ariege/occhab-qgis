@@ -39,6 +39,7 @@ from ..processing import geojson_wkt as gw
 from ..processing import pee
 from ..processing import referentiels as ref
 from ..processing import habitat_style as hs
+from ..processing import ordre_colonnes as oc
 
 GROUP_NAME = "OccHab (exports)"
 
@@ -112,6 +113,16 @@ MODES = (
 )
 
 MODE_DEFAUT = MODE_BANDES
+
+#: Couche posée TELLE QUELLE : ni enrichissement, ni palette, ni découpe.
+#:
+#: Volontairement HORS de `MODES` — ce n'est pas une représentation qu'on
+#: choisit, c'est l'absence de représentation, imposée par la vue chargée. Le
+#: gabarit à colonnes plates (`v_habitats_mosaique`) n'a plus qu'une ligne par
+#: station : il n'y a rien à découper en bandes, et aucune colonne d'habitat à
+#: colorier. Lui appliquer le pipeline de style ne planterait pas — il
+#: rendrait une couche uniformément grise, ce qui se lit comme un bug.
+MODE_BRUT = "brut"
 
 
 #: Découpe d'un polygone en bandes horizontales proportionnelles au recouvrement.
@@ -486,7 +497,9 @@ class ExportLayerManager:
     def show(self, libelle, features, mode=MODE_DEFAUT, typologie=None):
         """Charger `features` (liste GeoJSON) sous le nom `libelle`.
 
-        `mode` choisit la représentation des mosaïques (cf. `MODES`).
+        `mode` choisit la représentation des mosaïques (cf. `MODES`), ou vaut
+        `MODE_BRUT` pour poser la couche sans rien styliser — le seul choix
+        possible sur une vue qui n'a plus une ligne par habitat.
 
         `typologie` (nom court : « corine », « eunis »…) cartographie les
         habitats dans CETTE typologie plutôt que dans celle où ils ont été
@@ -500,31 +513,47 @@ class ExportLayerManager:
         features = [f for f in features or [] if isinstance(f, dict)]
         if not features:
             return None, 0
-        # Champs de style calculés AVANT l'écriture : ils doivent exister dans le
-        # fichier pour que la couche les porte (et qu'on puisse les relire dans
-        # la table attributaire). `palette` en fait partie — elle repose la
-        # couleur sur chaque entité, dont le rendu des mosaïques a besoin.
-        hs.enrichir(features, typologie=typologie)
-        palette = hs.palette(features, typologie)
-        especes = pee.palette(features) if mode == MODE_PEE else ()
-        # Chaque mode a ses besoins : inutile de payer la dichotomie des bandes
-        # pour un semis de points.
-        if mode in (MODE_BANDES, MODE_PEE):
-            _poser_coupes(features)
-        if mode == MODE_PEE:
-            _poser_pee(features)
-        elif mode == MODE_DAMIER:
-            _poser_mailles(features)
-        elif mode == MODE_ENJEUX:
-            # Ni bandes ni mailles : la carte des enjeux colorie la STATION,
-            # dont tous les habitats partagent le niveau.
-            pass
+        # MODE_BRUT : la couche est posée telle quelle. Tout ce qui suit lit des
+        # colonnes d'HABITAT (cd_hab, recouvrement, enjeu…) qu'une vue à
+        # colonnes plates n'a plus — les appeler quand même ne planterait pas,
+        # ce serait pire : une couche grise et des attributs de style vides,
+        # qu'on prendrait pour une donnée manquante côté serveur.
+        brut = mode == MODE_BRUT
+        palette, especes = {}, ()
+        if not brut:
+            # Champs de style calculés AVANT l'écriture : ils doivent exister dans le
+            # fichier pour que la couche les porte (et qu'on puisse les relire dans
+            # la table attributaire). `palette` en fait partie — elle repose la
+            # couleur sur chaque entité, dont le rendu des mosaïques a besoin.
+            hs.enrichir(features, typologie=typologie)
+            palette = hs.palette(features, typologie)
+            especes = pee.palette(features) if mode == MODE_PEE else ()
+            # Chaque mode a ses besoins : inutile de payer la dichotomie des bandes
+            # pour un semis de points.
+            if mode in (MODE_BANDES, MODE_PEE):
+                _poser_coupes(features)
+            if mode == MODE_PEE:
+                _poser_pee(features)
+            elif mode == MODE_DAMIER:
+                _poser_mailles(features)
+            elif mode == MODE_ENJEUX:
+                # Ni bandes ni mailles : la carte des enjeux colorie la STATION,
+                # dont tous les habitats partagent le niveau.
+                pass
         # Nom LIBRE, et fichier qui va avec : une couche déjà chargée peut avoir
         # été retouchée — couleurs, étiquettes, ordre — et enregistrée dans le
         # projet. La remplacer effacerait ce travail sans le dire. Le rechargement
         # d'un même export dépose donc une couche de plus, à côté.
         libelle = self._nom_libre(libelle)
         chemin = os.path.join(self._directory, "%s.geojson" % nom_de_fichier(libelle))
+        # L'API rend les propriétés PAR ORDRE ALPHABÉTIQUE, quel que soit
+        # l'ordre des colonnes de la vue. Sans importance pour cartographier —
+        # décisif pour livrer : un gabarit imposé se lit colonne après colonne,
+        # et `CodeCB_1` coincé entre `Comment` et `CodeEUNIS_1` donne un fichier
+        # que le destinataire ne reconnaît pas comme le sien. L'ordre se
+        # rétablit ICI, avant l'écriture : OGR relira les champs dans l'ordre du
+        # fichier. Sans effet sur une couche qui n'est pas le gabarit.
+        oc.ordonner(features)
         collection = {"type": "FeatureCollection", "features": features}
         try:
             with open(chemin, "w", encoding="utf-8") as handle:
@@ -537,7 +566,8 @@ class ExportLayerManager:
         layer = self._charger(chemin, libelle)
         if layer is None:
             return None, 0
-        self._styler(layer, palette, mode, especes)
+        if not brut:
+            self._styler(layer, palette, mode, especes)
         QgsProject.instance().addMapLayer(layer, False)
         # EN TÊTE du groupe, pas à la suite : `addLayer` ajoute en dernier
         # enfant, c'est-à-dire SOUS les couches déjà là. Un deuxième export se

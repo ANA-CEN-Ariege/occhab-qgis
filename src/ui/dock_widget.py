@@ -1762,7 +1762,7 @@ class OccHabDockWidget(QDockWidget):
         vue préparée côté serveur, à plat et non éditable — la rapatrier dans la
         base locale n'aurait aucun sens, sa structure n'est pas celle d'OccHab.
         """
-        from .export_dialog import VUE_EXPORT, ExportPicker, exports_occhab
+        from .export_dialog import (VUES_EXPORT, ExportPicker, exports_occhab)
 
         if self.client is None or not self.client.is_authenticated:
             QMessageBox.information(
@@ -1793,12 +1793,14 @@ class OccHabDockWidget(QDockWidget):
         if not occhab:
             QMessageBox.information(
                 self, "OccHab",
-                "Aucun export ne s'appuie sur la vue « %s ».\n\n%d export(s) "
-                "publié(s) sur cette instance, mais aucun sur cette vue. "
-                "Créez-le dans l'admin GeoNature : schéma « gn_exports », vue "
-                "« %s », colonne clé primaire « id_ligne », champ géométrie "
-                "« geom » (voir le README §6)."
-                % (VUE_EXPORT, len(exports), VUE_EXPORT),
+                "Aucun export ne s'appuie sur une vue OccHab.\n\n%d export(s) "
+                "publié(s) sur cette instance, mais aucun sur « %s ».\n\n"
+                "Créez-le dans l'admin GeoNature, schéma « gn_exports » :\n"
+                "• « v_occhab_complet » — clé primaire « id_ligne », géométrie "
+                "« geom » : la vue à cartographier (README §7) ;\n"
+                "• « v_habitats_mosaique » — clé primaire « fid », géométrie "
+                "« geom_local » : le gabarit à colonnes plates, pour livrer."
+                % (len(exports), " » ni « ".join(VUES_EXPORT)),
             )
             return
 
