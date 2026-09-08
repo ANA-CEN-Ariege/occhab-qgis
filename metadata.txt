@@ -3,7 +3,7 @@ name=OccHab GeoNature
 qgisMinimumVersion=3.28
 qgisMaximumVersion=3.99
 description=Data entry for GeoNature's OccHab module (habitat stations) from QGIS, with local SQLite storage and on-demand synchronisation to the GeoNature REST API.
-version=0.13.1
+version=0.14.0
 author=Cédric Roy
 email=it@ariegenature.fr
 license=GPL-3.0-or-later
@@ -34,7 +34,27 @@ icon=resources/icons/occhab.svg
 experimental=True
 deprecated=False
 
-changelog=0.13.1 - Correction : sur les QGIS anciennes, les exports perdaient toutes leurs couleurs.
+changelog=0.14.0 - Un second gabarit d'export, a colonnes plates, pour les livrables.
+    Les donneurs d'ordre reclament une ligne par STATION, la mosaique depliee en
+    colonnes Syntaxon_1, Syntaxon_2... la ou la vue d'export du plugin rend une
+    ligne par habitat. Le script sql/v_habitats_mosaique.sql produit ce
+    gabarit-la. Il se GENERE : le nombre d'habitats par station est dynamique
+    alors qu'une vue SQL a un nombre de colonnes fige, donc le script compte le
+    maximum reellement saisi et fabrique la vue a cette taille. A relancer quand
+    une station plus riche apparait ; la colonne Nb_Habitat porte le compte reel
+    et dit quand c'est le cas.
+    « Charger un export du serveur » propose desormais ce gabarit au meme titre
+    que la vue complete, avec les memes filtres jeu de donnees et periode. La
+    couche arrive TELLE QUELLE : les reglages « Mosaiques » et « Typologie de la
+    carte » disparaissent de la fenetre, ces representations ayant besoin d'une
+    ligne par habitat pour colorier quoi que ce soit. Pour cartographier, prenez
+    l'export complet ; ce gabarit sert a livrer.
+    Correction au passage : les colonnes d'un export arrivaient dans l'ordre
+    alphabetique. L'API rend les proprietes triees, quel que soit l'ordre des
+    colonnes de la vue. Sans importance pour cartographier, genant pour livrer :
+    un gabarit impose se lit colonne apres colonne. L'ordre est desormais retabli
+    au chargement.
+    0.13.1 - Correction : sur les QGIS anciennes, les exports perdaient toutes leurs couleurs.
     Le figure des mosaiques nomme la couleur de remplissage d'une facon que les
     QGIS recentes seules comprennent. Ailleurs, la construction du rendu
     echouait — et comme elle echouait AVANT d'etre posee sur la couche, c'est
