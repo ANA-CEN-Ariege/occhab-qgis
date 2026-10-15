@@ -3,7 +3,7 @@ name=OccHab GeoNature
 qgisMinimumVersion=3.28
 qgisMaximumVersion=3.99
 description=Data entry for GeoNature's OccHab module (habitat stations) from QGIS, with local SQLite storage and on-demand synchronisation to the GeoNature REST API.
-version=0.15.0
+version=0.15.1
 author=Cédric Roy
 email=it@ariegenature.fr
 license=GPL-3.0-or-later
@@ -34,7 +34,19 @@ icon=resources/icons/occhab.svg
 experimental=True
 deprecated=False
 
-changelog=0.15.0 - Fin des plantages de QGIS en saisie, et donnees protegees a la synchronisation.
+changelog=0.15.1 - Le « Catalogue ANA » devient le « Tableau des alliances », sources citees.
+    Le tableau des botanistes de l'ANA-CEN est un travail de synthese et de mise
+    en correspondance entre plusieurs travaux. Ses ressources principales sont
+    desormais citees : le Synopsis phytosociologique et catalogue descriptif des
+    vegetations de l'Ariege (G. Corriol, CBNPMP, 2023) et le Prodrome des
+    vegetations de France II. Les propositions s'affichent « Tableau des
+    alliances » ; leur info-bulle, une ligne sous le nom cite et le guide
+    rappellent ces sources et les limites du tableau : au sein d'une alliance,
+    les codes CORINE biotopes, EUNIS et Natura 2000 peuvent varier selon
+    l'association ; certains groupements ne sont pas detailles dans le catalogue
+    descriptif de l'Ariege ; les correspondances, elaborees par les botanistes
+    de l'ANA-CEN, sont a valider.
+    0.15.0 - Fin des plantages de QGIS en saisie, et donnees protegees a la synchronisation.
     QGIS plantait plusieurs fois par heure (« access violation ») en modifiant
     des geometries. Plusieurs causes, toutes corrigees : l'outil de sommets
     restait arme sur la couche d'edition detruite ; les reglages d'accrochage
