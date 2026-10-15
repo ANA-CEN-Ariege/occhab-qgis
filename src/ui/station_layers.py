@@ -44,6 +44,19 @@ _SYNC_STYLE = {
 }
 
 
+#: Propriété posée sur nos couches miroir (celles des projets plus anciens ne
+#: la portent pas : elles sont reconnues à leur fournisseur et à leur nom).
+_MARQUE_MIROIR = "occhab_miroir"
+_NOMS_MIROIR = {nom for _wkb, nom in _LAYER_DEF.values()}
+
+
+def _est_miroir(layer):
+    """Couche miroir du plugin, et non une couche de l'utilisateur ?"""
+    if layer is None or layer.providerType() != "memory":
+        return False
+    return bool(layer.customProperty(_MARQUE_MIROIR)) or layer.name() in _NOMS_MIROIR
+
+
 class StationLayerManager:
     """Maintient les couches carte reflétant les stations locales."""
 
@@ -229,13 +242,18 @@ class StationLayerManager:
         return total
 
     def cleanup(self):
-        """Retirer les couches et le groupe (au déchargement du plugin)."""
+        """Retirer les couches et le groupe (au déchargement du plugin).
+
+        Seulement NOS couches : une couche que l'utilisateur a rangée dans le
+        groupe lui appartient. Le groupe n'est retiré que s'il est vide —
+        retirer un nœud retire aussi sa couche du projet.
+        """
         ids = set(self._layer_ids.values())
         group = self._find_group()
         if group is not None:
             for node in group.findLayers():
                 layer = node.layer()
-                if layer is not None:
+                if _est_miroir(layer):
                     ids.add(layer.id())
         for layer_id in ids:
             try:
@@ -246,7 +264,7 @@ class StationLayerManager:
         self._branchees = set()
         root = QgsProject.instance().layerTreeRoot()
         group = root.findGroup(GROUP_NAME)
-        if group is not None:
+        if group is not None and not group.children():
             root.removeChildNode(group)
 
     # ------------------------------------------------------------- interne
@@ -321,6 +339,7 @@ class StationLayerManager:
         wkb, name = _LAYER_DEF[geom_type]
         uri = "%s?crs=EPSG:4326%s" % (wkb, _FIELDS_URI)
         layer = QgsVectorLayer(uri, name, "memory")
+        layer.setCustomProperty(_MARQUE_MIROIR, 1)
         layer.setReadOnly(True)
         # Sans cela, QGIS avertit à la fermeture que « le contenu sera
         # définitivement perdu ». C'est faux ici : ces couches ne sont qu'un
@@ -348,9 +367,13 @@ class StationLayerManager:
         projet — c'est la donnée en base SQLite qui fait foi, ces couches ne sont
         qu'un miroir, aucune perte n'est possible.
         """
+        # Couche MÉMOIRE seulement : une couche de l'utilisateur portant le même
+        # nom — le GeoPackage produit par « Exporter en GeoPackage », rechargé
+        # dans le groupe — était sinon reprise comme miroir, puis vidée et
+        # réécrite sur le disque au rafraîchissement suivant.
         matches = [
             node.layer() for node in group.findLayers()
-            if node.layer() is not None and node.layer().name() == name
+            if _est_miroir(node.layer()) and node.layer().name() == name
         ]
         if not matches:
             return None
