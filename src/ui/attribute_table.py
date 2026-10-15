@@ -1467,29 +1467,39 @@ class AttributeTableDialog(QDialog):
         faite dans le formulaire, et surtout l'`id_station` posé par une synchro,
         dont la perte faisait recréer un doublon sur GeoNature au prochain envoi.
         """
-        if not self.db.station_exists(station["id"]):
+        # Relue en base : la table garde sa copie tant qu'elle a des
+        # modifications, et une autre fenêtre a pu écrire entre-temps. On n'y
+        # reporte que les champs modifiés ICI (cf. `reporter_modifications`) :
+        # remplacer les habitats en bloc depuis la copie effaçait un habitat
+        # ajouté dans la fiche, et réécrire le commentaire entier ramenait
+        # l'ancien texte.
+        fraiche = self.db.get_station(station["id"])
+        if fraiche is None:
             if self.logger:
                 self.logger.warning("Station %s supprimée entre-temps : ignorée",
                                     station.get("id"))
             return False
-        etait_en_conflit = station.get("sync_status") == "conflict"
-        champs = {
-            cle: station.get(cle) for cle in self.grille.colonnes_modifiees(station)
-        }
+        etait_en_conflit = fraiche.get("sync_status") == "conflict"
+        colonnes, colonnes_habitats = self.grille.reporter_modifications(
+            station, fraiche
+        )
+        champs = {cle: fraiche.get(cle) for cle in colonnes}
         if "observers" in champs:
             # Ni une colonne ni un champ envoyé tel quel : la liste vit dans une
             # table à part, et sa version texte alimente la liste du dock,
             # l'export et le payload GeoNature.
             champs.pop("observers")
-            observateurs = station.get("observers") or []
+            observateurs = fraiche.get("observers") or []
             champs["observers_txt"] = ", ".join(
                 o.get("observer_name") or "" for o in observateurs
             ) or None
             self.db.replace_observers(station["id"], observateurs)
         champs["sync_status"] = "pending"  # toute édition remet en attente d'envoi
         self.db.update_station(station["id"], **champs)
-        if self.grille.habitats_modifies(station):
-            self.db.replace_habitats(station["id"], station.get("habitats") or [])
+        habitats_frais = {h.get("id"): h for h in fraiche.get("habitats") or []}
+        for id_habitat, cles in colonnes_habitats.items():
+            habitat = habitats_frais[id_habitat]
+            self.db.update_habitat(id_habitat, **{c: habitat.get(c) for c in cles})
         if etait_en_conflit:
             # Conflit résolu côté local : oublier l'empreinte pour que la
             # prochaine synchro impose cette version (cf. édition unitaire).

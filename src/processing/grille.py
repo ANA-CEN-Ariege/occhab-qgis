@@ -22,10 +22,12 @@ from collections import namedtuple
 
 try:  # importable dans le paquet (plugin) comme en isolation (tests)
     from . import champs as ch
+    from .eval_fields import decode_eval
     from .referentiels import BROUILLON as _BROUILLON
     from .referentiels import VALIDE as _VALIDE
 except ImportError:  # pragma: no cover - repli hors paquet
     import champs as ch
+    from eval_fields import decode_eval
     from referentiels import BROUILLON as _BROUILLON
     from referentiels import VALIDE as _VALIDE
 
@@ -211,6 +213,43 @@ class Grille:
             for niveau, identifiant, _cle in self._modifies
         )
 
+    def reporter_modifications(self, station, fraiche):
+        """Reporter sur `fraiche` — la station RELUE en base — les seuls champs
+        modifiés dans la table. Mute `fraiche` et ses habitats.
+
+        La table est non modale et garde sa copie tant qu'elle porte des
+        modifications non enregistrées. Écrire depuis cette copie écrasait ce
+        qu'une autre fenêtre avait enregistré entre-temps sur la même station :
+        un habitat ajouté dans la fiche disparaissait (les habitats étaient
+        remplacés en bloc), un commentaire repris revenait à l'ancien texte.
+
+        Renvoie `(colonnes station, {id habitat: colonnes})` à écrire. Un
+        habitat modifié ici mais supprimé ailleurs entre-temps est ignoré.
+        """
+        identifiant = station.get("id")
+        sources = {h.get("id"): h for h in station.get("habitats") or []}
+        cibles = {h.get("id"): h for h in fraiche.get("habitats") or []}
+        colonnes_station, colonnes_habitats = set(), {}
+        for niveau, objet_id, cle in self._modifies:
+            champ = ch.par_cle(niveau, cle)
+            if champ is None:
+                continue
+            if niveau == ch.STATION:
+                if objet_id != identifiant:
+                    continue
+                source, cible = station, fraiche
+            else:
+                source, cible = sources.get(objet_id), cibles.get(objet_id)
+                if source is None or cible is None:
+                    continue
+            ch.ecrire(cible, champ, _valeur_brute(source, champ))
+            touchees = ch.colonnes_touchees(champ)
+            if niveau == ch.STATION:
+                colonnes_station |= touchees
+            else:
+                colonnes_habitats.setdefault(objet_id, set()).update(touchees)
+        return colonnes_station, colonnes_habitats
+
     def _station_modifiee(self, station):
         for niveau, identifiant, _cle in self._modifies:
             if niveau == ch.STATION and identifiant == station.get("id"):
@@ -290,3 +329,16 @@ class Grille:
     @staticmethod
     def _cle(champ, objet):
         return (champ.niveau, objet.get("id"), champ.cle)
+
+
+def _valeur_brute(objet, champ):
+    """La valeur d'un champ telle que `ch.ecrire` l'attend.
+
+    `ch.lire` convient partout, sauf pour une correspondance : il la rend sous
+    forme de CODE (lisible en cellule), alors que `ch.ecrire` attend l'entrée du
+    bloc, un dict portant au moins `cd_hab`.
+    """
+    if champ.stockage == ch.CORRESP:
+        porteur = (objet or {}).get(ch.PORTEUR[champ.niveau])
+        return (decode_eval(porteur).get("corresp") or {}).get(champ.cle)
+    return ch.lire(objet, champ)

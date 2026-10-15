@@ -469,6 +469,28 @@ class OccHabDatabase:
         finally:
             self.disconnect()
 
+    def update_habitat(self, habitat_id, **fields):
+        """Écrire les seules colonnes données d'un habitat local (par son `id`)."""
+        data = {
+            k: v for k, v in fields.items()
+            if k in self.HABITAT_COLS and k != "sync_status"
+        }
+        if not data:
+            return
+        self.connect()
+        try:
+            cursor = self.connection.cursor()
+            assignments = ", ".join("%s = ?" % k for k in data)
+            # Colonnes issues d'une whitelist figée (HABITAT_COLS) ; valeurs
+            # paramétrées (?). Aucune donnée utilisateur dans le SQL.
+            cursor.execute(
+                "UPDATE t_habitats SET %s WHERE id = ?" % assignments,  # nosec B608
+                list(data.values()) + [habitat_id],
+            )
+            self.connection.commit()
+        finally:
+            self.disconnect()
+
     def definir_ids_serveur_habitats(self, identites):
         """Écrire l'identité GeoNature d'habitats locaux, en une transaction.
 

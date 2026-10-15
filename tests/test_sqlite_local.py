@@ -399,3 +399,17 @@ def test_identite_serveur_des_habitats_ecrite_et_conservee(tmp_path):
     db.replace_habitats(station_id, [habitat])
     habitat = db.get_station(station_id)["habitats"][0]
     assert (habitat["id_habitat"], habitat["unique_id_sinp_hab"]) == (501, "uuid-1")
+
+
+def test_update_habitat_n_ecrit_que_les_colonnes_donnees(tmp_path):
+    db = _make_db(tmp_path)
+    station_id = db.create_station(id_dataset=3)
+    id_local = db.add_habitat(station_id, cd_hab=10, nom_cite="h1", determiner="Roy")
+    db.add_habitat(station_id, cd_hab=20, nom_cite="h2")
+
+    db.update_habitat(id_local, nom_cite="h1 corrigé")
+
+    habitats = {h["id"]: h for h in db.get_station(station_id)["habitats"]}
+    assert habitats[id_local]["nom_cite"] == "h1 corrigé"
+    assert habitats[id_local]["determiner"] == "Roy"
+    assert len(habitats) == 2  # l'autre habitat n'est pas touché
