@@ -182,8 +182,15 @@ class GeoNatureAPIClient:
         return self._make_request("GET", "occhab/stations/%s/" % id_station)
 
     def create_station(self, data):
-        """Créer une station + ses habitats + observateurs (payload imbriqué)."""
-        return self._make_request("POST", "occhab/stations/", data=data)
+        """Créer une station + ses habitats + observateurs (payload imbriqué).
+
+        Délai LONG : une création qui dépasse le délai a souvent abouti côté
+        serveur sans que la réponse arrive. La station restait alors sans
+        identifiant en local, et la synchro suivante la créait une seconde fois.
+        Un délai généreux rend ce cas bien plus rare.
+        """
+        return self._make_request("POST", "occhab/stations/", data=data,
+                                  timeout=DELAI_LONG)
 
     def update_station(self, id_station, data):
         """Mettre à jour une station (⚠ POST, pas PUT)."""
