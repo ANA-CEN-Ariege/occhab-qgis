@@ -893,9 +893,12 @@ def _renderer_habitats(layer, palette, mode=MODE_DEFAUT):
         for cle, libelle, couleur in habitats:
             regle = QgsRuleBasedRenderer.Rule(_symbole_habitat(layer, couleur, mode))
             regle.setLabel(libelle)
-            regle.setFilterExpression(
-                '"%s" = %s' % (hs.CHAMP_CLE, _litteral(cle))
-            )
+            # Le milieu AUSSI : deux homonymes rattachés à deux milieux
+            # partagent leur clé, et chaque règle dessinait alors les deux —
+            # habitat peint deux fois, et deux fois en légende.
+            regle.setFilterExpression('"%s" = %s AND "%s" = %s' % (
+                hs.CHAMP_CLE, _litteral(cle), hs.CHAMP_CLASSE, _litteral(classe)
+            ))
             groupe.appendChild(regle)
 
     contour = _symbole_contour(layer)

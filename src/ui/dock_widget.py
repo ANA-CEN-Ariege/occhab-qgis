@@ -114,6 +114,16 @@ def _code_habref(nom_cite):
     return trouve.group(1) if trouve else None
 
 
+def _meme_geometrie(wkt_a, wkt_b):
+    """Les deux WKT décrivent-ils la même géométrie (au sens de GEOS) ?"""
+    if not wkt_a or not wkt_b:
+        return False
+    from qgis.core import QgsGeometry
+
+    a, b = QgsGeometry.fromWkt(wkt_a), QgsGeometry.fromWkt(wkt_b)
+    return not a.isNull() and not b.isNull() and a.isGeosEqual(b)
+
+
 def _outil_d_edition(outil):
     """L'outil de carte modifie-t-il des entités (sommets, ajout, découpe…) ?"""
     if outil is None:
@@ -1709,6 +1719,13 @@ class OccHabDockWidget(QDockWidget):
             try:
                 detail = self.client.get_station(id_station)
                 station, habitats, observers = parse_server_station(detail)
+                # Tout vérifier AVANT de toucher à la copie locale : elle était
+                # supprimée d'abord, et une réponse inexploitable (page de proxy,
+                # habitat sans nom cité) ne laissait plus rien à sa place.
+                if str(station.get("id_station")) != str(id_station):
+                    raise ValueError("réponse du serveur inexploitable")
+                if any(not h.get("cd_hab") or not h.get("nom_cite") for h in habitats):
+                    raise ValueError("habitat sans cd_hab ou sans nom cité sur le serveur")
                 snapshot = server_fingerprint(station, habitats, observers)
                 props = detail.get("properties", {}) if isinstance(detail, dict) else {}
                 my_id = (self.client.user or {}).get("id_role")
@@ -1718,14 +1735,21 @@ class OccHabDockWidget(QDockWidget):
                 local_id = self.db.create_station(
                     sync_status="synced", mine=mine, server_snapshot=snapshot, **station
                 )
-                for habitat in habitats:
-                    self.db.add_habitat(local_id, sync_status="synced", **habitat)
-                for observer in observers:
-                    self.db.add_observer(
-                        local_id,
-                        observer_name=observer.get("observer_name"),
-                        id_role=observer.get("id_role"),
-                    )
+                try:
+                    for habitat in habitats:
+                        self.db.add_habitat(local_id, sync_status="synced", **habitat)
+                    for observer in observers:
+                        self.db.add_observer(
+                            local_id,
+                            observer_name=observer.get("observer_name"),
+                            id_role=observer.get("id_role"),
+                        )
+                except Exception:
+                    # Une station « synchronisée » à qui il manque des habitats
+                    # les ferait supprimer sur GeoNature au prochain envoi :
+                    # mieux vaut ne rien garder et la récupérer de nouveau.
+                    self.db.delete_station(local_id)
+                    raise
                 if existing:
                     restored += 1
                 else:
@@ -2476,6 +2500,14 @@ class OccHabDockWidget(QDockWidget):
             self.iface.messageBar().pushInfo("OccHab", "Géométrie vide, station inchangée.")
             return
         current = self.db.get_station(station_id)  # mémoriser l'ancienne géométrie
+        if current and current.get("geom_type") == geom_type and _meme_geometrie(
+            current.get("geom"), wkt
+        ):
+            # Valider sans rien changer réécrivait tout de même la station : la
+            # géométrie précédente (« Rétablir ») était perdue, remplacée par
+            # l'actuelle, et une suppression demandée était annulée en silence.
+            self.iface.messageBar().pushInfo("OccHab", "Géométrie inchangée.")
+            return
         fields = {
             "geom": wkt, "geom_type": geom_type, "sync_status": "pending",
             "prev_geom": current.get("geom") if current else None,
