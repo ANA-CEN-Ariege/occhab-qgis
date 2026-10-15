@@ -147,6 +147,10 @@ class ServerStationLayerManager:
                         pass
         self._layer_ids = []
 
+    def oublier(self):
+        """Oublier les couches connues (projet changé), sans rien retirer."""
+        self._layer_ids = []
+
     def cleanup(self):
         """Retirer la couche et le groupe (au déchargement du plugin)."""
         self.clear()
