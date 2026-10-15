@@ -2606,6 +2606,7 @@ occhab/
                       export_dialog.py           # choix export / période / typologie
                       export_layers.py           # couches d'export : bandes, damier, enjeux, PEE
                       flow_layout.py · no_wheel.py           # utilitaires Qt
+                      modal.py                   # dialogues et menus détruits après usage
                       connection_dialog.py
                       map_tools.py               # capture + édition de géométrie, accrochage jointif
                       station_layers.py · server_layers.py   # couches carte

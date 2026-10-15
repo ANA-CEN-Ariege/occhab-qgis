@@ -46,6 +46,7 @@ from ..processing.geometry import (
 )
 from .connection_dialog import ConnectionDialog
 from .flow_layout import widget_reflowable
+from .modal import executer
 from .station_dialog import StationDialog
 from .station_form import current_user
 from .export_layers import ExportLayerManager
@@ -714,7 +715,7 @@ class OccHabDockWidget(QDockWidget):
         menu.addAction("Zoom", self.zoom_to_stations)
         menu.addSeparator()
         menu.addAction("Supprimer", self.delete_selected)
-        menu.exec(self.table.viewport().mapToGlobal(pos))
+        executer(menu, self.table.viewport().mapToGlobal(pos))
 
     # (glyphe, libellé, couleur du texte, fond, bordure) — état de SYNCHRO.
     _PILL_STYLES = {
@@ -853,7 +854,7 @@ class OccHabDockWidget(QDockWidget):
 
     def open_connection(self):
         dialog = ConnectionDialog(self.config, parent=self)
-        if not dialog.exec():
+        if not executer(dialog):
             return
         self.client = dialog.client
         self._user_label = dialog.user_label()
@@ -1211,7 +1212,7 @@ class OccHabDockWidget(QDockWidget):
             b_sel = boite.addButton("Sélection seulement", QMessageBox.ButtonRole.YesRole)
             boite.addButton("Toute la base", QMessageBox.ButtonRole.YesRole)
             boite.addButton(QMessageBox.StandardButton.Cancel)
-            boite.exec()
+            executer(boite)
             clique = boite.clickedButton()
             if clique is None or clique == boite.button(QMessageBox.StandardButton.Cancel):
                 return
@@ -1672,7 +1673,7 @@ class OccHabDockWidget(QDockWidget):
         from .server_picker_dialog import ServerStationPicker
 
         dialog = ServerStationPicker(rows, parent=self)
-        if not dialog.exec():
+        if not executer(dialog):
             return
         ids = dialog.selected_ids()
         if ids:
@@ -1840,7 +1841,7 @@ class OccHabDockWidget(QDockWidget):
             en_attente=self._stations_en_attente,
             parent=self,
         )
-        if not dialog.exec():
+        if not executer(dialog):
             return
         self._charger_export(dialog.id_export(), dialog.libelle_export(),
                              dialog.filtres(), dialog.mode(), dialog.libelle_mode(),
@@ -2048,7 +2049,7 @@ class OccHabDockWidget(QDockWidget):
             )
             return None
         dialog = LocalStationPicker(stations, parent=self)
-        if not dialog.exec():
+        if not executer(dialog):
             return None
         station_id = dialog.selected_id()
         if station_id is None:
@@ -2083,7 +2084,7 @@ class OccHabDockWidget(QDockWidget):
         sont appliqués à chaque station du lot.
         """
         dialog = self._make_station_dialog(batch_count=len(geoms))
-        if not dialog.exec():
+        if not executer(dialog):
             return
         shared, habitats = dialog.get_result()
         observers = shared.pop("_observers", [])
@@ -2581,9 +2582,19 @@ class OccHabDockWidget(QDockWidget):
         """Nettoyer au déchargement du plugin : capture/édition en cours + couches carte."""
         if self._table_dialog is not None:
             # Non modale : sans cela elle survivrait au plugin, avec une base et
-            # des couches disparues sous elle.
-            self._table_dialog.close()
-            self._table_dialog = None
+            # des couches disparues sous elle. Ni `close()` — question modale
+            # pendant que QGIS se ferme —, ni `finished` — rafraîchissement des
+            # couches au milieu du déchargement.
+            dialog, self._table_dialog = self._table_dialog, None
+            for signal, slot in (
+                (dialog.finished, self._on_attribute_table_closed),
+                (dialog.donnees_enregistrees, self.refresh),
+            ):
+                try:
+                    signal.disconnect(slot)
+                except (TypeError, RuntimeError):
+                    pass
+            dialog.liberer()
         if self._map_filter_installed:
             try:
                 self.iface.mapCanvas().viewport().removeEventFilter(self)
@@ -2761,7 +2772,7 @@ class OccHabDockWidget(QDockWidget):
         dialog = self._make_station_dialog(
             geom_wkt=geom_wkt, geom_type=geom_type, metrics=metrics, template=template
         )
-        if not dialog.exec():
+        if not executer(dialog):
             return
         station, habitats = dialog.get_result()
         observers = station.pop("_observers", [])
@@ -2809,6 +2820,10 @@ class OccHabDockWidget(QDockWidget):
                 return
             # Fermée sans nous prévenir : la référence périmée rendait le bouton
             # inopérant. On la jette et on rouvre une fenêtre neuve.
+            try:
+                self._table_dialog.liberer()
+            except RuntimeError:
+                pass  # déjà détruite
             self._table_dialog = None
         dialog = AttributeTableDialog(
             self.db,
@@ -2841,7 +2856,10 @@ class OccHabDockWidget(QDockWidget):
         dialog.show()
 
     def _on_attribute_table_closed(self, _result=None):
-        self._table_dialog = None
+        dialog, self._table_dialog = self._table_dialog, None
+        if dialog is not None:
+            # Sans cela, chaque table fermée restait en mémoire, enfant du panneau.
+            dialog.deleteLater()
         self.refresh()  # reprendre ce que la table a enregistré
 
     def edit_station(self):
@@ -2860,7 +2878,7 @@ class OccHabDockWidget(QDockWidget):
             return
         was_conflict = full.get("sync_status") == "conflict"
         dialog = self._make_station_dialog(station=full)
-        if not dialog.exec():
+        if not executer(dialog):
             return
         station, habitats = dialog.get_result()
         observers = station.pop("_observers", [])
@@ -3277,7 +3295,7 @@ class OccHabDockWidget(QDockWidget):
             sous_titre_propose=self._sous_titre_de_planche(),
             parent=self,
         )
-        if dialogue.exec() != QDialog.DialogCode.Accepted:
+        if executer(dialogue) != QDialog.DialogCode.Accepted:
             return
         if dialogue.dossier():
             self.config.set(CLE_DOSSIER, dialogue.dossier())
@@ -3622,7 +3640,7 @@ class OccHabDockWidget(QDockWidget):
         box.setInformativeText(info)
         box.setDefaultButton(btn_cancel)  # éviter un geste destructeur par inadvertance
         box.setEscapeButton(btn_cancel)
-        box.exec()
+        executer(box)
         clicked = box.clickedButton()
         if clicked is btn_local:
             self.db.delete_station(station_id)
@@ -3684,7 +3702,7 @@ class OccHabDockWidget(QDockWidget):
         box.setInformativeText(info)
         box.setDefaultButton(btn_cancel)  # éviter un geste destructeur par inadvertance
         box.setEscapeButton(btn_cancel)
-        box.exec()
+        executer(box)
         clicked = box.clickedButton()
         if clicked is btn_local:
             for station in stations:

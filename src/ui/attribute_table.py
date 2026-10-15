@@ -66,6 +66,7 @@ from ..processing.referentiels import TYPOLOGIES_CORRESPONDANCE, label_for
 from ..processing.tableur import tsv
 from .dialog_size import ajuster_a_l_ecran, borner_largeur_combos
 from .habref_widget import HabrefLineEdit, HabrefSearchEdit
+from .modal import executer
 from .no_wheel import FiltreMolette, proteger_du_defilement
 
 #: Catalogue vide, passé explicitement aux champs qui n'écrivent que le nom cité
@@ -1123,11 +1124,22 @@ class AttributeTableDialog(QDialog):
         groupes = JEUX_COLONNES.get(self.jeu_courant)
         colonnes = [c for c in ch.CHAMPS if groupes is None or c.groupe in groupes]
         self.colonnes = colonnes
+        # Les précédents sont détruits une fois remplacés : ils restaient sinon
+        # enfants de la fenêtre — chaque modèle avec une copie complète des
+        # stations — à chaque rafraîchissement du panneau, table ouverte. Le
+        # délégué par défaut appartient à la vue : seul le nôtre est détruit.
+        anciens = [getattr(self, "proxy", None), getattr(self, "model", None),
+                   self.table.selectionModel()]
+        if isinstance(self.table.itemDelegate(), ChampDelegate):
+            anciens.append(self.table.itemDelegate())
         self.model = GrilleModel(self.grille, colonnes, self.contexte, self)
         self.proxy = GrilleProxy(self)
         self.proxy.setSourceModel(self.model)
         self.table.setModel(self.proxy)
         self.table.setItemDelegate(ChampDelegate(colonnes, self.contexte, self))
+        for ancien in anciens:
+            if ancien is not None:
+                ancien.deleteLater()
         for index, champ in enumerate(colonnes):
             self.table.setColumnWidth(index, champ.largeur)
         # Le modèle et son modèle de sélection sont neufs après chaque
@@ -1297,7 +1309,7 @@ class AttributeTableDialog(QDialog):
         menu.addAction("Copier tout le tableau (avec en-têtes)").triggered.connect(
             self.copier_tout
         )
-        menu.exec(self.table.viewport().mapToGlobal(position))
+        executer(menu, self.table.viewport().mapToGlobal(position))
 
     def a_des_modifications(self):
         return self.grille.a_des_modifications()
@@ -1331,7 +1343,7 @@ class AttributeTableDialog(QDialog):
                   for h in habitats
                   if h.get(ch.HABREF) or h.get("nom_cite")},
         )
-        if not dialogue.exec():
+        if not executer(dialogue):
             return
         valeurs = dialogue.valeurs()
         if not valeurs:
@@ -1566,7 +1578,15 @@ class AttributeTableDialog(QDialog):
                 self.logger.warning("Purge des sauvegardes impossible : %s", exc)
 
     # ------------------------------------------------------------- fermeture
-    def closeEvent(self, event):
+    def reject(self):
+        """Fermeture par « Fermer », par la croix ou par Échap.
+
+        La garde vit ici et non dans `closeEvent` : Échap appelle `reject()`
+        directement, sans `closeEvent`, et fermait la table en perdant les
+        modifications sans rien demander. `QDialog.closeEvent` appelle lui-même
+        `reject()` — et laisse la fenêtre ouverte si elle l'est restée —, donc les
+        trois chemins passent par cette garde, une seule fois.
+        """
         if self.grille.a_des_modifications():
             reponse = QMessageBox.question(
                 self, "Modifications non enregistrées",
@@ -1574,14 +1594,24 @@ class AttributeTableDialog(QDialog):
                 "même ?" % len(self.grille.modifications()),
             )
             if reponse != QMessageBox.StandardButton.Yes:
-                event.ignore()
                 return  # fermeture annulée : on RESTE abonné à la carte
+        self._desabonner_de_la_carte()
+        # `finished` part d'ici : le dock oublie la fenêtre et la détruit.
+        super().reject()
+
+    def liberer(self):
+        """Fermer sans rien demander ni rien émettre (déchargement de l'extension).
+
+        Ni question — une boîte modale pendant que QGIS se ferme —, ni
+        `finished` : le dock rafraîchirait couches et tableau au milieu du
+        déchargement.
+        """
+        self._desabonner_de_la_carte()
+        self.hide()
+        self.deleteLater()
+
+    def _desabonner_de_la_carte(self):
         if self.layers is not None:
             # Une fenêtre fermée ne doit plus réagir aux sélections carte, sinon
             # on manipulerait des widgets détruits.
             self.layers.remove_selection_listener(self._on_map_selection_changed)
-        # Indispensable : c'est `QDialog.closeEvent` qui appelle `reject()`, donc
-        # qui émet `finished`. Un simple `event.accept()` masquait la fenêtre sans
-        # prévenir personne : le dock gardait sa référence et le bouton
-        # « Tableau » ne rouvrait plus rien.
-        super().closeEvent(event)
