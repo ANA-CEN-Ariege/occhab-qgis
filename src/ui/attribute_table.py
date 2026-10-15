@@ -497,9 +497,15 @@ class ChampDelegate(QStyledItemDelegate):
             # encore être en train d'y réécrire le libellé préfixé de la
             # typologie, qui n'est pas le nom cité.
             nom = editor.nom_choisi or editor.text().strip() or None
+            # La ligne SOURCE se lit AVANT d'écrire le nom : la table est triable
+            # et filtrable, et le proxy re-trie ou re-filtre dès ce `setData`. Lu
+            # après, `index` désignait la ligne venue prendre la place de
+            # l'habitat corrigé — trié sur « Nom cité » ou filtré par texte, le
+            # cd_hab partait sur un AUTRE habitat, sans rien en laisser voir.
+            source, ligne = self._ligne_source(model, index)
             model.setData(index, nom, Qt.ItemDataRole.EditRole)
             if editor.cd_choisi is not None and editor.nom_choisi:
-                self._ecrire_cd_hab(model, index, editor.cd_choisi)
+                self._ecrire_cd_hab(source, ligne, editor.cd_choisi)
             return
         if isinstance(editor, QComboBox):
             valeur = editor.currentData()
@@ -516,21 +522,23 @@ class ChampDelegate(QStyledItemDelegate):
         model.setData(index, valeur, Qt.ItemDataRole.EditRole)
 
     @staticmethod
-    def _ecrire_cd_hab(model, index, cd_hab):
-        """Poser le cd_hab de la MÊME ligne, à travers le filtre s'il y en a un.
+    def _ligne_source(model, index):
+        """(modèle source, ligne source) de `index`, à travers le filtre s'il y en a un.
 
         Le modèle vu par la vue est le proxy de filtrage : ses numéros de ligne
         ne sont pas ceux de la grille. Écrire sans repasser par `mapToSource`
         aurait posé le code sur l'habitat d'une autre ligne dès qu'un filtre est
         actif — soit exactement quand on corrige une détermination en série.
         """
-        source = model
-        row = index.row()
         if hasattr(model, "mapToSource"):
-            row = model.mapToSource(index).row()
-            source = model.sourceModel()
+            return model.sourceModel(), model.mapToSource(index).row()
+        return model, index.row()
+
+    @staticmethod
+    def _ecrire_cd_hab(source, ligne, cd_hab):
+        """Poser le cd_hab de la ligne `ligne` du modèle SOURCE."""
         if hasattr(source, "definir_par_cle"):
-            source.definir_par_cle(row, ch.HABITAT, "cd_hab", cd_hab)
+            source.definir_par_cle(ligne, ch.HABITAT, "cd_hab", cd_hab)
 
 
 class _ObservateursEdit(QListWidget):
