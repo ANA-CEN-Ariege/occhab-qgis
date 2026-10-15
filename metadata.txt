@@ -3,7 +3,7 @@ name=OccHab GeoNature
 qgisMinimumVersion=3.28
 qgisMaximumVersion=3.99
 description=Data entry for GeoNature's OccHab module (habitat stations) from QGIS, with local SQLite storage and on-demand synchronisation to the GeoNature REST API.
-version=0.14.0
+version=0.15.0
 author=Cédric Roy
 email=it@ariegenature.fr
 license=GPL-3.0-or-later
@@ -34,7 +34,50 @@ icon=resources/icons/occhab.svg
 experimental=True
 deprecated=False
 
-changelog=0.14.0 - Un second gabarit d'export, a colonnes plates, pour les livrables.
+changelog=0.15.0 - Fin des plantages de QGIS en saisie, et donnees protegees a la synchronisation.
+    QGIS plantait plusieurs fois par heure (« access violation ») en modifiant
+    des geometries. Plusieurs causes, toutes corrigees : l'outil de sommets
+    restait arme sur la couche d'edition detruite ; les reglages d'accrochage
+    etaient rendus avec l'adresse de couches detruites ; l'index d'accrochage
+    etait libere pendant sa construction ; une couche retiree pendant une
+    numerisation, ou un projet ferme en pleine saisie, laissaient des adresses
+    perimees. Les mises en page dont la legende debordait sur une page 2 faisaient
+    aussi planter QGIS a la fermeture du projet : elles sont reparees a
+    l'ouverture (enregistrez le projet ensuite). Les fenetres jamais detruites,
+    qui epuisaient les ressources de Windows au fil d'une journee, le sont
+    desormais.
+    Le double-clic sur la carte n'ouvre plus la fiche pendant un trace : il y
+    ajoute un sommet. Echap annule vraiment la saisie. La saisie jointive est
+    exacte : les sommets accroches coincident avec ceux de la voisine, et « Le
+    trace debordait sur une station voisine » n'apparait plus que pour un vrai
+    debordement.
+    Synchronisation :
+    - les habitats ne sont plus recrees sur GeoNature a chaque mise a jour : ils
+      gardent leur identifiant et leur UUID SINP ;
+    - chaque station retient son serveur GeoNature d'origine : connecte a un
+      autre serveur, le plugin n'y envoie ni n'y supprime ses stations ;
+    - hors connexion, rouvrir une fiche n'efface plus ses nomenclatures ;
+    - l'altitude d'un trace fait hors connexion est recalculee a la
+      synchronisation ;
+    - modifier une station « a supprimer » n'annule plus sa suppression en
+      silence ;
+    - une creation sans identifiant lisible est un echec affiche, et la creation
+      prend un delai plus long ;
+    - les dates inversees sont refusees avant l'envoi, et la purge ne retire plus
+      que des stations portant un identifiant serveur.
+    Saisie et table attributaire :
+    - le cd_hab choisi dans HABREF ne part plus sur un autre habitat quand la
+      table est triee ou filtree ;
+    - « Enregistrer » n'ecrase plus ce qu'une autre fenetre a ecrit entre-temps,
+      et Echap ne ferme plus la table en perdant les modifications ;
+    - le texte libre des observateurs et un JDD devenu inactif sont conserves ;
+    - une action vise la station surlignee, meme selectionnee sur la carte.
+    Divers : la surface est juste dans un projet sans ellipsoide (elle etait
+    surestimee d'un bon tiers) ; une couche de l'utilisateur au nom d'une couche
+    du plugin n'est plus videe ; deux exports n'ecrivent plus dans le meme
+    fichier ; « Recuperer du serveur » ne perd plus la copie locale sur une
+    reponse inexploitable ; une adresse http:// demande confirmation.
+    0.14.0 - Un second gabarit d'export, a colonnes plates, pour les livrables.
     Les donneurs d'ordre reclament une ligne par STATION, la mosaique depliee en
     colonnes Syntaxon_1, Syntaxon_2... la ou la vue d'export du plugin rend une
     ligne par habitat. Le script sql/v_habitats_mosaique.sql produit ce
