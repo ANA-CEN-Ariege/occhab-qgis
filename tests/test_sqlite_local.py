@@ -383,3 +383,19 @@ def test_ecriture_ciblee_preserve_le_lien_serveur(tmp_path):
     assert full["server_snapshot"] == "empreinte"
     assert full["station_name"] == "S modifiée"
     assert full["sync_status"] == "pending"
+
+
+def test_identite_serveur_des_habitats_ecrite_et_conservee(tmp_path):
+    """L'identité GeoNature d'un habitat survit à sa réécriture par la fiche."""
+    db = _make_db(tmp_path)
+    station_id = db.create_station(id_dataset=3)
+    id_local = db.add_habitat(station_id, cd_hab=10, nom_cite="h1")
+
+    db.definir_ids_serveur_habitats({id_local: (501, "uuid-1")})
+
+    habitat = db.get_station(station_id)["habitats"][0]
+    assert (habitat["id_habitat"], habitat["unique_id_sinp_hab"]) == (501, "uuid-1")
+    # La fiche réécrit tous les habitats : l'identité doit suivre.
+    db.replace_habitats(station_id, [habitat])
+    habitat = db.get_station(station_id)["habitats"][0]
+    assert (habitat["id_habitat"], habitat["unique_id_sinp_hab"]) == (501, "uuid-1")

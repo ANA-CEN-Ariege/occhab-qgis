@@ -380,3 +380,78 @@ def test_payload_refuse_des_mesures_inversees():
         assert "altitude" in str(exc)
     else:
         raise AssertionError("des mesures inversées auraient dû être refusées")
+
+
+# --- identité des habitats d'une synchro à l'autre --------------------------
+# GeoNature traite un habitat sans `id_habitat` comme une création et supprime
+# ceux de la station qu'il ne voit plus revenir : sans identité retrouvée, chaque
+# mise à jour recréait tous les habitats sous de nouveaux UUID SINP.
+
+
+def _hab(id_local, cd_hab, nom, id_habitat=None, uuid=None):
+    return {"id": id_local, "cd_hab": cd_hab, "nom_cite": nom,
+            "id_habitat": id_habitat, "unique_id_sinp_hab": uuid}
+
+
+def test_apres_creation_l_habitat_retrouve_son_id_par_son_uuid():
+    locaux = [_hab(1, 10, "A", uuid="AAA"), _hab(2, 20, "B", uuid="bbb")]
+    serveur = [
+        {"id_habitat": 502, "unique_id_sinp_hab": "BBB", "cd_hab": 20, "nom_cite": "B"},
+        {"id_habitat": 501, "unique_id_sinp_hab": "aaa", "cd_hab": 10, "nom_cite": "A"},
+    ]
+    assert p.identites_habitats(locaux, serveur) == {
+        1: (501, "aaa"), 2: (502, "BBB"),
+    }
+
+
+def test_un_habitat_sans_uuid_en_recoit_un_neuf():
+    neufs = iter(["u-1", "u-2"])
+    identites = p.identites_habitats(
+        [_hab(1, 10, "A"), _hab(2, 20, "B", uuid="garde")], [],
+        nouvel_uuid=lambda: next(neufs),
+    )
+    assert identites == {1: (None, "u-1"), 2: (None, "garde")}
+
+
+def test_rattrapage_par_contenu_des_habitats_deja_envoyes_sans_identite():
+    """Habitats envoyés avant le correctif : ni id ni UUID en local."""
+    locaux = [_hab(1, 10, "A"), _hab(2, 20, "B")]
+    serveur = [
+        {"id_habitat": 7, "unique_id_sinp_hab": "u7", "cd_hab": 10, "nom_cite": "A"},
+        {"id_habitat": 8, "unique_id_sinp_hab": "u8", "cd_hab": 20, "nom_cite": "B"},
+    ]
+    assert p.identites_habitats(locaux, serveur, par_contenu=True) == {
+        1: (7, "u7"), 2: (8, "u8"),
+    }
+    # Sans `par_contenu` (après l'envoi), on ne devine rien.
+    assert p.identites_habitats(locaux, serveur) == {1: (None, None), 2: (None, None)}
+
+
+def test_pas_de_rattrapage_par_contenu_ambigu():
+    """Deux habitats identiques ne se distinguent pas : n'en rattacher aucun."""
+    locaux = [_hab(1, 10, "A"), _hab(2, 10, "A")]
+    serveur = [
+        {"id_habitat": 7, "unique_id_sinp_hab": "u7", "cd_hab": 10, "nom_cite": "A"},
+        {"id_habitat": 8, "unique_id_sinp_hab": "u8", "cd_hab": 10, "nom_cite": "A"},
+    ]
+    assert p.apparier_habitats(locaux, serveur, par_contenu=True) == {}
+
+
+def test_un_habitat_serveur_ne_sert_qu_une_fois():
+    locaux = [_hab(1, 10, "A", id_habitat=7), _hab(2, 10, "A")]
+    serveur = [
+        {"id_habitat": 7, "unique_id_sinp_hab": "u7", "cd_hab": 10, "nom_cite": "A"},
+    ]
+    paires = p.apparier_habitats(locaux, serveur, par_contenu=True)
+    assert list(paires) == [0]
+
+
+def test_l_uuid_fourni_part_dans_le_payload_d_un_habitat_neuf():
+    """GeoNature reprend l'UUID fourni : c'est par lui qu'on retrouve l'habitat."""
+    payload = p.build_station_payload(
+        {"id_dataset": 1, "date_min": "2026-01-01", "date_max": "2026-01-01"},
+        [{"cd_hab": 10, "nom_cite": "A", "unique_id_sinp_hab": "u-1"}], [], None,
+    )
+    habitat = payload["properties"]["habitats"][0]
+    assert habitat["unique_id_sinp_hab"] == "u-1"
+    assert "id_habitat" not in habitat

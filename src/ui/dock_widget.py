@@ -4,6 +4,7 @@
 """Dock principal du plugin OccHab : connexion, saisie et synchronisation."""
 import os
 import re
+import uuid
 
 from qgis.PyQt.QtCore import QItemSelection, QItemSelectionModel, Qt, QUrl
 from qgis.PyQt.QtGui import QDesktopServices
@@ -3720,6 +3721,7 @@ class OccHabDockWidget(QDockWidget):
             build_station_payload,
             combler_defauts_serveur,
             extract_id_station,
+            identites_habitats,
             parse_server_station,
             server_fingerprint,
         )
@@ -3886,6 +3888,25 @@ class OccHabDockWidget(QDockWidget):
                     # un aller-retour réseau par station en pleine boucle. Elle le
                     # sera à la prochaine édition de la station.
                 geojson = wkt_to_geojson(geom_wkt) if geom_wkt else None
+                # Identité GeoNature de chaque habitat AVANT l'envoi : sans
+                # `id_habitat`, GeoNature recrée l'habitat et efface l'ancien.
+                # Retrouvée sur la version serveur lue pour le contrôle de conflit
+                # (y compris, par leur contenu, pour les habitats envoyés avant ce
+                # correctif), sinon UUID neuf : GeoNature le reprend tel quel, et
+                # c'est par lui qu'on retrouve l'habitat après l'envoi.
+                habitats_serveur = []
+                if current is not None:
+                    try:
+                        habitats_serveur = parse_server_station(current)[1]
+                    except Exception:  # noqa: BLE001 - rattrapage best-effort
+                        habitats_serveur = []
+                self._poser_identites_habitats(
+                    full["habitats"],
+                    identites_habitats(
+                        full["habitats"], habitats_serveur, par_contenu=True,
+                        nouvel_uuid=lambda: str(uuid.uuid4()),
+                    ),
+                )
                 payload = build_station_payload(
                     full, full["habitats"], full["observers"], geojson
                 )
@@ -3901,18 +3922,22 @@ class OccHabDockWidget(QDockWidget):
                 # pas (nature de l'objet géographique, type de sol…). Sans cela la
                 # colonne locale reste vide et affiche « non renseigné » alors que
                 # la station en porte une sur le serveur.
-                snapshot, combles = None, {}
+                snapshot, combles, identites = None, {}, {}
                 try:
                     srv, srv_habitats, srv_observers = parse_server_station(
                         self.client.get_station(id_station)
                     )
                     snapshot = server_fingerprint(srv, srv_habitats, srv_observers)
                     combles = combler_defauts_serveur(full, srv)
+                    # `id_habitat` des habitats créés par cet envoi, retrouvés
+                    # par l'UUID qu'on leur a donné.
+                    identites = identites_habitats(full["habitats"], srv_habitats)
                 except Exception:  # noqa: BLE001
-                    snapshot, combles = None, {}
+                    snapshot, combles, identites = None, {}, {}
                 self.db.mark_station_synced(
                     station["id"], id_station, server_snapshot=snapshot
                 )
+                self._poser_identites_habitats(full["habitats"], identites)
                 if combles:
                     # Après `mark_station_synced` : `update_station` ne touche pas
                     # `sync_status`, la station reste « synchronisée ».
@@ -3995,6 +4020,15 @@ class OccHabDockWidget(QDockWidget):
             )
         self.refresh()
         self._load_server_stations()  # recharger le contexte serveur (données à jour)
+
+    def _poser_identites_habitats(self, habitats, identites):
+        """Enregistrer l'identité GeoNature des habitats, en base et dans `habitats`."""
+        self.db.definir_ids_serveur_habitats(identites)
+        for habitat in habitats:
+            if habitat.get("id") in identites:
+                habitat["id_habitat"], habitat["unique_id_sinp_hab"] = (
+                    identites[habitat["id"]]
+                )
 
     def _confirm_deletions(self, to_delete):
         """Confirmer la suppression serveur : nombre + libellés, puis seuil renforcé."""

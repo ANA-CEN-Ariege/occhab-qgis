@@ -469,6 +469,32 @@ class OccHabDatabase:
         finally:
             self.disconnect()
 
+    def definir_ids_serveur_habitats(self, identites):
+        """Écrire l'identité GeoNature d'habitats locaux, en une transaction.
+
+        `identites` : `{id local de l'habitat: (id_habitat, unique_id_sinp_hab)}`
+        (cf. `payload.identites_habitats`). Sans elle, chaque mise à jour
+        renvoyait les habitats comme des créations, et GeoNature les recréait
+        sous de nouveaux identifiants SINP.
+        """
+        if not identites:
+            return
+        self.connect()
+        try:
+            cursor = self.connection.cursor()
+            for id_local, (id_habitat, uuid_hab) in identites.items():
+                cursor.execute(
+                    "UPDATE t_habitats SET id_habitat = ?, unique_id_sinp_hab = ? "
+                    "WHERE id = ?",
+                    (id_habitat, uuid_hab, id_local),
+                )
+            self.connection.commit()
+        except Exception:
+            self.connection.rollback()
+            raise
+        finally:
+            self.disconnect()
+
     # ------------------------------------------------------- observateurs
     def replace_observers(self, id_station_local, observers):
         """Remplacer les observateurs d'une station (suppression puis ré-insertion)."""

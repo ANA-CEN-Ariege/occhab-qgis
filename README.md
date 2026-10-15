@@ -2491,7 +2491,15 @@ dates `%Y-%m-%d`, `observers = [{"id_role": …}]`, habitats imbriqués,
 `id_station`/`id_habitat` préservés pour les mises à jour. Création, mise à jour,
 suppression et récupération (aller-retour) confirmées.
 
-Trois règles du payload ne se devinent pas :
+Quatre règles du payload ne se devinent pas :
+
+- **Un habitat sans `id_habitat` est une création.** GeoNature recrée l'habitat
+  et supprime de la station ceux qu'il ne voit plus revenir (`delete-orphan`).
+  Chaque habitat reçoit donc un `unique_id_sinp_hab` AVANT son premier envoi
+  (GeoNature reprend l'UUID fourni), et son `id_habitat` est relu après l'envoi
+  par cet UUID (`identites_habitats`). Les habitats envoyés par les versions
+  antérieures, sans identité locale, sont rattrapés à la synchro suivante par
+  leur couple (cd_hab, nom cité) lorsqu'il est sans ambiguïté.
 
 - **Effacer n'est possible qu'en mise à jour.** À la création, les clés vides
   sont omises pour laisser jouer les DEFAULT du serveur. En mise à jour, les
