@@ -3,7 +3,7 @@ name=OccHab GeoNature
 qgisMinimumVersion=3.28
 qgisMaximumVersion=3.99
 description=Data entry for GeoNature's OccHab module (habitat stations) from QGIS, with local SQLite storage and on-demand synchronisation to the GeoNature REST API.
-version=0.15.1
+version=0.16.0
 author=Cédric Roy
 email=it@ariegenature.fr
 license=GPL-3.0-or-later
@@ -34,7 +34,53 @@ icon=resources/icons/occhab.svg
 experimental=True
 deprecated=False
 
-changelog=0.15.1 - Le « Catalogue ANA » devient le « Tableau des alliances », sources citees.
+changelog=0.16.0 - Audit par parcours utilisateur : donnees protegees, synchro fiable, cartes justes.
+    Saisie et table :
+    - regression 0.15.0 corrigee : valider une fiche faisait perdre a la table
+      une modification d'habitat non enregistree ; les habitats gardent
+      desormais leur identifiant ;
+    - fermer QGIS (ou recharger l'extension) avec la table modifiee demande s'il
+      faut enregistrer ; un enregistrement partiel ne reecrit plus plus tard ce
+      qui a ete corrige ailleurs ; station et habitats s'ecrivent d'un bloc ;
+    - le double-clic sur la carte ouvre la station cliquee, plus sa voisine ;
+    - regression 0.15.0 corrigee : coller des renseignements ne recopie plus le
+      serveur d'origine ni la consigne de recalcul d'altitude ;
+    - re-choisir le meme habitat n'efface plus les correspondances arbitrees ;
+    - fiche : Echap, la croix et Annuler demandent avant de jeter une saisie,
+      Entree ne valide plus, une fiche inchangee n'est plus renvoyee ;
+    - nom cite, cd_hab et statut ne se vident plus dans la table ; en lot, un nom
+      cite tape sans etre choisi est refuse ;
+    - plus de 3 PEE ou un texte au-dela des 500 caracteres de GeoNature sont
+      refuses a la saisie.
+    Synchronisation :
+    - une suppression verifie que la station n'a pas ete modifiee sur GeoNature
+      (par un collegue) depuis la derniere synchro ;
+    - plus de faux conflit apres une mise a jour lente ; un conflit se leve
+      aussi en retouchant la geometrie ou en collant des renseignements ;
+    - session expiree rouverte automatiquement ; echec rapide sur un serveur
+      injoignable ; progression avec bouton Arreter, arret de lui-meme quand le
+      reseau tombe ;
+    - motifs d'echec des suppressions et recuperations affiches ; station sans
+      geometrie ou texte trop long refuses avant l'envoi avec leur motif ;
+      coordonnees ramenees en 2D ;
+    - le nettoyage des stations anciennes verifie qu'elles sont encore sur
+      GeoNature ; Alleger laisse les stations des collegues.
+    Cartes et exports :
+    - le gabarit a colonnes plates est en Lambert 93, plus pris pour du WGS84 ;
+    - points et polygones melanges : une couche par type, plus d'entites
+      invisibles ; export tronque signale ;
+    - mosaique : un habitat sans recouvrement garde une part visible ;
+    - PEE : separateur « ; » (rejouer sql/v_occhab_complet.sql ; l'ancienne
+      forme reste lue), casse sans effet ;
+    - numerisateur rempli dans l'export du JDD ; un meme habitat garde un seul
+      milieu ; refaire une planche du meme titre propose de la remplacer.
+    Demarrage :
+    - plus d'adresse de serveur reel pre-remplie (les identifiants pouvaient y
+      partir) ; config.json relu avant chaque ecriture, lu avec BOM, garde de
+      cote s'il est illisible ;
+    - reconnexion automatique par le trousseau du systeme ; base illisible
+      signalee clairement ; couches reposees apres un changement de projet.
+    0.15.1 - Le « Catalogue ANA » devient le « Tableau des alliances », sources citees.
     Le tableau des botanistes de l'ANA-CEN est un travail de synthese et de mise
     en correspondance entre plusieurs travaux. Ses ressources principales sont
     desormais citees : le Synopsis phytosociologique et catalogue descriptif des
