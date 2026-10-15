@@ -151,7 +151,7 @@ class OccHabDockWidget(QDockWidget):
         self.default_nomenclatures = {}
         self.typologies = []
         self.observers = []
-        self.layers = StationLayerManager(self.logger)
+        self.layers = StationLayerManager(self.logger, iface.mapCanvas())
         self.layers.add_selection_listener(self._on_map_selection_changed)
         self._table_dialog = None  # table attributaire ouverte (non modale)
         self.server_layers = ServerStationLayerManager(
@@ -168,6 +168,9 @@ class OccHabDockWidget(QDockWidget):
         self._session_dates = None
         self._geom_editor = None
         self._edit_geom_station_id = None
+        # Rechargement des stations serveur demandé pendant une saisie : reporté à
+        # sa fin (cf. `_load_server_stations`).
+        self._serveur_en_attente = False
         # Géométries réparées lors de la reprise en cours : comptées ici pour
         # n'avertir qu'une fois par lot (cf. `_signaler_geoms_corrigees`).
         self._geoms_corrigees = 0
@@ -1493,7 +1496,17 @@ class OccHabDockWidget(QDockWidget):
 
         Si `zoom` et qu'il existe des géométries, cadrer le canevas dessus (serveur
         en priorité, sinon les stations locales du JDD).
+
+        Reporté à la fin de la saisie si une numérisation ou une édition est en
+        cours : recharger DÉTRUIT la couche serveur et en crée une neuve, et
+        l'outil de numérisation de QGIS garde l'adresse de la couche active qu'il
+        rendra en fin de tracé — la couche serveur, après « Récupérer depuis la
+        carte ». Il la rendait détruite, et QGIS plantait.
         """
+        if self._saisie_geometrie_en_cours():
+            self._serveur_en_attente = True
+            return
+        self._serveur_en_attente = False
         if self.client is None or not self.client.is_authenticated:
             self.server_layers.clear()
             self.label_server.setText("")
@@ -2293,6 +2306,9 @@ class OccHabDockWidget(QDockWidget):
             return
         wkt, geom_type = full.get("geom"), full.get("geom_type")
         if wkt and geom_type:  # géométrie existante → édition des sommets
+            # Une seule saisie à la fois : cf. `_start_capture`.
+            if self._capture is not None:
+                self._capture.cancel()
             self._edit_geom_station_id = station_id
             self._ensure_geom_editor().start(
                 wkt, geom_type, self._couches_accrochage(geom_type)
@@ -2317,10 +2333,17 @@ class OccHabDockWidget(QDockWidget):
             wkt = self._rendre_jointif(wkt, geom_type, exclure_id=station_id)
             metrics = self._geo_metrics(wkt or None, geom_type)
             self._update_geometry(station_id, wkt or None, geom_type, metrics)
+        self._recharger_serveur_reporte()
 
     def _on_geometry_edit_cancelled(self):
         self._edit_geom_station_id = None
         self.iface.messageBar().pushInfo("OccHab", "Édition de géométrie annulée.")
+        self._recharger_serveur_reporte()
+
+    def _recharger_serveur_reporte(self):
+        """Recharger les stations serveur si on l'a différé pendant la saisie."""
+        if self._serveur_en_attente and not self._saisie_geometrie_en_cours():
+            self._load_server_stations()
 
     def _ensure_capture(self):
         if self._capture is None:
@@ -2393,6 +2416,13 @@ class OccHabDockWidget(QDockWidget):
         )
 
     def _start_capture(self, geom_type):
+        # Une seule saisie à la fois. Rien n'empêchait de lancer une numérisation
+        # pendant qu'une édition de sommets attendait « Valider », ou l'inverse :
+        # chacune posait puis rendait l'accrochage de son côté, la seconde
+        # rendait les réglages de la première au lieu de ceux de l'utilisateur,
+        # et la couche de travail de l'une était détruite sous l'autre.
+        if self._geom_editor is not None:
+            self._geom_editor.cancel()
         self._ensure_capture().start(geom_type, self._couches_accrochage(geom_type))
         message = (
             "Numérisez la station (accrochage QGIS actif, clic droit pour "
@@ -2420,6 +2450,7 @@ class OccHabDockWidget(QDockWidget):
             self._update_geometry(target, wkt or None, geom_type, metrics)
         else:
             self._open_station_dialog(wkt or None, geom_type, metrics)
+        self._recharger_serveur_reporte()
 
     def _on_capture_cancelled(self):
         self._capture_target = None
@@ -2427,6 +2458,7 @@ class OccHabDockWidget(QDockWidget):
         # contaminerait la prochaine « Nouvelle station ».
         self._duplicate_source = None
         self.iface.messageBar().pushInfo("OccHab", "Numérisation annulée.")
+        self._recharger_serveur_reporte()
 
     def _update_geometry(self, station_id, wkt, geom_type, metrics=None):
         if not wkt:
@@ -2555,6 +2587,9 @@ class OccHabDockWidget(QDockWidget):
                 self.logger.debug("removeEventFilter ignoré : %s", exc)
             self._map_filter_installed = False
         self._clear_server_prompt()
+        # Annuler une saisie rappelle `_recharger_serveur_reporte` : pas de
+        # requête réseau ni de couche neuve pendant le déchargement.
+        self._serveur_en_attente = False
         if self._capture is not None:
             self._capture.cancel()
         if self._geom_editor is not None:

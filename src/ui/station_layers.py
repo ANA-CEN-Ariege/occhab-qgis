@@ -47,8 +47,11 @@ _SYNC_STYLE = {
 class StationLayerManager:
     """Maintient les couches carte reflétant les stations locales."""
 
-    def __init__(self, logger=None):
+    def __init__(self, logger=None, canvas=None):
         self.logger = logger
+        # Canevas dont l'index d'accrochage doit être ménagé à chaque
+        # reconstruction (cf. `_attendre_index_accrochage`). None hors QGIS.
+        self._canvas = canvas
         self._layer_ids = {}  # geom_type -> id de couche
         self._ecouteurs = []  # callables notifiés d'un changement de sélection carte
         self._branchees = set()  # ids de couches déjà connectées au signal
@@ -263,8 +266,34 @@ class StationLayerManager:
         # pendant que l'accrochage travaillait encore sur l'ancien jeu : une
         # station fraîchement saisie ne s'accrochait pas, et une station
         # supprimée s'accrochait encore, à l'endroit qu'elle occupait.
+        self._attendre_index_accrochage(layer)
         layer.emitDataChanged()
         layer.triggerRepaint()
+
+    def _attendre_index_accrochage(self, layer):
+        """Laisser finir l'index d'accrochage en construction avant de l'invalider.
+
+        QGIS construit l'index d'accrochage d'une couche dans un fil d'exécution
+        à part, dès que la souris bouge avec un outil qui s'accroche. Or
+        `dataChanged` est branché sur `QgsPointLocator::destroyIndex()`, qui
+        libère cet index SANS vérifier qu'un fil est encore en train de le
+        remplir (vérifié dans les sources de QGIS 3.40) : le tas mémoire était
+        corrompu, et QGIS plantait quelques secondes plus tard, n'importe où.
+        Une reconstruction suit chaque station validée — c'est précisément le
+        moment où l'accrochage vient de servir.
+
+        `isIndexing()` d'abord : `waitForIndexingFinished()` sans construction en
+        cours toucherait une tâche déjà libérée.
+        """
+        if self._canvas is None:
+            return
+        try:
+            locator = self._canvas.snappingUtils().locatorForLayer(layer)
+            if locator is not None and locator.isIndexing():
+                locator.waitForIndexingFinished()
+        except (RuntimeError, AttributeError) as exc:
+            if self.logger:
+                self.logger.debug("Index d'accrochage non attendu : %s", exc)
 
     def _ensure_layer(self, geom_type, create):
         layer_id = self._layer_ids.get(geom_type)

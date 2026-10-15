@@ -85,12 +85,22 @@ class AideAuTrace:
        QGIS proposerait de l'enregistrer à la fermeture pour un réglage qu'on a
        déjà rendu. On restaure donc aussi ce drapeau — sans écraser un état
        « modifié » légitime, mesuré juste avant.
+
+    Et une contrainte de QGIS : `QgsSnappingConfig` range ses réglages par couche
+    sous l'ADRESSE MÉMOIRE de chaque couche. QGIS nettoie la configuration du
+    projet quand une couche est retirée, mais pas une copie gardée de côté. Rendre
+    telle quelle la copie prise en début de saisie réinstallait l'adresse d'une
+    couche détruite entre-temps (couche serveur rechargée par une synchro, couche
+    de travail d'une autre saisie…), et QGIS plantait au prochain accrochage ou à
+    l'enregistrement du projet. Les réglages par couche sont donc retenus par
+    IDENTIFIANT, et rendus aux seules couches encore présentes.
     """
 
     def __init__(self, canvas, logger=None):
         self._canvas = canvas
         self._logger = logger
         self._config_precedente = None
+        self._reglages_precedents = {}  # id de couche -> réglage par couche
         self._tracage_precedent = None
 
     def appliquer(self, couches):
@@ -101,7 +111,9 @@ class AideAuTrace:
         projet = QgsProject.instance()
         modifie = projet.isDirty()
         try:
-            self._config_precedente = QgsSnappingConfig(projet.snappingConfig())
+            actuelle = projet.snappingConfig()
+            self._config_precedente = QgsSnappingConfig(actuelle)
+            self._reglages_precedents = self._reglages_par_id(actuelle)
             projet.setSnappingConfig(self._config_jointive(couches))
             self._activer_tracage()
         except Exception as exc:  # noqa: BLE001 - une aide ne doit pas bloquer la saisie
@@ -116,16 +128,61 @@ class AideAuTrace:
         projet = QgsProject.instance()
         modifie = projet.isDirty()
         try:
-            projet.setSnappingConfig(self._config_precedente)
+            projet.setSnappingConfig(self._config_rendue())
             self._restaurer_tracage()
         except Exception as exc:  # noqa: BLE001
             self._avertir("Accrochage non restauré : %s", exc)
         finally:
             projet.setDirty(modifie)
             self._config_precedente = None
+            self._reglages_precedents = {}
             self._tracage_precedent = None
 
     # ------------------------------------------------------------- interne
+    @staticmethod
+    def _couches_vecteur():
+        """Couches vecteur VIVANTES du projet."""
+        return [
+            couche for couche in QgsProject.instance().mapLayers().values()
+            if isinstance(couche, QgsVectorLayer)
+        ]
+
+    @classmethod
+    def _reglages_par_id(cls, config):
+        """Réglages par couche de `config`, indexés par identifiant de couche.
+
+        La configuration est interrogée couche VIVANTE par couche vivante, sans
+        jamais parcourir ses propres clés : si l'une d'elles désignait déjà une
+        couche détruite, la convertir en objet Python suffirait à faire planter
+        QGIS.
+        """
+        reglages = {}
+        for couche in cls._couches_vecteur():
+            reglage = config.individualLayerSettings(couche)
+            if reglage.valid():
+                reglages[couche.id()] = reglage
+        return reglages
+
+    def _config_rendue(self):
+        """La configuration d'avant la saisie, sur les seules couches présentes.
+
+        Réglages généraux (activé, mode, tolérance, intersections…) : ceux
+        d'avant, copiés tels quels. Réglages par couche : vidés — ce qui retire
+        sans les toucher les adresses périmées — puis reposés couche vivante par
+        couche vivante. Une couche arrivée pendant la saisie garde le réglage que
+        QGIS lui a donné à son ajout.
+        """
+        actuelle = QgsProject.instance().snappingConfig()
+        config = QgsSnappingConfig(self._config_precedente)
+        config.clearIndividualLayerSettings()
+        for couche in self._couches_vecteur():
+            reglage = self._reglages_precedents.get(couche.id())
+            if reglage is None:
+                reglage = actuelle.individualLayerSettings(couche)
+            if reglage.valid():
+                config.setIndividualLayerSettings(couche, reglage)
+        return config
+
     def _config_jointive(self, couches):
         config = QgsSnappingConfig(QgsProject.instance().snappingConfig())
         # Les réglages par couche se lisent AVANT le vidage : ils portent les
