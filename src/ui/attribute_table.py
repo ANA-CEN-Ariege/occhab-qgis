@@ -1427,6 +1427,7 @@ class AttributeTableDialog(QDialog):
         sauvegarde = (self._sauvegarder_base()
                       if len(modifiees) >= self.SEUIL_SAUVEGARDE else None)
         ecrites = echecs = disparues = 0
+        self._a_supprimer_gardees = 0  # compté par `_ecrire_station`
         for station in modifiees:
             try:
                 if self._ecrire_station(station):
@@ -1450,6 +1451,12 @@ class AttributeTableDialog(QDialog):
         if disparues:
             message += ("\n%d station(s) ont été supprimées depuis l'ouverture de "
                         "la table : leurs modifications sont abandonnées." % disparues)
+        if self._a_supprimer_gardees:
+            message += ("\n%d station(s) restent « à supprimer » : leurs "
+                        "modifications sont enregistrées en local, et elles seront "
+                        "supprimées de GeoNature à la prochaine synchronisation "
+                        "(clic droit → Supprimer pour l'annuler)."
+                        % self._a_supprimer_gardees)
         if echecs:
             message += " %d échec(s) — voir le journal." % echecs
         if sauvegarde:
@@ -1494,7 +1501,14 @@ class AttributeTableDialog(QDialog):
                 o.get("observer_name") or "" for o in observateurs
             ) or None
             self.db.replace_observers(station["id"], observateurs)
-        champs["sync_status"] = "pending"  # toute édition remet en attente d'envoi
+        if fraiche.get("sync_status") == "to_delete":
+            # Une modification en lot n'annule pas une suppression demandée :
+            # la station était sinon renvoyée au lieu d'être supprimée, sans
+            # que personne l'ait décidé. Le bilan le signale.
+            champs["sync_status"] = "to_delete"
+            self._a_supprimer_gardees = getattr(self, "_a_supprimer_gardees", 0) + 1
+        else:
+            champs["sync_status"] = "pending"  # toute édition remet en attente d'envoi
         self.db.update_station(station["id"], **champs)
         habitats_frais = {h.get("id"): h for h in fraiche.get("habitats") or []}
         for id_habitat, cles in colonnes_habitats.items():

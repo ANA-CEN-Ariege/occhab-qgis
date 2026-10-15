@@ -114,6 +114,28 @@ def _code_habref(nom_cite):
     return trouve.group(1) if trouve else None
 
 
+def _altitude_manquante(champs):
+    """Une géométrie, mais aucune altitude : à recalculer à la synchronisation."""
+    return int(
+        bool(champs.get("geom"))
+        and champs.get("altitude_min") is None
+        and champs.get("altitude_max") is None
+    )
+
+
+def _statut_en_lot(station):
+    """Statut d'une station modifiée par un traitement EN LOT.
+
+    « À synchroniser », sauf pour une station marquée « à supprimer » : une
+    modification en lot (allègement, collage, table) n'annule pas une
+    suppression demandée. La station était sinon renvoyée au lieu d'être
+    supprimée, sans que personne l'ait décidé.
+    """
+    if (station or {}).get("sync_status") == "to_delete":
+        return "to_delete"
+    return "pending"
+
+
 def _meme_geometrie(wkt_a, wkt_b):
     """Les deux WKT décrivent-ils la même géométrie (au sens de GEOS) ?"""
     if not wkt_a or not wkt_b:
@@ -1245,7 +1267,7 @@ class OccHabDockWidget(QDockWidget):
             return
 
         QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
-        allages, touchees = 0, set()
+        allages, touchees, a_supprimer = 0, set(), 0
         try:
             for station, habitat in a_faire:
                 neuf = corresp.alleger_correspondances(
@@ -1257,8 +1279,10 @@ class OccHabDockWidget(QDockWidget):
                 allages += 1
             for id_station in touchees:
                 station = next(s for s in stations if s["id"] == id_station)
+                statut = _statut_en_lot(station)
+                a_supprimer += statut == "to_delete"
                 self.db.replace_habitats(id_station, station.get("habitats") or [])
-                self.db.update_station(id_station, sync_status="pending")
+                self.db.update_station(id_station, sync_status=statut)
         except Exception as exc:  # noqa: BLE001
             QApplication.restoreOverrideCursor()
             self.logger.error("Allègement des correspondances échoué : %s", exc)
@@ -1274,7 +1298,12 @@ class OccHabDockWidget(QDockWidget):
             self, "OccHab",
             "%d habitat(s) allégé(s) dans %d station(s).\n\n"
             "Synchronisez pour que la correction parte sur GeoNature."
-            % (allages, len(touchees)),
+            % (allages, len(touchees))
+            + (
+                "\n\n%d de ces stations restent « à supprimer » (clic droit → "
+                "Supprimer pour l'annuler)." % a_supprimer
+                if a_supprimer else ""
+            ),
         )
 
     def _libelles_habref(self, stations):
@@ -2023,12 +2052,14 @@ class OccHabDockWidget(QDockWidget):
         # colle en devient l'éditeur (même règle que l'édition au formulaire).
         fields.pop("created_by", None)
         fields["updated_by"] = current_user()
-        colles = echecs = 0
+        colles = echecs = a_supprimer = 0
         for station_id in cibles:
             try:
                 # `validation_status` n'est pas dans `fields` (écarté par le
                 # modèle de duplication) : le statut de la cible reste le sien.
-                self.db.update_station(station_id, sync_status="pending", **fields)
+                statut = _statut_en_lot(self.db.get_station(station_id))
+                a_supprimer += statut == "to_delete"
+                self.db.update_station(station_id, sync_status=statut, **fields)
                 self.db.replace_habitats(station_id, [dict(h) for h in habitats])
                 self.db.replace_observers(station_id, observers)
                 colles += 1
@@ -2045,6 +2076,11 @@ class OccHabDockWidget(QDockWidget):
         message = "%d station(s) renseignée(s) depuis « %s »." % (
             colles, self._clipboard_label
         )
+        if a_supprimer:
+            message += (
+                " %d d'entre elles restent « à supprimer » (clic droit → "
+                "Supprimer pour l'annuler)." % a_supprimer
+            )
         if echecs:
             self.iface.messageBar().pushWarning(
                 "OccHab", message + " %d échec(s) — voir le journal." % echecs
@@ -2137,6 +2173,7 @@ class OccHabDockWidget(QDockWidget):
                 altitude_min=metrics.get("altitude_min"),
                 altitude_max=metrics.get("altitude_max"),
             )
+            fields["altitude_a_recalculer"] = _altitude_manquante(fields)
             try:
                 station_id = self.db.create_station(**fields)
                 for habitat in habitats:
@@ -2512,13 +2549,20 @@ class OccHabDockWidget(QDockWidget):
             self.iface.messageBar().pushInfo("OccHab", "Géométrie inchangée.")
             return
         fields = {
-            "geom": wkt, "geom_type": geom_type, "sync_status": "pending",
+            "geom": wkt, "geom_type": geom_type,
+            "sync_status": self._statut_apres_modification(current),
             "prev_geom": current.get("geom") if current else None,
             "prev_geom_type": current.get("geom_type") if current else None,
         }
         for key in ("area", "altitude_min", "altitude_max"):
             if (metrics or {}).get(key) is not None:
                 fields[key] = metrics[key]
+        # Altitude non calculée (hors connexion) : l'ancienne reste, mais elle
+        # est celle de l'ANCIENNE géométrie. La synchronisation la recalculera.
+        fields["altitude_a_recalculer"] = int(
+            (metrics or {}).get("altitude_min") is None
+            and (metrics or {}).get("altitude_max") is None
+        )
         if geom_type != "polygon":
             # Une surface n'a de sens que pour un polygone : devenue point ou
             # ligne, la station gardait celle de l'ancien polygone.
@@ -2545,12 +2589,19 @@ class OccHabDockWidget(QDockWidget):
         prev_type = full.get("prev_geom_type")
         metrics = self._geo_metrics(prev, prev_type)
         fields = {
-            "geom": prev, "geom_type": prev_type, "sync_status": "pending",
+            "geom": prev, "geom_type": prev_type,
+            "sync_status": self._statut_apres_modification(full),
             "prev_geom": full.get("geom"), "prev_geom_type": full.get("geom_type"),
         }
         for key in ("area", "altitude_min", "altitude_max"):
             if (metrics or {}).get(key) is not None:
                 fields[key] = metrics[key]
+        # Altitude non calculée (hors connexion) : l'ancienne reste, mais elle
+        # est celle de l'ANCIENNE géométrie. La synchronisation la recalculera.
+        fields["altitude_a_recalculer"] = int(
+            (metrics or {}).get("altitude_min") is None
+            and (metrics or {}).get("altitude_max") is None
+        )
         if prev_type != "polygon":
             # Une surface n'a de sens que pour un polygone : devenue point ou
             # ligne, la station gardait celle de l'ancien polygone.
@@ -2802,6 +2853,7 @@ class OccHabDockWidget(QDockWidget):
             return
         station, habitats = dialog.get_result()
         observers = station.pop("_observers", [])
+        station["altitude_a_recalculer"] = _altitude_manquante(station)
         try:
             station_id = self.db.create_station(**station)
             for habitat in habitats:
@@ -2910,8 +2962,16 @@ class OccHabDockWidget(QDockWidget):
         observers = station.pop("_observers", [])
         # L'éditeur devient updated_by ; created_by (créateur d'origine) reste inchangé.
         station["updated_by"] = station.pop("created_by", None)
+        if (station.get("altitude_min"), station.get("altitude_max")) != (
+            full.get("altitude_min"), full.get("altitude_max")
+        ):
+            # Altitude saisie à la main : elle fait foi, la synchro ne la
+            # recalculera pas.
+            station["altitude_a_recalculer"] = 0
         try:
-            self.db.update_station(station_id, sync_status="pending", **station)
+            self.db.update_station(
+                station_id, sync_status=self._statut_apres_modification(full), **station
+            )
             self.db.replace_habitats(station_id, habitats)
             self.db.replace_observers(station_id, observers)
             self.logger.info(
@@ -3764,6 +3824,28 @@ class OccHabDockWidget(QDockWidget):
             )
             self.refresh()
 
+    def _statut_apres_modification(self, station):
+        """Statut d'une station modifiée par l'utilisateur, une à une (fiche,
+        géométrie).
+
+        « À synchroniser », sauf pour une station marquée « à supprimer » : la
+        modifier annulait la suppression en silence. On demande — Non, par
+        défaut, garde la suppression ; les modifications restent enregistrées
+        en local.
+        """
+        if (station or {}).get("sync_status") != "to_delete":
+            return "pending"
+        nom = self._station_label(station, station.get("habitats") or [])
+        if self._ask(
+            "Station à supprimer",
+            "« %s » est marquée à supprimer sur GeoNature.\n\n"
+            "Annuler la suppression et envoyer la station modifiée ?\n\n"
+            "(Non : vos modifications sont enregistrées en local, et la station "
+            "reste à supprimer.)" % nom,
+        ):
+            return "pending"
+        return "to_delete"
+
     def _ask(self, title, message):
         """Confirmation Oui/Non (défaut Non, pour éviter une validation par inadvertance)."""
         return (
@@ -3870,6 +3952,7 @@ class OccHabDockWidget(QDockWidget):
         # que « N échec(s) ».
         echecs = []
         geoms_corrigees = 0
+        altitudes_recalculees = altitudes_gardees = 0
         # Stations dont l'id serveur ne correspond plus à rien (supprimées sur
         # GeoNature) : recréées ou laissées en attente selon la réponse de
         # l'utilisateur (None = question pas encore posée pour cette synchro).
@@ -3979,10 +4062,38 @@ class OccHabDockWidget(QDockWidget):
                         "Station %s : géométrie invalide réparée avant envoi.",
                         station["id"],
                     )
-                    # L'altitude n'est délibérément PAS recalculée ici : ce serait
-                    # un aller-retour réseau par station en pleine boucle. Elle le
-                    # sera à la prochaine édition de la station.
+                    # L'altitude n'est pas recalculée pour une simple réparation
+                    # (un aller-retour réseau par station en pleine boucle) : la
+                    # forme ne change qu'à la marge.
                 geojson = wkt_to_geojson(geom_wkt) if geom_wkt else None
+                if full.get("altitude_a_recalculer") and geojson:
+                    # Géométrie changée hors connexion : l'altitude stockée est
+                    # celle de l'ANCIENNE géométrie. La recalculer avant l'envoi
+                    # (un appel, pour les seules stations marquées) ; en cas
+                    # d'échec, la valeur stockée part telle quelle et le bilan
+                    # le dit.
+                    try:
+                        altitude = self.client.get_altitude(geojson)
+                    except Exception as exc:  # noqa: BLE001
+                        self.logger.warning(
+                            "Altitude non recalculée (station %s) : %s",
+                            station["id"], exc,
+                        )
+                        altitude = None
+                    if isinstance(altitude, dict) and (
+                        altitude.get("altitude_min") is not None
+                        or altitude.get("altitude_max") is not None
+                    ):
+                        champs = {
+                            "altitude_min": altitude.get("altitude_min"),
+                            "altitude_max": altitude.get("altitude_max"),
+                            "altitude_a_recalculer": 0,
+                        }
+                        self.db.update_station(station["id"], **champs)
+                        full.update(champs)
+                        altitudes_recalculees += 1
+                    else:
+                        altitudes_gardees += 1
                 # Identité GeoNature de chaque habitat AVANT l'envoi : sans
                 # `id_habitat`, GeoNature recrée l'habitat et efface l'ancien.
                 # Retrouvée sur la version serveur lue pour le contrôle de conflit
@@ -4079,6 +4190,10 @@ class OccHabDockWidget(QDockWidget):
             parts.append(
                 "%d ignorée(s) : rattachée(s) à un autre serveur" % len(ailleurs)
             )
+        if altitudes_recalculees:
+            parts.append("%d altitude(s) recalculée(s)" % altitudes_recalculees)
+        if altitudes_gardees:
+            parts.append("%d altitude(s) non recalculée(s)" % altitudes_gardees)
         message = " | ".join(parts) or "rien à faire"
         status = (
             "success" if failed == 0 and del_failed == 0 and not orphans_kept

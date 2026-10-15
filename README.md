@@ -158,6 +158,10 @@ végétations**, lu depuis un CSV livré avec le plugin (il nomme 184 alliances 
 restitue 97,7 % des libellés de correspondance), et le **cache des libellés
 HABREF** déjà obtenus (table `habref_libelles`). Perdre le réseau APRÈS s'être
 connecté ne coûte donc que l'altitude et la recherche d'un habitat inconnu.
+L'altitude d'une géométrie tracée hors connexion est d'ailleurs rattrapée :
+la station est marquée (`altitude_a_recalculer`), et la synchronisation la
+recalcule avant l'envoi — sans quoi l'altitude de l'ANCIENNE géométrie partait
+sur GeoNature. Une altitude saisie à la main dans la fiche fait foi.
 
 ```
 Formulaires (PyQt)  ──►  SQLite local  ──►  Synchronisation  ──►  API GeoNature
@@ -375,8 +379,10 @@ Trois comportements de la boucle d'envoi méritent d'être connus :
   géométrie corrigée **et la surface recalculée** sont réécrites en base
   (`db.update_station`), sans quoi on réparerait à chaque synchro et le local
   divergerait du serveur. `prev_geom` et `sync_status` ne sont **pas** touchés.
-  L'altitude n'est délibérément pas recalculée ici : ce serait un aller-retour
-  réseau par station en pleine boucle.
+  L'altitude n'est pas recalculée pour une simple réparation (un aller-retour
+  réseau par station en pleine boucle) ; elle l'est, en revanche, pour les
+  stations marquées `altitude_a_recalculer` (géométrie changée hors
+  connexion), et le récapitulatif compte les altitudes recalculées.
 - **Le récapitulatif compte les réparations** — « dont N géométrie(s)
   corrigée(s) » —, ce qui les fait entrer dans `log_sync`, donc dans
   l'historique.

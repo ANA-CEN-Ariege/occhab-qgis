@@ -59,6 +59,7 @@ CREATE TABLE IF NOT EXISTS t_stations (
     mine INTEGER DEFAULT 1,
     server_snapshot TEXT,
     serveur TEXT,
+    altitude_a_recalculer INTEGER DEFAULT 0,
     UNIQUE(unique_id_sinp_station)
 );
 
@@ -153,7 +154,7 @@ class OccHabDatabase:
         "id_nomenclature_type_sol", "id_nomenclature_area_surface_calculation",
         "id_nomenclature_type_mosaique_habitat",
         "created_by", "updated_by", "sync_status", "validation_status",
-        "mine", "server_snapshot", "serveur",
+        "mine", "server_snapshot", "serveur", "altitude_a_recalculer",
     }
     HABITAT_COLS = {
         "id_habitat", "unique_id_sinp_hab", "cd_hab", "nom_cite", "determiner",
@@ -207,6 +208,12 @@ class OccHabDatabase:
             # Serveur GeoNature auquel la station est rattachée (`cle_serveur`) :
             # sans lui, un `id_station` ne disait pas DE QUEL serveur il venait.
             self.connection.execute("ALTER TABLE t_stations ADD COLUMN serveur TEXT")
+        if "altitude_a_recalculer" not in cols:
+            # Géométrie changée sans que l'altitude ait pu être calculée (hors
+            # connexion) : la synchronisation la recalcule avant l'envoi.
+            self.connection.execute(
+                "ALTER TABLE t_stations ADD COLUMN altitude_a_recalculer INTEGER DEFAULT 0"
+            )
         if "prev_geom" not in cols:
             self.connection.execute("ALTER TABLE t_stations ADD COLUMN prev_geom TEXT")
         if "prev_geom_type" not in cols:

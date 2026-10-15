@@ -453,3 +453,16 @@ def test_adopter_serveur_ne_touche_que_les_stations_envoyees_sans_serveur(tmp_pa
     assert db.get_station(ancienne)["serveur"] == "geo.exemple.fr/api"
     assert db.get_station(rattachee)["serveur"] == "autre.fr/api"
     assert db.get_station(jamais_envoyee)["serveur"] is None
+
+
+def test_altitude_a_recalculer_conservee(tmp_path):
+    """Le marqueur posé hors connexion survit jusqu'à la synchronisation."""
+    db = _make_db(tmp_path)
+    sid = db.create_station(id_dataset=3, geom="POINT (1 43)", geom_type="point",
+                            altitude_a_recalculer=1)
+    assert db.get_station(sid)["altitude_a_recalculer"] == 1
+    db.update_station(sid, altitude_min=812, altitude_max=815,
+                      altitude_a_recalculer=0)
+    assert db.get_station(sid)["altitude_a_recalculer"] == 0
+    autre = db.create_station(id_dataset=3)
+    assert db.get_station(autre)["altitude_a_recalculer"] == 0  # défaut

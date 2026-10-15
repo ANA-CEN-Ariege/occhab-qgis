@@ -826,6 +826,17 @@ journal.
 > **géométrie précédente n'est pas touchée** : *Rétablir la géométrie précédente*
 > reste ce que vous, vous aviez fait.
 
+> **Stations « à supprimer » modifiées.** Modifier la fiche ou la géométrie
+> d'une station marquée *À supprimer* pose la question : annuler la suppression
+> et l'envoyer modifiée, ou la laisser à supprimer. Une modification en lot
+> (table attributaire, collage, allègement) ne l'annule jamais : le bilan
+> indique les stations restées à supprimer.
+
+> **Altitude hors connexion.** Sans connexion, l'altitude d'un nouveau tracé ne
+> peut pas être calculée. La station est marquée, et la synchronisation la
+> recalcule avant l'envoi. Une altitude saisie à la main dans la fiche n'est
+> jamais remplacée.
+
 > **Plusieurs serveurs GeoNature.** Chaque station retient le serveur auquel
 > elle a été envoyée. Connecté à un autre serveur (une instance de test, par
 > exemple), le plugin **n'y envoie ni n'y supprime** ces stations : leur numéro
