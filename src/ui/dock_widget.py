@@ -147,6 +147,7 @@ class OccHabDockWidget(QDockWidget):
         self.logger = logger
         self.db = OccHabDatabase(config.get("local_db.path"))
         self.client = None
+        self._adopter_serveur_configure()
         self._user_label = None
         # Créée avec le menu « Nouvelle station », donc après le branchement du
         # signal de sélection du tableau : déclarée ici pour rester interrogeable.
@@ -1699,7 +1700,8 @@ class OccHabDockWidget(QDockWidget):
 
         # Stations déjà présentes en local : proposer d'écraser par la version serveur
         # (permet de restaurer une station dont les données locales ont été perdues).
-        already_local = [i for i in ids if self.db.find_by_id_station(i)]
+        serveur = self._serveur_courant()
+        already_local = [i for i in ids if self.db.find_by_id_station(i, serveur)]
         overwrite = False
         if already_local:
             overwrite = self._ask(
@@ -1712,7 +1714,7 @@ class OccHabDockWidget(QDockWidget):
 
         imported, restored, skipped, failed = 0, 0, 0, 0
         for id_station in ids:
-            existing = self.db.find_by_id_station(id_station)
+            existing = self.db.find_by_id_station(id_station, serveur)
             if existing and not overwrite:
                 skipped += 1
                 continue
@@ -1733,7 +1735,8 @@ class OccHabDockWidget(QDockWidget):
                 if existing:  # repartir proprement de la version serveur
                     self.db.delete_station(existing["id"])
                 local_id = self.db.create_station(
-                    sync_status="synced", mine=mine, server_snapshot=snapshot, **station
+                    sync_status="synced", mine=mine, server_snapshot=snapshot,
+                    serveur=serveur, **station
                 )
                 try:
                     for habitat in habitats:
@@ -3803,7 +3806,29 @@ class OccHabDockWidget(QDockWidget):
             voulus = set(ids)
             to_delete = [s for s in to_delete if s["id"] in voulus]
             pending = [s for s in pending if s["id"] in voulus]
+        # Stations rattachées à UN AUTRE serveur GeoNature : leur `id_station`
+        # désigne une station de ce serveur-là. Les envoyer ici écrasait, ou
+        # supprimait, la station de même numéro sur le serveur connecté — une
+        # instance de test et la production numérotent chacune de leur côté.
+        serveur = self._serveur_courant()
+        ailleurs = [
+            s for s in to_delete + pending
+            if s.get("id_station") and s.get("serveur") and s["serveur"] != serveur
+        ]
+        if ailleurs:
+            exclues = {s["id"] for s in ailleurs}
+            to_delete = [s for s in to_delete if s["id"] not in exclues]
+            pending = [s for s in pending if s["id"] not in exclues]
+            self.logger.warning(
+                "%d station(s) rattachée(s) à un autre serveur, non synchronisée(s) "
+                "avec %s", len(ailleurs), serveur,
+            )
         if not to_delete and not pending:
+            if ailleurs:
+                self.iface.messageBar().pushWarning(
+                    "OccHab", self._message_autre_serveur(ailleurs)
+                )
+                return
             self.iface.messageBar().pushInfo(
                 "OccHab",
                 "Rien à synchroniser dans la sélection." if ids is not None
@@ -4014,7 +4039,8 @@ class OccHabDockWidget(QDockWidget):
                 except Exception:  # noqa: BLE001
                     snapshot, combles, identites = None, {}, {}
                 self.db.mark_station_synced(
-                    station["id"], id_station, server_snapshot=snapshot
+                    station["id"], id_station, server_snapshot=snapshot,
+                    serveur=serveur,
                 )
                 self._poser_identites_habitats(full["habitats"], identites)
                 if combles:
@@ -4049,6 +4075,10 @@ class OccHabDockWidget(QDockWidget):
         if geoms_corrigees:
             # Dans `parts` pour entrer dans `log_sync`, donc dans l'historique.
             parts.append("dont %d géométrie(s) corrigée(s)" % geoms_corrigees)
+        if ailleurs:
+            parts.append(
+                "%d ignorée(s) : rattachée(s) à un autre serveur" % len(ailleurs)
+            )
         message = " | ".join(parts) or "rien à faire"
         status = (
             "success" if failed == 0 and del_failed == 0 and not orphans_kept
@@ -4099,6 +4129,37 @@ class OccHabDockWidget(QDockWidget):
             )
         self.refresh()
         self._load_server_stations()  # recharger le contexte serveur (données à jour)
+
+    def _serveur_courant(self):
+        """Clé du serveur GeoNature de la connexion en cours (cf. `cle_serveur`)."""
+        from ..api.payload import cle_serveur
+
+        if self.client is not None:
+            return cle_serveur(getattr(self.client, "api_url", None))
+        return cle_serveur(self.config.get("geonature.api_url"))
+
+    def _adopter_serveur_configure(self):
+        """Rattacher les stations envoyées avant que la base ne retienne leur
+        serveur à celui de la configuration — le seul qu'on connaisse."""
+        try:
+            nombre = self.db.adopter_serveur(self._serveur_courant())
+        except Exception as exc:  # noqa: BLE001 - ne jamais bloquer l'ouverture
+            self.logger.warning("Serveur d'origine non renseigné : %s", exc)
+            return
+        if nombre:
+            self.logger.info(
+                "%d station(s) rattachée(s) au serveur %s", nombre,
+                self._serveur_courant(),
+            )
+
+    @staticmethod
+    def _message_autre_serveur(stations):
+        serveurs = sorted({s.get("serveur") for s in stations if s.get("serveur")})
+        return (
+            "%d station(s) à synchroniser sont rattachées à un autre serveur "
+            "GeoNature (%s) : elles n'ont pas été envoyées ici. Connectez-vous à "
+            "ce serveur pour les synchroniser." % (len(stations), ", ".join(serveurs))
+        )
 
     def _poser_identites_habitats(self, habitats, identites):
         """Enregistrer l'identité GeoNature des habitats, en base et dans `habitats`."""

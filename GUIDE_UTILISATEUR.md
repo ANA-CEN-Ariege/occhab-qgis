@@ -826,6 +826,14 @@ journal.
 > **géométrie précédente n'est pas touchée** : *Rétablir la géométrie précédente*
 > reste ce que vous, vous aviez fait.
 
+> **Plusieurs serveurs GeoNature.** Chaque station retient le serveur auquel
+> elle a été envoyée. Connecté à un autre serveur (une instance de test, par
+> exemple), le plugin **n'y envoie ni n'y supprime** ces stations : leur numéro
+> y désignerait une autre station. Le récapitulatif les compte comme
+> « ignorée(s) : rattachée(s) à un autre serveur » ; reconnectez-vous à leur
+> serveur pour les synchroniser. Les stations jamais envoyées partent sur le
+> serveur connecté.
+
 ### « Cette station n'existe plus sur GeoNature »
 
 Si une station que vous aviez déjà synchronisée a été **supprimée sur GeoNature**

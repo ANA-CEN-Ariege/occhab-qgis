@@ -385,6 +385,15 @@ Trois comportements de la boucle d'envoi méritent d'être connus :
   message finissait dans un journal que personne n'ouvre et l'utilisateur ne
   lisait que « N échec(s) ».
 
+**Serveur d'origine.** Un `id_station` ne vaut que pour le serveur qui l'a
+attribué. Chaque station retient donc ce serveur (colonne `serveur`, clé
+`payload.cle_serveur` : hôte et chemin, sans schéma ni port par défaut ni « / »
+final). La synchronisation écarte les stations rattachées à un autre serveur
+que celui de la connexion — elle écrasait ou supprimait sinon la station de
+même numéro —, et « Récupérer » ne confond plus deux stations homonymes de
+serveurs différents. Les stations envoyées avant cette colonne sont rattachées,
+à l'ouverture, au serveur de la configuration.
+
 Avant d'envoyer une station déjà synchronisée, le plugin **vérifie qu'elle existe
 toujours** sur GeoNature (`GET /occhab/stations/<id>/`) :
 - **absente (HTTP 404)** — supprimée côté serveur : la mise à jour est impossible

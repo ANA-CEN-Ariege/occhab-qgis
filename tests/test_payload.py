@@ -465,3 +465,24 @@ def test_mesures_incoherentes_couvre_les_dates():
         {"date_min": "2026-06-12 00:00:00", "date_max": "2026-06-12"}
     ) == []
     assert p.mesures_incoherentes({"date_min": "2026-06-12", "date_max": None}) == []
+
+
+def test_cle_serveur_reconnait_le_meme_serveur():
+    """Casse, « / » final, port par défaut, schéma : le même serveur."""
+    cle = p.cle_serveur("https://geo.exemple.fr/geonature/api")
+    assert cle == "geo.exemple.fr/geonature/api"
+    for variante in ("https://Geo.Exemple.fr/geonature/api/",
+                     "http://geo.exemple.fr/geonature/api",
+                     "https://geo.exemple.fr:443/geonature/api",
+                     "  https://geo.exemple.fr/geonature/api  "):
+        assert p.cle_serveur(variante) == cle
+
+
+def test_cle_serveur_distingue_deux_serveurs():
+    assert p.cle_serveur("https://demo.geonature.fr/geonature/api") != (
+        p.cle_serveur("https://geo.exemple.fr/geonature/api")
+    )
+    assert p.cle_serveur("https://geo.exemple.fr:8443/api") != (
+        p.cle_serveur("https://geo.exemple.fr/api")
+    )
+    assert p.cle_serveur("") is None and p.cle_serveur(None) is None

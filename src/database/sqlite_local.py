@@ -58,6 +58,7 @@ CREATE TABLE IF NOT EXISTS t_stations (
     updated_by TEXT,
     mine INTEGER DEFAULT 1,
     server_snapshot TEXT,
+    serveur TEXT,
     UNIQUE(unique_id_sinp_station)
 );
 
@@ -152,7 +153,7 @@ class OccHabDatabase:
         "id_nomenclature_type_sol", "id_nomenclature_area_surface_calculation",
         "id_nomenclature_type_mosaique_habitat",
         "created_by", "updated_by", "sync_status", "validation_status",
-        "mine", "server_snapshot",
+        "mine", "server_snapshot", "serveur",
     }
     HABITAT_COLS = {
         "id_habitat", "unique_id_sinp_hab", "cd_hab", "nom_cite", "determiner",
@@ -202,6 +203,10 @@ class OccHabDatabase:
             self.connection.execute(
                 "ALTER TABLE t_stations ADD COLUMN server_snapshot TEXT"
             )
+        if "serveur" not in cols:
+            # Serveur GeoNature auquel la station est rattachée (`cle_serveur`) :
+            # sans lui, un `id_station` ne disait pas DE QUEL serveur il venait.
+            self.connection.execute("ALTER TABLE t_stations ADD COLUMN serveur TEXT")
         if "prev_geom" not in cols:
             self.connection.execute("ALTER TABLE t_stations ADD COLUMN prev_geom TEXT")
         if "prev_geom_type" not in cols:
@@ -274,13 +279,28 @@ class OccHabDatabase:
         self.disconnect()
         return station
 
-    def find_by_id_station(self, id_station):
-        """Station locale ayant cet id_station GeoNature, ou None."""
+    def find_by_id_station(self, id_station, serveur=None):
+        """Station locale ayant cet id_station GeoNature, ou None.
+
+        `serveur` : ne retenir que les stations de ce serveur (`cle_serveur`).
+        Deux serveurs numérotent leurs stations chacun de leur côté : sans ce
+        filtre, la station 42 d'une instance de test passait pour la 42 de la
+        production.
+        """
         if not id_station:
             return None
         self.connect()
         cursor = self.connection.cursor()
-        cursor.execute("SELECT * FROM t_stations WHERE id_station = ?", (id_station,))
+        if serveur:
+            cursor.execute(
+                "SELECT * FROM t_stations WHERE id_station = ? "
+                "AND (serveur = ? OR serveur IS NULL)",
+                (id_station, serveur),
+            )
+        else:
+            cursor.execute(
+                "SELECT * FROM t_stations WHERE id_station = ?", (id_station,)
+            )
         row = cursor.fetchone()
         self.disconnect()
         return dict(row) if row else None
@@ -614,6 +634,29 @@ class OccHabDatabase:
         """Mémoriser l'empreinte serveur connue d'une station (détection de conflit)."""
         self.update_station(station_id, server_snapshot=snapshot)
 
+    def adopter_serveur(self, serveur):
+        """Rattacher à `serveur` les stations synchronisées qui n'en ont pas.
+
+        Pour les bases antérieures à la colonne : leurs stations ont été
+        envoyées au serveur de la configuration, le seul qu'on connaisse. Sans
+        effet sur une station déjà rattachée ou jamais envoyée. Renvoie le
+        nombre de stations rattachées.
+        """
+        if not serveur:
+            return 0
+        self.connect()
+        try:
+            cursor = self.connection.cursor()
+            cursor.execute(
+                "UPDATE t_stations SET serveur = ? "
+                "WHERE serveur IS NULL AND id_station IS NOT NULL",
+                (serveur,),
+            )
+            self.connection.commit()
+            return cursor.rowcount
+        finally:
+            self.disconnect()
+
     def detach_from_server(self, station_id):
         """Oublier les identifiants serveur d'une station (et de ses habitats).
 
@@ -627,7 +670,7 @@ class OccHabDatabase:
         cursor = self.connection.cursor()
         cursor.execute(
             "UPDATE t_stations SET id_station = NULL, unique_id_sinp_station = NULL,"
-            " server_snapshot = NULL WHERE id = ?",
+            " server_snapshot = NULL, serveur = NULL WHERE id = ?",
             (station_id,),
         )
         cursor.execute(
@@ -639,7 +682,7 @@ class OccHabDatabase:
         self.disconnect()
 
     def mark_station_synced(self, station_id, id_station, status="synced",
-                            server_snapshot=None):
+                            server_snapshot=None, serveur=None):
         fields = {
             "id_station": id_station,
             "sync_status": status,
@@ -651,6 +694,8 @@ class OccHabDatabase:
         }
         if server_snapshot is not None:
             fields["server_snapshot"] = server_snapshot
+        if serveur:
+            fields["serveur"] = serveur
         self.update_station(station_id, **fields)
         self.connect()
         cursor = self.connection.cursor()

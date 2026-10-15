@@ -417,3 +417,39 @@ def test_update_habitat_n_ecrit_que_les_colonnes_donnees(tmp_path):
     assert habitats[id_local]["nom_cite"] == "h1 corrigé"
     assert habitats[id_local]["determiner"] == "Roy"
     assert len(habitats) == 2  # l'autre habitat n'est pas touché
+
+
+# ------------------------------------------------------- serveur d'origine
+def test_serveur_d_origine_retenu_a_la_synchro_et_oublie_au_detachement(tmp_path):
+    db = _make_db(tmp_path)
+    sid = db.create_station(id_dataset=3)
+    db.mark_station_synced(sid, 42, serveur="geo.exemple.fr/api")
+    assert db.get_station(sid)["serveur"] == "geo.exemple.fr/api"
+
+    db.detach_from_server(sid)
+    assert db.get_station(sid)["serveur"] is None
+
+
+def test_meme_id_station_sur_deux_serveurs_ne_se_confondent_pas(tmp_path):
+    """La station 42 d'une instance de test n'est pas la 42 de la production."""
+    db = _make_db(tmp_path)
+    sid = db.create_station(id_dataset=3)
+    db.mark_station_synced(sid, 42, serveur="test.exemple.fr/api")
+
+    assert db.find_by_id_station(42, "prod.exemple.fr/api") is None
+    assert db.find_by_id_station(42, "test.exemple.fr/api")["id"] == sid
+    assert db.find_by_id_station(42)["id"] == sid  # sans filtre : comme avant
+
+
+def test_adopter_serveur_ne_touche_que_les_stations_envoyees_sans_serveur(tmp_path):
+    db = _make_db(tmp_path)
+    ancienne = db.create_station(id_dataset=3)
+    _set_row(db, ancienne, sync_status="synced", id_station=7)
+    rattachee = db.create_station(id_dataset=3)
+    db.mark_station_synced(rattachee, 8, serveur="autre.fr/api")
+    jamais_envoyee = db.create_station(id_dataset=3)
+
+    assert db.adopter_serveur("geo.exemple.fr/api") == 1
+    assert db.get_station(ancienne)["serveur"] == "geo.exemple.fr/api"
+    assert db.get_station(rattachee)["serveur"] == "autre.fr/api"
+    assert db.get_station(jamais_envoyee)["serveur"] is None

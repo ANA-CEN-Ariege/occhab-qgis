@@ -15,6 +15,7 @@ pourrait diverger — le cas échéant, comparer avec un GET /occhab/stations/<i
 import hashlib
 import json
 from collections import Counter
+from urllib.parse import urlsplit
 
 try:  # importable dans le paquet (plugin) comme en isolation (tests)
     from ..processing.eval_fields import decode_eval, merge_eval
@@ -522,3 +523,21 @@ def identites_habitats(locaux, serveur, par_contenu=False, nouvel_uuid=None):
             uuid_hab = nouvel_uuid()
         identites[habitat["id"]] = (id_habitat, str(uuid_hab) if uuid_hab else None)
     return identites
+
+
+def cle_serveur(api_url):
+    """Identité d'un serveur GeoNature, stable d'une saisie de l'URL à l'autre.
+
+    Hôte en minuscules, port par défaut omis, chemin sans « / » final, schéma
+    ignoré : « https://Geo.exemple.fr:443/geonature/api/ » et
+    « http://geo.exemple.fr/geonature/api » désignent le même serveur — passer
+    en HTTPS ne doit pas couper une base de ses stations. None si l'URL est vide.
+    """
+    texte = (api_url or "").strip()
+    if not texte:
+        return None
+    morceaux = urlsplit(texte if "://" in texte else "//" + texte)
+    hote = (morceaux.hostname or "").lower()
+    if morceaux.port and morceaux.port not in (80, 443):
+        hote = "%s:%d" % (hote, morceaux.port)
+    return (hote + morceaux.path.rstrip("/")) or None
