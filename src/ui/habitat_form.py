@@ -22,8 +22,10 @@ from qgis.PyQt.QtWidgets import (
     QWidget,
 )
 
+from ..api.payload import LONGUEURS_MAX_HABITAT, textes_trop_longs
 from ..processing.eval_fields import (
     ETATS_CONSERVATION,
+    MAX_PEE,
     NIVEAUX_ENJEU,
     cover_class,
     decode_eval,
@@ -393,6 +395,13 @@ class HabitatForm(QWidget):
             # le nom cité, par exemple) : ne rien réinitialiser. Sinon un
             # arbitrage déjà rendu redeviendrait « repris », en silence.
             return
+        alliance = catalogue().par_determination(int(cd_hab))
+        if alliance is not None and _identite(alliance) == self._contexte_propose:
+            # Même garde-fou pour la ligne HABREF d'un habitat que le tableau
+            # connaît : son contexte porte l'identité de l'alliance (cf.
+            # `_contexte`), jamais ("habref", cd_hab), et le test ci-dessus ne
+            # la reconnaissait pas — 184 alliances sur 227.
+            return
         # Un choix HABREF direct n'est plus une détermination du tableau : on
         # efface ce qu'un choix précédent aurait posé, sans quoi l'habitat
         # garderait une alliance et des correspondances qui ne le décrivent plus.
@@ -606,6 +615,23 @@ class HabitatForm(QWidget):
             return False, "Le nom cité est obligatoire."
         if self._has_technique and self.combo_technique.currentData() is None:
             return False, "La technique de collecte est obligatoire."
+        pee = [p.strip() for p in self.edit_pee.text().split(";") if p.strip()]
+        if len(pee) > MAX_PEE:
+            # Le bloc n'en garde que trois : le quatrième disparaissait à
+            # l'enregistrement, sans un mot.
+            return False, (
+                "%d plantes exotiques envahissantes saisies : %d au plus. "
+                "Retirez-en %d." % (len(pee), MAX_PEE, len(pee) - MAX_PEE)
+            )
+        trop_longs = textes_trop_longs(self.get_data(), LONGUEURS_MAX_HABITAT)
+        if trop_longs:
+            # Sans ce contrôle, l'habitat s'enregistrait, et GeoNature refusait
+            # la station ENTIÈRE à la synchronisation (« HTTP 500 »).
+            return False, (
+                "Texte trop long pour GeoNature :\n%s\n\nRaccourcissez la "
+                "précision technique, le critère ou la remarque."
+                % "\n".join("• %s : %d caractères (%d au plus)" % t for t in trop_longs)
+            )
         return True, ""
 
     def get_data(self):

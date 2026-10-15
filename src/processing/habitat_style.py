@@ -613,7 +613,11 @@ def _bandes(classement):
     quelle densité de polygones. Le dominant vient en premier, donc en bas.
 
     Sans recouvrement renseigné, les parts sont égales : mieux vaut des bandes
-    arbitraires mais visibles qu'un habitat réduit à rien.
+    arbitraires mais visibles qu'un habitat réduit à rien. Si quelques habitats
+    seulement en manquent, ils se partagent ce qui reste sous 100 % ; et s'il ne
+    reste rien, chacun reçoit une part moyenne. Une bande vide (100 → 100)
+    laissait l'habitat en légende sans aucune surface sur la carte, et le
+    damier, faute de cible, le peignait sur toute la station.
     """
     ordre = list(classement)
     valeurs = [_recouvrement(f) for f in ordre]
@@ -621,6 +625,12 @@ def _bandes(classement):
     if total <= 0:
         valeurs = [1.0] * len(ordre)
         total = float(len(ordre)) or 1.0
+    elif 0.0 in valeurs:
+        manquants = valeurs.count(0.0)
+        reste = 100.0 - total
+        part = reste / manquants if reste > 0 else total / len(ordre)
+        valeurs = [v or part for v in valeurs]
+        total = sum(valeurs)
     bornes, curseur = {}, 0.0
     for feature, valeur in zip(ordre, valeurs):
         part = 100.0 * valeur / total
@@ -677,6 +687,7 @@ def enrichir(features, cle_station="id_station", typologie=None):
             props[CHAMP_COMPOSITION] = texte
     _rattacher_les_homonymes(features)
     _rattacher_par_classe_pvf(features)
+    _une_classe_par_determination(features)
     return features
 
 
@@ -788,6 +799,46 @@ def _rattacher_les_homonymes(features):
         props[CHAMP_CLASSE] = classe
         props[CHAMP_LIBELLE] = libelle_classe(classe)
         props[CHAMP_SOURCE] = SOURCE_HOMONYME
+    return features
+
+
+def _une_classe_par_determination(features):
+    """Une même détermination (même habitat, même `cd_hab`) prend UN milieu.
+
+    La classe se décide ligne par ligne, d'après les correspondances de la
+    ligne ; or une alliance arbitrée en EUNIS D5.21 sur une station et gardant
+    E3.41 ailleurs — la vue elle-même dit qu'une alliance ne se traduit pas
+    pareil d'un polygone à l'autre — apparaissait deux fois en légende, sous
+    deux milieux et en deux couleurs. Le guide promet l'inverse : la couleur
+    suit l'habitat. Le milieu le plus souvent constaté l'emporte ; à égalité,
+    l'ordre d'EUNIS, comme pour les homonymes.
+
+    Le `cd_hab` fait partie du regroupement : deux habitats DIFFÉRENTS qui
+    portent le même nom restent chacun dans leur milieu (cf. la palette,
+    indexée par milieu et habitat).
+    """
+    groupes = {}
+    for feature in features:
+        props = _proprietes(feature)
+        cle, cd_hab = props.get(CHAMP_CLE), props.get("cd_hab")
+        if not cle or cd_hab in (None, "") or \
+                props.get(CHAMP_CLASSE) in (None, CLASSE_INCONNUE):
+            continue
+        groupes.setdefault((cle, str(cd_hab)), []).append(props)
+    ordre = list(CLASSES_EUNIS)
+    for lot in groupes.values():
+        comptes = {}
+        for props in lot:
+            comptes[props[CHAMP_CLASSE]] = comptes.get(props[CHAMP_CLASSE], 0) + 1
+        if len(comptes) < 2:
+            continue
+        gagnante = max(comptes, key=lambda c: (
+            comptes[c], -ordre.index(c) if c in ordre else -len(ordre)))
+        modele = next(p for p in lot if p[CHAMP_CLASSE] == gagnante)
+        for props in lot:
+            props[CHAMP_CLASSE] = gagnante
+            props[CHAMP_LIBELLE] = modele.get(CHAMP_LIBELLE)
+            props[CHAMP_SOURCE] = modele.get(CHAMP_SOURCE)
     return features
 
 

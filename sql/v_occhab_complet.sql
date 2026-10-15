@@ -456,8 +456,10 @@ SELECT
     eh.j ->> 'typicite'                                         AS habitat_typicite,
     eh.j ->> 'critere'                                          AS habitat_critere,
     eh.j ->> 'remarque'                                         AS habitat_remarque,
-    -- PEE : 3 taxons au plus, restitués en une chaîne « a, b, c ».
-    (SELECT string_agg(t, ', ') FROM jsonb_array_elements_text(
+    -- PEE : 3 taxons au plus, restitués en une chaîne « a ; b ; c » — le
+    -- point-virgule de la saisie : un nom d'auteur porte souvent une virgule
+    -- (« Reynoutria japonica Houtt., 1876 »).
+    (SELECT string_agg(t, ' ; ') FROM jsonb_array_elements_text(
         CASE WHEN jsonb_typeof(eh.j -> 'pee') = 'array'
              THEN eh.j -> 'pee' ELSE '[]'::jsonb END) AS t)     AS habitat_pee,
     -- Détermination hors HABREF : renseignée SEULEMENT quand `cd_hab` est une

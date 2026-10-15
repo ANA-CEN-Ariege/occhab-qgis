@@ -466,3 +466,113 @@ def test_altitude_a_recalculer_conservee(tmp_path):
     assert db.get_station(sid)["altitude_a_recalculer"] == 0
     autre = db.create_station(id_dataset=3)
     assert db.get_station(autre)["altitude_a_recalculer"] == 0  # défaut
+
+
+# ------------------------------------- habitats : identifiants locaux stables
+def test_remplacer_les_habitats_garde_leurs_identifiants(tmp_path):
+    """Régression 0.15.0 : la fiche supprimait puis ré-insérait les habitats,
+    sous de NOUVEAUX `id`. La table attributaire, qui retrouve ses
+    modifications par cet `id`, les perdait sans un mot."""
+    db = _make_db(tmp_path)
+    station_id = db.create_station(id_dataset=3)
+    a = db.add_habitat(station_id, cd_hab=10, nom_cite="A", recovery_percentage=60)
+    b = db.add_habitat(station_id, cd_hab=20, nom_cite="B", recovery_percentage=40)
+    habitats = db.get_station(station_id)["habitats"]
+    habitats[0]["nom_cite"] = "A corrigé"
+    del habitats[1]["recovery_percentage"]  # absente du dict : vaut NULL
+    habitats.append({"cd_hab": 30, "nom_cite": "C"})
+
+    db.replace_habitats(station_id, habitats)
+
+    relus = {h["id"]: h for h in db.get_station(station_id)["habitats"]}
+    assert relus[a]["nom_cite"] == "A corrigé"
+    assert relus[b]["recovery_percentage"] is None
+    assert len(relus) == 3 and {a, b} < set(relus)
+    assert all(h["sync_status"] == "pending" for h in relus.values())
+
+
+def test_remplacer_supprime_les_absents_et_ignore_les_ids_d_une_autre_station(tmp_path):
+    db = _make_db(tmp_path)
+    s1, s2 = db.create_station(id_dataset=3), db.create_station(id_dataset=3)
+    a = db.add_habitat(s1, cd_hab=10, nom_cite="A")
+    gardé = db.add_habitat(s2, cd_hab=20, nom_cite="B")
+    autre = db.get_station(s1)["habitats"][0]  # habitat de S1 collé sur S2
+
+    db.replace_habitats(s2, [autre])
+
+    assert [h["id"] for h in db.get_station(s1)["habitats"]] == [a]
+    relus = db.get_station(s2)["habitats"]
+    assert len(relus) == 1 and relus[0]["id"] not in (a, gardé)
+    assert relus[0]["nom_cite"] == "A"
+
+
+def test_remplacer_annule_tout_si_un_habitat_est_invalide(tmp_path):
+    db = _make_db(tmp_path)
+    station_id = db.create_station(id_dataset=3)
+    db.add_habitat(station_id, cd_hab=10, nom_cite="A")
+    habitats = db.get_station(station_id)["habitats"]
+    habitats[0]["nom_cite"] = ""
+
+    with pytest.raises(ValueError):
+        db.replace_habitats(station_id, habitats)
+
+    assert db.get_station(station_id)["habitats"][0]["nom_cite"] == "A"
+
+
+def test_ecrire_modifications_tout_ou_rien(tmp_path):
+    """La station passait « à synchroniser » et en brouillon alors que
+    l'écriture de son habitat (nom cité vidé) échouait."""
+    db = _make_db(tmp_path)
+    station_id = db.create_station(id_dataset=3, validation_status="valide")
+    db.mark_station_synced(station_id, 812)
+    habitat = db.add_habitat(station_id, cd_hab=10, nom_cite="A")
+
+    with pytest.raises(ValueError):
+        db.ecrire_modifications(
+            station_id, {"sync_status": "pending", "validation_status": "brouillon"},
+            habitats={habitat: {"nom_cite": None}},
+        )
+
+    relue = db.get_station(station_id)
+    assert (relue["sync_status"], relue["validation_status"]) == ("synced", "valide")
+
+
+def test_ecrire_modifications_station_habitats_observateurs_empreinte(tmp_path):
+    db = _make_db(tmp_path)
+    station_id = db.create_station(id_dataset=3)
+    db.set_server_snapshot(station_id, "empreinte")
+    habitat = db.add_habitat(station_id, cd_hab=10, nom_cite="A")
+    db.add_observer(station_id, observer_name="Ancien", id_role=1)
+
+    db.ecrire_modifications(
+        station_id, {"comment": "c"}, habitats={habitat: {"recovery_percentage": 70}},
+        observateurs=[{"observer_name": "Roy", "id_role": 5}],
+        effacer_empreinte=True,
+    )
+
+    relue = db.get_station(station_id)
+    assert relue["comment"] == "c" and relue["server_snapshot"] is None
+    assert relue["habitats"][0]["recovery_percentage"] == 70
+    assert [(o["observer_name"], o["id_role"]) for o in relue["observers"]] == [("Roy", 5)]
+
+
+def test_la_purge_se_restreint_aux_stations_verifiees(tmp_path):
+    """La purge promet que les stations « restent sur GeoNature » : le dock
+    vérifie leur présence, et seules celles-là partent. Les autres — effacées
+    du serveur, serveur restauré — gardent ici leur seule copie."""
+    db = _make_db(tmp_path)
+    vieux = "2020-01-01T00:00:00"
+    verifiee = db.create_station(id_dataset=3)
+    _set_row(db, verifiee, sync_status="synced", date_update=vieux, id_station=101)
+    absente = db.create_station(id_dataset=3)
+    _set_row(db, absente, sync_status="synced", date_update=vieux, id_station=102)
+    recente = db.create_station(id_dataset=3)
+    _set_row(db, recente, sync_status="pending", date_update=vieux)
+
+    candidates = db.stations_purgeables(months=6)
+    assert {(c["id"], c["id_station"], c["id_dataset"]) for c in candidates} == {
+        (verifiee, 101, 3), (absente, 102, 3)}
+    # Une station non purgeable glissée dans `ids` n'est pas touchée pour autant.
+    assert db.purge_synced_stations(months=6, ids=[verifiee, recente]) == 1
+    restantes = {s["id"] for s in db.get_all_stations()}
+    assert verifiee not in restantes and {absente, recente} <= restantes

@@ -433,3 +433,41 @@ def test_un_habitat_supprime_ailleurs_n_est_pas_recree():
 
     assert colonnes_habitats == {}
     assert [h["id"] for h in fraiche["habitats"]] == [10]
+
+
+# ---------------------------------------- enregistrement partiel, fiche validée
+def test_oublier_une_station_garde_les_modifications_des_autres():
+    """Après un enregistrement partiel, seules les stations en échec restent
+    modifiées : tout garder faisait réécrire plus tard des valeurs corrigées
+    entre-temps dans la fiche."""
+    grille = gr.Grille(_stations())
+    grille.definir(grille.lignes[0], _champ(ch.HABITAT, "recouvrement"), 70)
+    grille.definir(grille.lignes[2], _champ(ch.STATION, "station_name"), "X")
+
+    grille.oublier_station(grille.lignes[0].station)
+
+    assert [s["id"] for s in grille.modifications()] == [2]
+
+
+def test_la_modification_d_un_habitat_survit_a_une_fiche_validee(tmp_path):
+    """Le scénario de l'audit : recouvrement changé dans la table, fiche de la
+    même station validée, puis « Enregistrer ». La valeur était perdue, le
+    bilan disait pourtant « enregistrée »."""
+    import os
+
+    import sqlite_local
+
+    db = sqlite_local.OccHabDatabase(os.path.join(str(tmp_path), "t.db"))
+    station_id = db.create_station(id_dataset=3)
+    db.add_habitat(station_id, cd_hab=5130, nom_cite="Fruticées", recovery_percentage=60)
+    grille = gr.Grille([db.get_station(station_id)])
+    grille.definir(grille.lignes[0], _champ(ch.HABITAT, "recouvrement"), 70)
+
+    fiche = db.get_station(station_id)  # la fiche valide sans rien changer d'utile
+    db.replace_habitats(station_id, fiche["habitats"])
+
+    fraiche = db.get_station(station_id)
+    station = grille.modifications()[0]
+    assert grille.habitats_introuvables(station, fraiche) == set()
+    _colonnes, habitats = grille.reporter_modifications(station, fraiche)
+    assert habitats, "la modification de la table doit encore être retrouvée"

@@ -25,9 +25,34 @@ from .habitat_form import HabitatForm
 from .modal import executer
 from .station_form import StationForm
 
-# Identifiants serveur à préserver quand on rééedite un habitat déjà synchronisé
-# (pour une synchro en mise à jour et non en re-création).
-_HAB_KEEP_KEYS = ("id_habitat", "unique_id_sinp_hab")
+# Identifiants à préserver quand on réédite un habitat : serveur, pour une
+# synchro en mise à jour et non en re-création ; local (`id`), pour que la base
+# mette l'habitat à jour sur place — la table attributaire retrouve ses
+# modifications par cet `id`.
+_HAB_KEEP_KEYS = ("id", "id_habitat", "unique_id_sinp_hab")
+
+
+def _sans_entree_qui_valide(dialog, event):
+    """Entrée dans un champ ne doit pas valider la fiche.
+
+    Le bouton OK est le bouton par défaut : taper un nom puis Entrée créait la
+    station, sans ses habitats. Seul un bouton qui a le focus réagit encore à
+    Entrée ; les zones de texte multiligne et les listes de propositions
+    consomment la touche avant qu'elle n'arrive ici.
+    """
+    if (event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter)
+            and not isinstance(dialog.focusWidget(), QPushButton)):
+        event.accept()
+        return True
+    return False
+
+
+def _confirmer_abandon(parent, message):
+    return QMessageBox.question(
+        parent, "Abandonner la saisie ?", message,
+        QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        QMessageBox.StandardButton.No,
+    ) == QMessageBox.StandardButton.Yes
 
 
 class _FormDialog(QDialog):
@@ -50,10 +75,30 @@ class _FormDialog(QDialog):
         buttons.accepted.connect(self._on_ok)
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
+        self._initial = self._donnees()
 
     def showEvent(self, event):
         super().showEvent(event)
         ajuster_a_l_ecran(self, *self.TAILLE_VOULUE)
+
+    def keyPressEvent(self, event):
+        if not _sans_entree_qui_valide(self, event):
+            super().keyPressEvent(event)
+
+    def _donnees(self):
+        try:
+            return self.form.get_data()
+        except Exception:  # noqa: BLE001 - dans le doute, on demandera
+            return None
+
+    def reject(self):
+        """Échap, la croix ou Annuler : ne pas jeter une saisie sans le dire."""
+        actuel = self._donnees()
+        if (actuel is None or actuel != self._initial) and not _confirmer_abandon(
+            self, "Les modifications de cet habitat seront perdues."
+        ):
+            return
+        super().reject()
 
     def _on_ok(self):
         ok, msg = self.form.validate()
@@ -258,6 +303,7 @@ class StationDialog(QDialog):
         buttons.accepted.connect(self._on_ok)
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
+        self._initial = self._etat()
 
     #: Cf. `_FormDialog.TAILLE_VOULUE` : la station porte en plus la liste des
     #: habitats, d'où une fenêtre un peu plus haute.
@@ -266,6 +312,39 @@ class StationDialog(QDialog):
     def showEvent(self, event):
         super().showEvent(event)
         ajuster_a_l_ecran(self, *self.TAILLE_VOULUE)
+
+    def keyPressEvent(self, event):
+        if not _sans_entree_qui_valide(self, event):
+            super().keyPressEvent(event)
+
+    def _etat(self):
+        try:
+            return self.station_form.get_data(), [dict(h) for h in self.habitats]
+        except Exception:  # noqa: BLE001 - dans le doute, on demandera
+            return None
+
+    def modifiee(self):
+        """La fiche diffère-t-elle de ce qu'elle montrait à l'ouverture ?"""
+        etat = self._etat()
+        return etat is None or etat != self._initial
+
+    def reject(self):
+        """Échap, la croix ou Annuler.
+
+        Fermer la fiche jetait sans un mot le tracé, les champs remplis et les
+        habitats ajoutés — Échap suffisait, pressé pour refermer une liste déjà
+        refermée. On demande dès qu'il y a quelque chose à perdre : un tracé
+        neuf, ou une fiche qui n'est plus celle de l'ouverture.
+        """
+        trace_neuf = self.station is None and bool(self.geom_wkt)
+        if trace_neuf:
+            message = ("Cette nouvelle station ne sera pas créée : son tracé, sa "
+                       "fiche et ses habitats seront perdus.")
+        else:
+            message = "Les modifications de cette fiche seront perdues."
+        if (trace_neuf or self.modifiee()) and not _confirmer_abandon(self, message):
+            return
+        super().reject()
 
     # --------------------------------------------- reprendre une autre station
     def _reprendre_station(self):

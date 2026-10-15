@@ -53,6 +53,8 @@ VUES_EXPORT = (VUE_EXPORT, VUE_GABARIT)
 #: aucune colonne à colorier. Les options sont donc masquées pour lui plutôt
 #: que proposées et sans effet.
 VUES_CARTOGRAPHIABLES = (VUE_EXPORT,)
+#: SRID des géométries de chaque vue, quand l'export ne le déclare pas.
+SRID_PAR_VUE = {VUE_EXPORT: 4326, VUE_GABARIT: 2154}
 
 
 def exports_occhab(exports, vues=VUES_EXPORT):
@@ -150,10 +152,13 @@ class ExportPicker(QDialog):
         #: Vue de chaque export, par identifiant : c'est elle qui décide des
         #: options de carte, pas le libellé que l'administrateur a choisi.
         self._vues = {}
+        #: SRID de la géométrie de chaque export (`geometry_srid` du modèle).
+        self._srids = {}
         for export in self._exports:
             libelle = export.get("label") or "export %s" % export.get("id")
             self.combo_export.addItem(libelle, export.get("id"))
             self._vues[export.get("id")] = vue_de(export)
+            self._srids[export.get("id")] = export.get("geometry_srid")
         # Un seul export sur cette vue : le montrer, mais ne pas faire mine de
         # proposer un choix qui n'existe pas.
         self.combo_export.setEnabled(len(self._exports) > 1)
@@ -283,6 +288,15 @@ class ExportPicker(QDialog):
         """Vue sur laquelle est bâti l'export choisi (None si indevinable)."""
         return self._vues.get(self.id_export())
 
+    def srid(self):
+        """SRID des géométries de l'export choisi.
+
+        Celui que l'administrateur a déclaré dans le module Exports ; à défaut,
+        celui de la vue : le gabarit rend `geom_local` en Lambert 93, la vue
+        pivot `geom` en WGS84 (README §7).
+        """
+        return self._srids.get(self.id_export()) or SRID_PAR_VUE.get(self.vue())
+
     def cartographiable(self):
         """L'export choisi se prête-t-il aux représentations de mosaïque ?"""
         return est_cartographiable(self.vue())
@@ -402,6 +416,14 @@ class ExportPicker(QDialog):
     def validate(self):
         if self.id_export() is None:
             return False, "Choisissez un export."
+        if self.id_dataset() is None:
+            # « Tous les JDD » dans le panneau : l'export partait sans filtre,
+            # tous les jeux de données lisibles d'un coup — ce que le guide
+            # exclut, une telle couche ne se cartographiant pas.
+            return False, (
+                "Choisissez d'abord un jeu de données précis dans le panneau "
+                "OccHab (pas « Tous les JDD ») : l'export porte sur lui."
+            )
         if (self.check_periode.isChecked()
                 and self.date_debut.date() > self.date_fin.date()):
             return False, "La date de début doit précéder la date de fin."

@@ -10,18 +10,21 @@ les affiche en **lecture seule**, dans un style distinct, sous le groupe
 doublons — sans pouvoir l'éditer depuis QGIS.
 
 La FeatureCollection est écrite dans un fichier GeoJSON temporaire, chargé via le
-fournisseur OGR (qui gère nativement les géométries mixtes point/ligne/polygone).
+fournisseur OGR. Une couche OGR n'a qu'UN type de géométrie : un JDD qui mêle
+points et polygones donne une couche par famille, lues dans le même fichier.
 """
 import json
 
 from qgis.PyQt.QtGui import QColor
 from qgis.core import (
     QgsProject,
+    QgsRectangle,
     QgsSingleSymbolRenderer,
     QgsSymbol,
     QgsVectorLayer,
 )
 
+from ..processing import geojson_wkt as gw
 from .station_layers import GROUP_NAME as LOCAL_GROUP_NAME
 
 GROUP_NAME = "OccHab (serveur)"
@@ -35,7 +38,7 @@ class ServerStationLayerManager:
     def __init__(self, file_path, logger=None):
         self._file = str(file_path)
         self.logger = logger
-        self._layer_id = None
+        self._layer_ids = []  # une couche par famille de géométrie
 
     def show(self, feature_collection):
         """Afficher une FeatureCollection serveur. Retourne le nombre de stations."""
@@ -53,54 +56,73 @@ class ServerStationLayerManager:
         if not features:
             return 0
 
-        layer = QgsVectorLayer(self._file, LAYER_NAME, "ogr")
-        if not layer.isValid():
-            if self.logger:
-                self.logger.warning("Couche serveur invalide (GeoJSON)")
-            return 0
-        layer.setReadOnly(True)
-        self._style(layer)
-        QgsProject.instance().addMapLayer(layer, False)
-        self._group().addLayer(layer)
-        self._layer_id = layer.id()
-        return len(features)
+        familles = gw.familles_geometriques(features)
+        if len(familles) <= 1:
+            sources = [(self._file, LAYER_NAME)]
+        else:
+            # Points et lignes AU-DESSUS des polygones : `addLayer` ajoute en
+            # dernier enfant, c'est-à-dire dessous — d'où l'ordre inverse.
+            sources = [
+                ("%s|geometrytype=%s" % (self._file, ogr),
+                 "%s (%s)" % (LAYER_NAME, suffixe) if suffixe else LAYER_NAME)
+                for ogr, suffixe in reversed(familles)
+            ]
+        for source, nom in sources:
+            layer = QgsVectorLayer(source, nom, "ogr")
+            if not layer.isValid():
+                if self.logger:
+                    self.logger.warning("Couche serveur invalide (GeoJSON) : %s", nom)
+                continue
+            layer.setReadOnly(True)
+            self._style(layer)
+            QgsProject.instance().addMapLayer(layer, False)
+            self._group().addLayer(layer)
+            self._layer_ids.append(layer.id())
+        return len(features) if self._layer_ids else 0
+
+    def _couches(self):
+        """Couches serveur encore présentes dans le projet."""
+        projet = QgsProject.instance()
+        return [c for c in (projet.mapLayer(i) for i in self._layer_ids) if c is not None]
 
     def selected_id_stations(self):
         """id_station des entités sélectionnées dans la couche serveur."""
         ids = []
-        if not self._layer_id:
-            return ids
-        layer = QgsProject.instance().mapLayer(self._layer_id)
-        if layer is None:
-            return ids
-        if layer.fields().indexOf("id_station") < 0:
-            # Sans id_station fiable, ne pas retomber sur le fid OGR (mauvais import).
-            return ids
-        for feature in layer.selectedFeatures():
-            value = feature["id_station"]
-            try:
-                if value:
-                    ids.append(int(value))
-            except (TypeError, ValueError):
-                pass
+        for layer in self._couches():
+            if layer.fields().indexOf("id_station") < 0:
+                # Sans id_station fiable, ne pas retomber sur le fid OGR.
+                continue
+            for feature in layer.selectedFeatures():
+                value = feature["id_station"]
+                try:
+                    if value:
+                        ids.append(int(value))
+                except (TypeError, ValueError):
+                    pass
         return ids
 
     def layer(self):
-        """Couche serveur courante (QgsVectorLayer) ou None."""
-        if not self._layer_id:
-            return None
-        return QgsProject.instance().mapLayer(self._layer_id)
+        """Couche serveur courante (QgsVectorLayer) ou None.
+
+        S'il y en a plusieurs (une par famille de géométrie), celle des
+        polygones, posée en dernier — sinon la première.
+        """
+        couches = self._couches()
+        return couches[-1] if couches else None
 
     def extent(self):
-        """Emprise (EPSG:4326) de la couche serveur, ou None si absente/vide."""
-        if not self._layer_id:
-            return None
-        layer = QgsProject.instance().mapLayer(self._layer_id)
-        if layer is None:
-            return None
-        layer.updateExtents()
-        ext = layer.extent()
-        return ext if ext is not None and not ext.isEmpty() else None
+        """Emprise (EPSG:4326) des couches serveur, ou None si absentes/vides."""
+        emprise = None
+        for layer in self._couches():
+            layer.updateExtents()
+            ext = layer.extent()
+            if ext is None or ext.isEmpty():
+                continue
+            if emprise is None:
+                emprise = QgsRectangle(ext)
+            else:
+                emprise.combineExtentWith(ext)
+        return emprise
 
     def clear(self):
         """Retirer la/les couche(s) serveur existantes (sans toucher au groupe).
@@ -118,12 +140,16 @@ class ServerStationLayerManager:
         if group is not None:
             for node in group.findLayers():
                 layer = node.layer()
-                if layer is not None and layer.name() == LAYER_NAME:
+                if layer is not None and layer.name().startswith(LAYER_NAME):
                     try:
                         QgsProject.instance().removeMapLayer(layer.id())
                     except (RuntimeError, KeyError):
                         pass
-        self._layer_id = None
+        self._layer_ids = []
+
+    def oublier(self):
+        """Oublier les couches connues (projet changé), sans rien retirer."""
+        self._layer_ids = []
 
     def cleanup(self):
         """Retirer la couche et le groupe (au déchargement du plugin)."""

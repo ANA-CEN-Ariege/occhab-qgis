@@ -3,7 +3,7 @@
 
 """Plantes exotiques envahissantes : lecture et couleurs (module pur, testable).
 
-La vue d'export restitue les taxons d'un habitat en une chaîne « a, b, c »
+La vue d'export restitue les taxons d'un habitat en une chaîne « a ; b ; c »
 (`habitat_pee`, trois au plus). Une carte des PEE demande l'inverse : la liste
 des espèces rencontrées sur tout un jeu de données, et **une couleur par
 espèce**, stable d'un chargement à l'autre pour que deux cartes du même secteur
@@ -14,9 +14,16 @@ milieu : ici les espèces n'ont aucune parenté à montrer, il faut au contraire
 qu'elles se distinguent le plus possible les unes des autres.
 """
 import colorsys
+import re
 
-#: Séparateur des taxons dans `habitat_pee`, tel que la vue les assemble.
-SEPARATEUR = ","
+#: Séparateur des taxons dans `habitat_pee`, tel que la vue les assemble — le
+#: point-virgule de la saisie.
+SEPARATEUR = ";"
+#: Vue antérieure à la 0.16.0, qui assemblait par « , » : une virgule suivie
+#: d'autre chose qu'un chiffre. Un nom d'auteur en porte souvent une, suivie de
+#: l'année (« Reynoutria japonica Houtt., 1876 ») : couper sur toutes les
+#: virgules faisait apparaître « 1876 » comme une espèce.
+_SEPARATEUR_ANCIEN = re.compile(r",\s*(?=[^\d\s])")
 #: Nombre d'or en tours : deux couleurs consécutives sont aussi éloignées que
 #: possible sur le cercle des teintes, et le restent quel qu'en soit le nombre.
 #: Un pas régulier (360/n) obligerait à recalculer toutes les couleurs dès qu'une
@@ -32,12 +39,19 @@ _SATURATIONS = (0.85, 0.60)
 
 
 def especes(valeur):
-    """Taxons d'une chaîne « a, b, c », nettoyés, sans doublon, dans l'ordre."""
+    """Taxons d'une chaîne « a ; b ; c », nettoyés, sans doublon, dans l'ordre.
+
+    Une chaîne sans point-virgule vient d'une vue antérieure, qui séparait par
+    des virgules : elle est découpée sur les seules virgules qui ne précèdent
+    pas une année d'auteur.
+    """
     if not isinstance(valeur, str):
         return []
+    morceaux = (valeur.split(SEPARATEUR) if SEPARATEUR in valeur
+                else _SEPARATEUR_ANCIEN.split(valeur))
     vus, retenus = set(), []
-    for morceau in valeur.split(SEPARATEUR):
-        nom = " ".join(morceau.split())
+    for morceau in morceaux:
+        nom = " ".join(morceau.split()).strip(",; ")
         if nom and nom.casefold() not in vus:
             vus.add(nom.casefold())
             retenus.append(nom)
@@ -57,6 +71,17 @@ def inventaire(features, colonne="habitat_pee"):
         for nom in especes(proprietes.get(colonne)):
             trouvees.setdefault(nom.casefold(), nom)
     return [trouvees[cle] for cle in sorted(trouvees)]
+
+
+def representants(features, colonne="habitat_pee"):
+    """{nom en casse neutre: nom affiché} — celui de `inventaire`.
+
+    Une espèce saisie « Robinia pseudoacacia » ici et « robinia pseudoacacia »
+    là est UNE espèce, avec UNE règle de légende : les cercles de chaque
+    station doivent porter le nom de cette règle, sans quoi la seconde
+    n'était jamais dessinée.
+    """
+    return {nom.casefold(): nom for nom in inventaire(features, colonne)}
 
 
 def couleur(rang):
