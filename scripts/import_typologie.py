@@ -2,13 +2,16 @@
 # SPDX-FileCopyrightText: 2026 Cédric Roy <it@ariegenature.fr>
 # SPDX-License-Identifier: GPL-3.0-or-later
 
-"""Catalogue des végétations de l'Ariège (0_Typologie.xlsx) → dictionnaire de
-correspondances exploitable par le plugin.
+"""Tableau des alliances (0_Typologie.xlsx) → dictionnaire de correspondances
+exploitable par le plugin.
 
-Le catalogue est tenu par les botanistes dans un tableur : une ligne par
-**alliance**, avec ses correspondances CORINE, EUNIS et Natura 2000. Le plugin,
-lui, ne manipule que des `cd_hab` HABREF. Ce script fait le pont, une fois, hors
-QGIS — et **n'écrit jamais dans le fichier source**.
+Le tableau est tenu par les botanistes de l'ANA-CEN dans un tableur : une ligne
+par **alliance**, avec ses correspondances CORINE, EUNIS et Natura 2000. C'est
+une synthèse de plusieurs travaux, dont les principaux sont cités dans
+`correspondances.SOURCES_TABLEAU` (la feuille « Références » du classeur en
+donne la liste complète). Le plugin, lui, ne manipule que des `cd_hab` HABREF.
+Ce script fait le pont, une fois, hors QGIS — et **n'écrit jamais dans le
+fichier source**.
 
 Il produit deux fichiers :
 
@@ -622,7 +625,7 @@ def resumer(dico, anomalies, journal=print):
         par_type.setdefault(anomalie["type"], []).append(anomalie)
 
     journal("")
-    journal("Alliances du catalogue      : %d" % len(dico))
+    journal("Alliances du tableau        : %d" % len(dico))
     journal("  résolues dans HABREF      : %d" % len(resolues))
     journal("  ancrées sur CORINE/EUNIS  : %d" % len(ancrees))
     journal("  ni l'un ni l'autre        : %d"
@@ -649,7 +652,7 @@ def resumer(dico, anomalies, journal=print):
 
 def main(argv=None):
     parseur = argparse.ArgumentParser(
-        description="Catalogue des végétations (xlsx) → dictionnaire de correspondances.",
+        description="Tableau des alliances (xlsx) → dictionnaire de correspondances.",
     )
     parseur.add_argument(
         "xlsx", nargs="?", default=CATALOGUE_SOURCE,

@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: 2026 Cédric Roy <it@ariegenature.fr>
 # SPDX-License-Identifier: GPL-3.0-or-later
 
-"""Tests des règles d'import du catalogue des végétations (`import_typologie`).
+"""Tests des règles d'import du Tableau des alliances (`import_typologie`).
 
 Ce script ne tourne qu'une fois de temps en temps, à la main : personne ne verra
 passer une régression. Ce sont donc ses règles métier qui sont testées ici — pas

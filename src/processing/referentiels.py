@@ -69,8 +69,8 @@ COULEURS_ENJEU = [
 ENJEUX_SANS_COULEUR = ("aucun", "inconnu")
 
 # --- Correspondances entre typologies d'habitats. ----------------------------
-# Les botanistes déterminent à l'alliance, dans le catalogue des végétations de
-# l'Ariège ; la restitution réclame du CORINE, de l'EUNIS ou du Natura 2000. La
+# Les botanistes déterminent à l'alliance, dans le Tableau des alliances de
+# l'ANA-CEN ; la restitution réclame du CORINE, de l'EUNIS ou du Natura 2000. La
 # correspondance calculée depuis HABREF n'est pas toujours juste, d'où la
 # possibilité de l'ARBITRER et de l'inscrire dans la donnée (cf.
 # `processing.correspondances` et le bloc ANA-EVAL).
@@ -91,9 +91,10 @@ TYPOLOGIES_CORRESPONDANCE = [
     ("Cahiers_d'habitats", "Cahiers d'habitats", "cahiers"),
 ]
 
-#: D'où vient une correspondance enregistrée. `catalogue` : reprise du catalogue
-#: ANA telle quelle. `habref` : proposée par HABREF, qui publie ses propres
-#: correspondances. `manuel` : le botaniste l'a choisie ou corrigée lui-même —
+#: D'où vient une correspondance enregistrée. `catalogue` : reprise du Tableau
+#: des alliances telle quelle (le code garde l'ancien nom : il est inscrit dans
+#: la donnée et lu par la vue d'export). `habref` : proposée par HABREF, qui
+#: publie ses propres correspondances. `manuel` : le botaniste l'a choisie ou corrigée lui-même —
 #: c'est la SEULE qui atteste d'un arbitrage humain, et l'export doit pouvoir
 #: l'isoler pour dire ce qui a été vérifié et ce qui ne l'a pas été.
 SOURCES_CORRESPONDANCE = ("catalogue", "habref", "manuel")

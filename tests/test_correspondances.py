@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: 2026 Cédric Roy <it@ariegenature.fr>
 # SPDX-License-Identifier: GPL-3.0-or-later
 
-"""Tests du catalogue des végétations (module pur `correspondances`).
+"""Tests du Tableau des alliances (module pur `correspondances`).
 
 Deux choses sont vérifiées ici plus que les autres :
 
@@ -16,6 +16,7 @@ Les tests portent sur un catalogue construit ici, sauf le dernier qui contrôle
 le fichier réellement livré avec le plugin.
 """
 import os
+import re
 
 import champs as ch
 import correspondances as co
@@ -568,3 +569,41 @@ def test_l_export_montre_le_code_du_bloc_plutot_qu_un_cd_hab_nu():
     ligne = export.flatten_cartography([station], code_corresp=lambda _cd: None)[0]
     assert ligne["corine_cite"] == "53.2142"
     assert ligne["eunis_cite"] == "D5.2142"
+
+
+# --- Nom et sources du tableau -----------------------------------------------
+def test_la_mention_cite_le_tableau_ses_sources_et_ses_limites():
+    """Les sources ne se résument pas : la mention les cite toutes, en entier."""
+    texte = co.mention_sources()
+    assert co.NOM_TABLEAU == "Tableau des alliances"
+    assert texte.startswith(co.NOM_TABLEAU)
+    for source in co.SOURCES_TABLEAU:
+        assert source in texte
+    for limite in co.LIMITES_TABLEAU:
+        assert limite in texte
+    assert "Corriol" in texte and "2023" in texte and "CBNPMP" in texte
+    assert "Prodrome des végétations de France II" in texte
+    assert "Corriol 2023" in co.SOURCES_TABLEAU_COURT
+    assert "Prodrome des végétations de France II" in co.SOURCES_TABLEAU_COURT
+
+
+def test_l_ancien_nom_ne_revient_pas():
+    """« Catalogue ANA » ne s'affiche plus nulle part : le code, le guide et le
+    README disent « Tableau des alliances ». Seul l'historique des versions
+    (metadata.txt) garde l'ancien nom, pour ce qu'il a été."""
+    racine = os.path.dirname(_ICI)
+    motif = re.compile(r"catalogue\s+ana\b", re.IGNORECASE)
+    a_lire = []
+    for dossier, _sous, fichiers in os.walk(os.path.join(racine, "src")):
+        for nom in fichiers:
+            if nom.endswith(".py"):
+                a_lire.append(os.path.join(dossier, nom))
+    a_lire += [os.path.join(racine, nom)
+               for nom in ("GUIDE_UTILISATEUR.md", "README.md", "plugin.py")]
+    restants = []
+    for chemin in a_lire:
+        with open(chemin, encoding="utf-8") as fichier:
+            for numero, ligne in enumerate(fichier, 1):
+                if motif.search(ligne):
+                    restants.append("%s:%d" % (os.path.relpath(chemin, racine), numero))
+    assert restants == []

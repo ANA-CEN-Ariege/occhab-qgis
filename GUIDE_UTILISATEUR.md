@@ -26,7 +26,7 @@ QGIS. Il couvre l'installation, la première configuration et l'usage quotidien.
 13. [Les champs « enjeu / état / zone humide / recouvrement »](#13-les-champs--enjeu--état--zone-humide--recouvrement-)
 14. [Brouillon, validé, et la table des stations](#14-brouillon-validé-et-la-table-des-stations)
 15. [Sortir une carte : la mise en page](#15-sortir-une-carte--la-mise-en-page)
-16. [Le catalogue des végétations et les correspondances](#16-le-catalogue-des-végétations-et-les-correspondances)
+16. [Le Tableau des alliances et les correspondances](#16-le-tableau-des-alliances-et-les-correspondances)
 17. [Dépannage (FAQ)](#17-dépannage-faq)
 18. [Glossaire](#18-glossaire)
 
@@ -148,7 +148,7 @@ Utile hors ligne, en avant-première, ou si le dépôt n'est pas accessible :
 > présent d'origine dans le gestionnaire.~~
 > La version qui s'y trouve (**0.5.2**) a plusieurs années de retard sur celle du
 > dépôt de l'ANA : ne l'installez pas depuis là, vous n'auriez ni la mise en page
-> cartographique, ni le catalogue des végétations et l'arbitrage des
+> cartographique, ni le Tableau des alliances et l'arbitrage des
 > correspondances, ni les cartes thématiques (enjeux, plantes exotiques), ni le
 > copier-coller de polygone, ni les corrections de saisie. Utilisez la
 > **méthode A**. Cette voie sera rouverte quand l'extension sortira de sa phase
@@ -444,13 +444,25 @@ ajouter, dans le formulaire :
   Si rien n'apparaît, un message sous le champ vous dit pourquoi : **hors
   connexion** (la recherche HABREF a besoin du serveur — saisissez alors le nom
   et le code à la main), erreur du serveur, ou aucun habitat trouvé.
-- **Catalogue ANA** — les propositions marquées **★ Catalogue ANA** viennent du
-  *catalogue des végétations de l'Ariège* et arrivent **en tête** de liste. Elles
-  apportent l'alliance **et** ses correspondances CORINE / EUNIS / Natura 2000
-  (§16). Elles restent proposées **hors connexion** : le catalogue est sur
-  votre disque.
+- **Tableau des alliances** — les propositions marquées **★ Tableau des
+  alliances** proviennent d'un **travail de synthèse** entre différents travaux.
+  Les ressources principales utilisées sont :
+  - le *Synopsis phytosociologique et catalogue descriptif des végétations de
+    l'Ariège* — Gilles Corriol, CBNPMP, 2023 ;
+  - le *Prodrome des végétations de France II*.
+
+  Ces propositions arrivent **en tête** de liste et apportent l'alliance **et**
+  ses correspondances CORINE / EUNIS / Natura 2000 (§16). Il s'agit d'un travail
+  de synthèse et de mise en correspondance, **à utiliser avec discernement** :
+  au sein de certaines alliances, il existe parfois plusieurs codes EUNIS,
+  CORINE biotopes et Natura 2000 selon les associations végétales ; certains
+  groupements ne sont pas détaillés dans le catalogue descriptif des végétations
+  de l'Ariège ; et les correspondances, élaborées par les botanistes de
+  l'ANA-CEN, sont **à valider**. L'info-bulle de chaque proposition rappelle ces
+  sources et ces limites. Les propositions restent disponibles **hors
+  connexion** : le tableau est sur votre disque.
 - **Filtre typologie** — pour cibler la recherche (Corine, EUNIS…). Il ne
-  s'applique qu'à HABREF, pas au catalogue.
+  s'applique qu'à HABREF, pas au Tableau des alliances.
 - **Déterminateur** — utilisateur connecté par défaut, saisie libre possible.
 - **Type de détermination**, **intérêt communautaire**.
 - **Technique de collecte** — **« In situ » par défaut** — et **précision
@@ -463,7 +475,8 @@ ajouter, dans le formulaire :
 Le formulaire compte **trois sections repliables**, et non une seule :
 
 - **« ▸ Correspondances (CORINE, EUNIS, Natura 2000) »** — les équivalences dans
-  les autres typologies, reprises du catalogue ou arbitrées à la main (§16).
+  les autres typologies, reprises du Tableau des alliances ou arbitrées à la
+  main (§16).
 - **« ▸ Natura 2000 (typicité, dynamique, restauration, remarque) »** — les quatre
   champs d'évaluation Natura 2000.
 - **« ▸ Abondance et sensibilité »**, en bas.
@@ -914,8 +927,8 @@ observateurs) sont déjà chargées et restent disponibles. Vous créez et édit
 vos stations normalement ; elles restent **À synchroniser**, et vous
 synchronisez de retour au bureau.
 
-Deux choses continuent même de fonctionner : les propositions **★ Catalogue
-ANA**, qui viennent d'un fichier livré avec le plugin, et les libellés d'habitat
+Deux choses continuent même de fonctionner : les propositions **★ Tableau des
+alliances**, qui viennent d'un fichier livré avec le plugin, et les libellés d'habitat
 déjà obtenus, retenus dans votre base. Vous ne perdez que le **calcul
 d'altitude** et la **recherche HABREF** d'un habitat que vous n'avez pas encore
 rencontré.
@@ -925,7 +938,8 @@ rencontré.
 Là, c'est nettement plus limité, et il faut le savoir :
 
 - **la recherche HABREF ne répond pas** : tapez le nom cité et le `cd_hab` à la
-  main, ou déterminez dans le catalogue, qui lui est sur votre disque ;
+  main, ou déterminez dans le Tableau des alliances, qui lui est sur votre
+  disque ;
 - **les menus déroulants sont vides** (technique, détermination, exposition,
   abondance…), et **« Type de sol » et « Type de mosaïque d'habitats »
   disparaissent** du formulaire ;
@@ -974,8 +988,8 @@ Bouton **« Base locale… »** (en bas du dock) :
   quatre typologies, le bloc dépassait la taille du champ et **GeoNature refusait
   la station entière**. Cette action les réécrit à leur forme courte ; code et
   libellé sont retrouvés à la lecture. Le libellé part toujours ; le code n'est
-  retiré que si le catalogue sait le restituer — sans quoi on effacerait la seule
-  copie d'une correspondance arbitrée hors catalogue. À lancer sur la
+  retiré que si le Tableau des alliances sait le restituer — sans quoi on
+  effacerait la seule copie d'une correspondance arbitrée hors tableau. À lancer sur la
   **sélection** ou sur **toute la base**. Les stations touchées repassent
   **« à synchroniser »**.
 - **Recharger les libellés HABREF** — oublie les libellés déjà obtenus du
@@ -1205,30 +1219,57 @@ déplacez les cadres, changez les polices, exportez en PDF ou en PNG.
 
 ---
 
-## 16. Le catalogue des végétations et les correspondances
+## 16. Le Tableau des alliances et les correspondances
 
 ### Pourquoi cette section existe
 
 La correspondance d'un habitat vers **CORINE, EUNIS ou Natura 2000** n'est pas
 toujours déductible du code déterminé : elle dépend du **lieu de la station**.
-Une même alliance ne se traduit pas pareil d'un polygone à l'autre — le catalogue
-de l'ANA porte d'ailleurs **quatre lignes** pour `Luzulo luzuloidis – Fagion
-sylvaticae`. Le plugin propose, vous tranchez, et **votre choix l'emporte** sur
-tout calcul automatique.
+Une même alliance ne se traduit pas pareil d'un polygone à l'autre — le Tableau
+des alliances porte d'ailleurs **quatre lignes** pour `Luzulo luzuloidis –
+Fagion sylvaticae`. Le plugin propose, vous tranchez, et **votre choix
+l'emporte** sur tout calcul automatique.
 
-### Choisir une alliance du catalogue
+### D'où vient le Tableau des alliances
+
+Le Tableau des alliances est un **travail de synthèse et de mise en
+correspondance** entre différents travaux, réalisé par les botanistes de
+l'ANA-CEN Ariège. Les ressources principales utilisées sont :
+
+- **Corriol G., 2023** — *Synopsis phytosociologique et catalogue descriptif des
+  végétations de l'Ariège*. Conservatoire botanique national des Pyrénées et de
+  Midi-Pyrénées (CBNPMP).
+  [Consulter le document](https://doctech.cbnpmp.fr/Catalogue-vegetations_Ariege_2023.pdf).
+- Le ***Prodrome des végétations de France II*** (PVF II).
+
+La feuille « Références » du classeur source (`resources/typologie/0_Typologie.xlsx`,
+dans le dossier du plugin) liste l'ensemble des ressources consultées.
+
+> **À utiliser avec discernement.**
+> - Au sein de certaines alliances, il existe parfois **plusieurs codes** EUNIS,
+>   CORINE biotopes et Natura 2000, selon les différentes associations végétales.
+> - Certains groupements ne sont **pas détaillés** dans le catalogue descriptif
+>   des végétations de l'Ariège.
+> - Les correspondances ont été élaborées par les botanistes de l'ANA-CEN et
+>   sont **à valider**.
+>
+> Le plugin le rappelle là où le tableau sert : dans l'info-bulle de chaque
+> proposition ★, sous le nom cité dès qu'une alliance du tableau est retenue, et
+> au survol de la mention *repris du Tableau des alliances*.
+
+### Choisir une alliance dans le tableau
 
 Tapez le nom de l'alliance (ou de sa classe) dans **Nom cité**. Les propositions
-**★ Catalogue ANA** arrivent en tête :
+**★ Tableau des alliances** arrivent en tête :
 
 ```
-★ Catalogue ANA · Luzulo luzuloidis – Fagion sylvaticae — PVF1 57.0.3.3.3 → 4 correspondances au choix
+★ Tableau des alliances · Luzulo luzuloidis – Fagion sylvaticae — PVF1 57.0.3.3.3 → 4 correspondances au choix
 ```
 
 En la retenant, le plugin remplit le **code cd_hab**, met le **nom d'alliance**
 en nom cité, et ouvre la section **« Correspondances »**.
 
-> **Certaines alliances n'existent pas dans HABREF.** Le catalogue de l'ANA
+> **Certaines alliances n'existent pas dans HABREF.** Le Tableau des alliances
 > diverge volontairement du Prodrome sur une quarantaine d'entrées. Le plugin
 > pose alors le code **CORINE** de la ligne comme **ancre** — un code d'emprunt,
 > parce qu'OccHab exige un code — et vous prévient :
@@ -1248,7 +1289,7 @@ l'EUNIS sans toucher au CORINE :
 ▾ Correspondances (CORINE, EUNIS, Natura 2000)
    CORINE biotopes    [— aucune —                                  ▾]  3 propositions — à choisir
    EUNIS              [G1.672 — Hêtraies acidophiles des Pyrénées  ▾]  arbitré ici
-   Natura 2000        [9120 — Hêtraies acidophiles atlantiques…    ▾]  repris du catalogue
+   Natura 2000        [9120 — Hêtraies acidophiles atlantiques…    ▾]  repris du Tableau des alliances
    Cahiers d'habitats [1170-5 — La roche infralittorale…           ▾]  proposé par HABREF
 ```
 
@@ -1256,8 +1297,8 @@ Les listes affichent le **libellé** et pas seulement le code : vous choisissez
 « Hêtraies montagnardes à Luzule », pas « 41.112 ».
 
 - **Vous n'avez pas besoin de connaître les codes.** Les propositions viennent du
-  catalogue quand il connaît l'habitat, sinon des correspondances que **HABREF**
-  publie lui-même.
+  Tableau des alliances quand il connaît l'habitat, sinon des correspondances que
+  **HABREF** publie lui-même.
 - **Rien n'est choisi à votre place.** Quand plusieurs correspondances sont
   possibles, la ligne reste vide et affiche « n propositions — à choisir ».
 - **Aucune proposition ?** La ligne devient un champ de recherche : tapez un
@@ -1271,7 +1312,7 @@ Les listes affichent le **libellé** et pas seulement le code : vous choisissez
 
 | Mention | Ce qu'elle dit |
 |---|---|
-| *repris du catalogue* | valeur du catalogue de l'ANA, **non vérifiée** sur cette station |
+| *repris du Tableau des alliances* | valeur du Tableau des alliances, **non vérifiée** sur cette station |
 | *proposé par HABREF* | correspondance du référentiel national, **non vérifiée** |
 | *arbitré ici* | **vous** l'avez choisie — la seule qui atteste d'un contrôle |
 
@@ -1280,16 +1321,16 @@ colonne `corresp_manu` (export du plugin) et `habitat_*_source` (vue serveur).
 
 ### Ce qu'il faut savoir
 
-- Le catalogue vient d'un **tableur tenu par les botanistes**, qui fait autorité.
-  Le plugin ne l'écrit jamais. Pour le corriger, corrigez le tableur et
-  redemandez un import.
+- Le Tableau des alliances est un **tableur tenu par les botanistes de
+  l'ANA-CEN** ; le plugin en livre une copie et ne l'écrit jamais. Pour le
+  corriger, corrigez le tableur et redemandez un import.
 - Ces champs ne sont **pas disponibles dans les cellules de la table
   attributaire** : une cellule n'écrit que le nom cité et le code, elle poserait
   une ancre sans dire que c'en est une. Passez par le formulaire. Modifier
   d'autres colonnes de la table **ne détruit pas** vos correspondances.
 - Le choix d'un habitat interroge le serveur pour ses correspondances. **Hors
-  connexion**, aucune proposition n'apparaît, mais le catalogue ANA reste
-  proposé dans le nom cité et vous gardez la main.
+  connexion**, aucune proposition n'apparaît, mais le Tableau des alliances
+  reste proposé dans le nom cité et vous gardez la main.
 
 ---
 

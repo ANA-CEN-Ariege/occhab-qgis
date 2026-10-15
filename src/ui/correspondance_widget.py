@@ -3,9 +3,9 @@
 
 """Correspondances d'UN habitat, à choisir et à corriger.
 
-Le catalogue ANA propose des correspondances, et la vue d'export sait en
-recalculer depuis HABREF — mais ni l'un ni l'autre n'a toujours raison. Une
-alliance se traduit différemment selon la situation, et le catalogue lui-même
+Le Tableau des alliances propose des correspondances, et la vue d'export sait
+en recalculer depuis HABREF — mais ni l'un ni l'autre n'a toujours raison. Une
+alliance se traduit différemment selon la situation, et le tableau lui-même
 porte parfois plusieurs lignes pour une même alliance (`Luzulo luzuloidis –
 Fagion sylvaticae` en a quatre, qui ne diffèrent que par leurs codes). C'est au
 botaniste de trancher, station par station : ce composant est l'endroit où il le
@@ -54,11 +54,11 @@ from ..processing.referentiels import SOURCES_CORRESPONDANCE, TYPOLOGIES_CORRESP
 from .habref_widget import HabrefLineEdit
 
 #: Catalogue vide : ces champs cherchent un CODE dans une typologie donnée, pas
-#: une alliance. Y proposer le catalogue ANA n'aurait aucun sens.
+#: une alliance. Y proposer le Tableau des alliances n'aurait aucun sens.
 _SANS_CATALOGUE = corresp.Catalogue([])
 
 _MENTION = {
-    "catalogue": "repris du catalogue",
+    "catalogue": "repris du %s" % corresp.NOM_TABLEAU,
     "habref": "proposé par HABREF",
     "manuel": "arbitré ici",
 }
@@ -138,7 +138,7 @@ class CorrespondancesEdit(QWidget):
 
             retour = QToolButton()
             retour.setText("↩")
-            retour.setToolTip("Revenir aux propositions du catalogue")
+            retour.setToolTip("Revenir aux propositions")
             retour.setAutoRaise(True)
             retour.setVisible(False)
             retour.clicked.connect(lambda _c=False, cle=cle: self._revenir(cle))
@@ -164,6 +164,7 @@ class CorrespondancesEdit(QWidget):
             ligne.pile.setCurrentIndex(2)
             ligne.retour.setVisible(False)
             ligne.mention.setText("")
+            ligne.mention.setToolTip("")
             return
 
         valeurs = self._valeurs.get(cle)
@@ -203,6 +204,12 @@ class CorrespondancesEdit(QWidget):
         ligne.pile.setCurrentIndex(1 if recherche else 0)
         ligne.retour.setVisible(False)
         ligne.mention.setText(self._mention(cle))
+        # Une valeur reprise du tableau dit d'où elle vient : sources et limites
+        # au survol de la mention.
+        ligne.mention.setToolTip(
+            corresp.mention_sources()
+            if (valeurs or {}).get("src") == "catalogue" else ""
+        )
 
     def _mention(self, cle):
         valeurs = self._valeurs.get(cle)
@@ -288,9 +295,9 @@ class CorrespondancesEdit(QWidget):
         vaut alors `catalogue` : reprise, non vérifiée). Dès qu'il y en a
         plusieurs, aucune n'est choisie — c'est au botaniste de le faire.
 
-        Le composant ignore d'où viennent ces propositions : catalogue ANA pour
-        une alliance connue, correspondances HABREF pour toute autre
-        détermination. C'est l'appelant qui sait, et il n'a pas à le lui dire.
+        Le composant ignore d'où viennent ces propositions : Tableau des
+        alliances pour une alliance connue, correspondances HABREF pour toute
+        autre détermination. C'est l'appelant qui sait, et il n'a pas à le lui dire.
         """
         propre = self._propre[0] if self._propre else None
         self._candidats = {
@@ -350,7 +357,11 @@ class CorrespondancesEdit(QWidget):
         ]
 
     def resume(self):
-        """« CORINE biotopes 41.112 (repris du catalogue), EUNIS G1.62 (arbitré ici) »."""
+        """Les correspondances retenues et leur provenance, en une ligne.
+
+        « CORINE biotopes 41.112 (repris du Tableau des alliances), EUNIS G1.62
+        (arbitré ici) ».
+        """
         return ", ".join(
             "%s %s%s" % (
                 libelle, self._valeurs[cle].get("cd_hab") or "?",
