@@ -56,18 +56,19 @@ class GeoNatureAPIError(Exception):
     du serveur) d'une simple panne de connexion.
     """
 
-    def __init__(self, message, status_code=None, peut_avoir_abouti=False):
+    def __init__(self, message, status_code=None, peut_avoir_abouti=False,
+                 reseau=False):
         super().__init__(message)
         self.status_code = status_code
         #: La requête est partie mais la réponse n'est pas arrivée (délai de
         #: lecture dépassé) : le serveur a pu l'appliquer. À distinguer d'une
         #: connexion jamais établie, où rien n'a été envoyé.
         self.peut_avoir_abouti = peut_avoir_abouti
-
-    @property
-    def reseau(self):
-        """Panne réseau (aucune réponse HTTP), par opposition à un refus du serveur."""
-        return self.status_code is None
+        #: Panne réseau (aucune réponse HTTP), posée par le transport SEUL :
+        #: une erreur levée par l'appelant sans code HTTP (réponse
+        #: inexploitable…) n'en est pas une, et ne doit pas faire conclure au
+        #: réseau perdu.
+        self.reseau = reseau
 
 
 #: Codes rendus par un reverse-proxy quand c'est LUI qui abandonne, et non
@@ -176,6 +177,7 @@ class GeoNatureAPIClient:
             raise GeoNatureAPIError(
                 "Connexion impossible : %s" % exc,
                 peut_avoir_abouti=isinstance(exc, requests.exceptions.ReadTimeout),
+                reseau=True,
             )
 
         if (response.status_code == 401 and not _relance

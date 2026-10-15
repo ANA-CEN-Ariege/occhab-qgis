@@ -84,6 +84,10 @@ class Config:
         self.data = {}
         #: Message à montrer à l'utilisateur (fichier illisible), ou None.
         self.avertissement = None
+        #: Callable(message) qui le montre aussitôt (posé par le plugin) : un
+        #: fichier abîmé EN COURS de session — une clé ajoutée à la main avec
+        #: une virgule de trop — doit se dire au moment où il est mis de côté.
+        self.signaler = None
         self._load()
 
     def _lire(self):
@@ -129,6 +133,11 @@ class Config:
             % (erreur, " Le fichier d'origine est conservé sous %s." % copie.name
                if copie else "")
         )
+        if self.signaler is not None:
+            try:
+                self.signaler(self.avertissement)
+            except Exception:  # noqa: BLE001 - signaler ne doit rien empêcher  # nosec B110
+                pass
 
     def _load(self):
         contenu, erreur = self._lire()

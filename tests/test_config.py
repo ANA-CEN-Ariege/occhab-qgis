@@ -66,3 +66,16 @@ def test_un_fichier_illisible_est_garde_de_cote_et_signale(config_mod, tmp_path)
 
     assert (tmp_path / "config.json.illisible").read_text(encoding="utf-8") == original
     assert json.loads(fichier.read_text(encoding="utf-8"))["id_dataset"] == 3
+
+
+def test_un_fichier_abime_en_cours_de_session_est_signale_aussitot(config_mod, tmp_path):
+    """Une clé ajoutée à la main avec une virgule de trop disparaissait au
+    réglage suivant (gardée seulement dans `.illisible`), sans un mot."""
+    config = config_mod.Config()
+    messages = []
+    config.signaler = messages.append
+    (tmp_path / "config.json").write_text('{"reconnexion_auto": false,}', encoding="utf-8")
+
+    config.set("id_dataset", 3)
+
+    assert len(messages) == 1 and "illisible" in messages[0]
