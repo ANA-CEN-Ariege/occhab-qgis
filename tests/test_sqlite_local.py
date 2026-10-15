@@ -554,3 +554,25 @@ def test_ecrire_modifications_station_habitats_observateurs_empreinte(tmp_path):
     assert relue["comment"] == "c" and relue["server_snapshot"] is None
     assert relue["habitats"][0]["recovery_percentage"] == 70
     assert [(o["observer_name"], o["id_role"]) for o in relue["observers"]] == [("Roy", 5)]
+
+
+def test_la_purge_se_restreint_aux_stations_verifiees(tmp_path):
+    """La purge promet que les stations « restent sur GeoNature » : le dock
+    vérifie leur présence, et seules celles-là partent. Les autres — effacées
+    du serveur, serveur restauré — gardent ici leur seule copie."""
+    db = _make_db(tmp_path)
+    vieux = "2020-01-01T00:00:00"
+    verifiee = db.create_station(id_dataset=3)
+    _set_row(db, verifiee, sync_status="synced", date_update=vieux, id_station=101)
+    absente = db.create_station(id_dataset=3)
+    _set_row(db, absente, sync_status="synced", date_update=vieux, id_station=102)
+    recente = db.create_station(id_dataset=3)
+    _set_row(db, recente, sync_status="pending", date_update=vieux)
+
+    candidates = db.stations_purgeables(months=6)
+    assert {(c["id"], c["id_station"], c["id_dataset"]) for c in candidates} == {
+        (verifiee, 101, 3), (absente, 102, 3)}
+    # Une station non purgeable glissée dans `ids` n'est pas touchée pour autant.
+    assert db.purge_synced_stations(months=6, ids=[verifiee, recente]) == 1
+    restantes = {s["id"] for s in db.get_all_stations()}
+    assert verifiee not in restantes and {absente, recente} <= restantes

@@ -29,6 +29,12 @@ DELAI_MAX = 30
 #: plus petits morceaux (cf. `TAILLE_PAGE_EXPORT`) et de matérialiser les
 #: correspondances côté serveur (README §5), pas d'attendre plus longtemps.
 DELAI_LONG = 120
+#: Délai pour ÉTABLIR la connexion, distinct du délai de réponse. Un réseau
+#: muet (4G sans données, portail captif, VPN tombé) faisait attendre chaque
+#: appel 30 s entier : seize appels à la connexion, et QGIS restait figé huit
+#: minutes. Un serveur joignable accepte la connexion en bien moins de 5 s ;
+#: c'est la RÉPONSE qui peut être longue, et elle garde son propre délai.
+DELAI_CONNEXION = 5
 
 #: Entités demandées par page d'export. MESURÉ sur le serveur de l'ANA : une
 #: page de 5 entités et une page de 250 coûtent le MÊME temps, environ 9
@@ -50,9 +56,18 @@ class GeoNatureAPIError(Exception):
     du serveur) d'une simple panne de connexion.
     """
 
-    def __init__(self, message, status_code=None):
+    def __init__(self, message, status_code=None, peut_avoir_abouti=False):
         super().__init__(message)
         self.status_code = status_code
+        #: La requête est partie mais la réponse n'est pas arrivée (délai de
+        #: lecture dépassé) : le serveur a pu l'appliquer. À distinguer d'une
+        #: connexion jamais établie, où rien n'a été envoyé.
+        self.peut_avoir_abouti = peut_avoir_abouti
+
+    @property
+    def reseau(self):
+        """Panne réseau (aucune réponse HTTP), par opposition à un refus du serveur."""
+        return self.status_code is None
 
 
 #: Codes rendus par un reverse-proxy quand c'est LUI qui abandonne, et non
@@ -113,6 +128,10 @@ class GeoNatureAPIClient:
         # quand un corps est envoyé via json=.
         self.session.headers.update({"Accept": "application/json"})
         self.user = None
+        #: Callable() -> bool qui rouvre la session (cf. `_make_request`).
+        #: Posé par le dock, qui seul sait relire les identifiants dans le
+        #: gestionnaire d'authentification de QGIS — ce client ne les garde pas.
+        self.reconnexion = None
         if token:
             self.session.headers.update({"Authorization": "Bearer %s" % token})
 
@@ -137,7 +156,7 @@ class GeoNatureAPIClient:
         return self.user is not None or bool(self.session.cookies)
 
     def _make_request(self, method, endpoint, data=None, params=None,
-                      timeout=DELAI_MAX):
+                      timeout=DELAI_MAX, _relance=False):
         """Requête HTTP. `endpoint` est RELATIF à api_url (ex. 'occhab/stations/').
 
         Concaténation manuelle : urljoin() écraserait le sous-chemin de api_url
@@ -151,11 +170,31 @@ class GeoNatureAPIClient:
         try:
             response = self.session.request(
                 method, url, json=data, params=params, verify=self.verify_ssl,
-                timeout=timeout,
+                timeout=(min(DELAI_CONNEXION, timeout), timeout),
             )
         except requests.exceptions.RequestException as exc:
-            raise GeoNatureAPIError("Connexion impossible : %s" % exc)
+            raise GeoNatureAPIError(
+                "Connexion impossible : %s" % exc,
+                peut_avoir_abouti=isinstance(exc, requests.exceptions.ReadTimeout),
+            )
 
+        if (response.status_code == 401 and not _relance
+                and self.reconnexion is not None
+                and not endpoint.lstrip("/").startswith("auth/")):
+            # Session expirée (QGIS resté ouvert plusieurs jours) : chaque
+            # station échouait en « HTTP 401 » alors que l'en-tête affichait
+            # toujours « connecté ». On rouvre la session une fois, puis on
+            # rejoue la requête.
+            try:
+                reconnecte = self.reconnexion()
+            except Exception:  # noqa: BLE001 - l'erreur d'origine fait foi
+                reconnecte = False
+            if reconnecte:
+                return self._make_request(method, endpoint, data=data,
+                                          params=params, timeout=timeout,
+                                          _relance=True)
+            self.user = None
+            self.session.cookies.clear()
         if response.status_code >= 400:
             raise GeoNatureAPIError(
                 "HTTP %s — %s" % (response.status_code, _error_detail(response)),
@@ -193,8 +232,15 @@ class GeoNatureAPIClient:
                                   timeout=DELAI_LONG)
 
     def update_station(self, id_station, data):
-        """Mettre à jour une station (⚠ POST, pas PUT)."""
-        return self._make_request("POST", "occhab/stations/%s/" % id_station, data=data)
+        """Mettre à jour une station (⚠ POST, pas PUT).
+
+        Délai LONG, comme la création : une mise à jour appliquée mais dont la
+        réponse arrivait après 30 s restait « à synchroniser », et la synchro
+        suivante y voyait un conflit — notre propre envoi, pris pour celui d'un
+        collègue.
+        """
+        return self._make_request("POST", "occhab/stations/%s/" % id_station,
+                                  data=data, timeout=DELAI_LONG)
 
     def delete_station(self, id_station):
         return self._make_request("DELETE", "occhab/stations/%s/" % id_station)

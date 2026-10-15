@@ -63,6 +63,8 @@ class OccHabPlugin:
         self.action.triggered.connect(self.toggle_dock)
         self.iface.addToolBarIcon(self.action)
         self.iface.addPluginToMenu("OccHab", self.action)
+        if self.config.avertissement:
+            self.iface.messageBar().pushWarning("OccHab", self.config.avertissement)
         # Ici et non dans le panneau, créé seulement au premier clic sur le
         # bouton : un projet ouvert puis fermé sans l'avoir affiché doit être
         # réparé lui aussi, ou QGIS plante à sa fermeture.

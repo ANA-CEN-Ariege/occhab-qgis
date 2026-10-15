@@ -58,14 +58,14 @@ def test_une_requete_interactive_prend_le_delai_court():
     que l'extension a planté."""
     client = _client()
     client.search_habref("nitellion")
-    assert client.session.dernier["timeout"] == gc.DELAI_MAX
+    assert client.session.dernier["timeout"] == (gc.DELAI_CONNEXION, gc.DELAI_MAX)
 
 
 def test_une_page_d_export_prend_le_delai_long():
     """L'export est bâti sur `v_occhab_complet` : la demi-minute ne suffit pas."""
     client = _client()
     client.get_export_page(9, offset=0)
-    assert client.session.dernier["timeout"] == gc.DELAI_LONG
+    assert client.session.dernier["timeout"] == (gc.DELAI_CONNEXION, gc.DELAI_LONG)
 
 
 def test_le_delai_long_reste_supportable_pour_l_interface():
@@ -122,7 +122,7 @@ def test_les_stations_du_serveur_prennent_le_delai_long():
     """La route peut rendre un jeu de données entier, géométries comprises."""
     client = _client()
     client.get_stations()
-    assert client.session.dernier["timeout"] == gc.DELAI_LONG
+    assert client.session.dernier["timeout"] == (gc.DELAI_CONNEXION, gc.DELAI_LONG)
 
 
 def test_la_creation_d_une_station_prend_le_delai_long():
@@ -130,7 +130,7 @@ def test_la_creation_d_une_station_prend_le_delai_long():
     renvoyer ensuite créait un doublon."""
     client = _client()
     client.create_station({"type": "Feature"})
-    assert client.session.dernier["timeout"] == gc.DELAI_LONG
+    assert client.session.dernier["timeout"] == (gc.DELAI_CONNEXION, gc.DELAI_LONG)
 
 
 def test_aucune_requete_ne_part_sans_delai():
@@ -142,3 +142,84 @@ def test_aucune_requete_ne_part_sans_delai():
         client.session.dernier = {}
         appel()
         assert client.session.dernier.get("timeout"), "requête sans délai"
+
+
+def test_la_mise_a_jour_d_une_station_prend_le_delai_long():
+    """Appliquée mais confirmée après 30 s, une mise à jour restait « à
+    synchroniser » et revenait en faux conflit à la synchro suivante."""
+    client = _client()
+    client.update_station(42, {"type": "Feature"})
+    assert client.session.dernier["timeout"] == (gc.DELAI_CONNEXION, gc.DELAI_LONG)
+
+
+def test_un_serveur_injoignable_echoue_vite():
+    """Établir la connexion a son propre délai, court : sur un réseau muet,
+    chaque appel attendait 30 s et QGIS restait figé des minutes."""
+    assert gc.DELAI_CONNEXION <= 5 < gc.DELAI_MAX
+
+
+class _SessionExpiree(_SessionEspionne):
+    """Répond 401 tant que `login` n'a pas rouvert la session."""
+
+    def __init__(self):
+        super().__init__()
+        self.ouverte = False
+        self.appels = []
+
+    def request(self, method, url, **kwargs):
+        self.appels.append(url.rsplit("/api/", 1)[1])
+        reponse = _Reponse()
+        if not self.ouverte:
+            reponse = type("R401", (), {"status_code": 401, "text": "",
+                                        "json": staticmethod(lambda: {})})()
+        return reponse
+
+
+def test_une_session_expiree_est_rouverte_puis_la_requete_rejouee():
+    client = _client()
+    client.session = _SessionExpiree()
+
+    def reconnexion():
+        client.session.ouverte = True
+        return True
+
+    client.reconnexion = reconnexion
+    assert client.get_station(42) == []
+    assert client.session.appels == ["occhab/stations/42/", "occhab/stations/42/"]
+
+
+def test_sans_reconnexion_possible_le_401_remonte_et_la_session_est_oubliee():
+    client = _client()
+    client.session = _SessionExpiree()
+    client.user = {"id_role": 1}
+    client.reconnexion = lambda: False
+    try:
+        client.get_station(42)
+    except gc.GeoNatureAPIError as exc:
+        assert exc.status_code == 401
+    else:  # pragma: no cover
+        raise AssertionError("le 401 doit remonter")
+    assert client.user is None and not client.is_authenticated
+
+
+def test_une_reponse_perdue_peut_avoir_abouti():
+    """Requête partie, réponse jamais arrivée : le serveur a pu l'appliquer."""
+    import requests
+
+    class _Muette(_SessionEspionne):
+        def __init__(self, exc):
+            super().__init__()
+            self.exc = exc
+
+        def request(self, method, url, **kwargs):
+            raise self.exc
+
+    client = _client()
+    for exc, attendu in ((requests.exceptions.ReadTimeout("lent"), True),
+                         (requests.exceptions.ConnectTimeout("muet"), False),
+                         (requests.exceptions.ConnectionError("coupé"), False)):
+        client.session = _Muette(exc)
+        try:
+            client.update_station(42, {})
+        except gc.GeoNatureAPIError as erreur:
+            assert erreur.reseau and erreur.peut_avoir_abouti is attendu
