@@ -33,8 +33,11 @@ from ..processing.eval_fields import (
     strip_eval,
 )
 from ..processing.correspondances import (
+    NOM_TABLEAU,
+    SOURCES_TABLEAU_COURT,
     candidats_habref,
     catalogue,
+    mention_sources,
     nom_habref,
 )
 from ..processing.referentiels import (
@@ -144,9 +147,9 @@ class HabitatForm(QWidget):
         self.combo_typo = self.habref.combo_typo
         form.addRow(self.habref)
 
-        # Ce que le catalogue apporte doit se lire, pas se deviner : un code
-        # emprunté et des correspondances reprises sont des affirmations sur
-        # l'habitat, pas des commodités de saisie.
+        # Ce que le Tableau des alliances apporte doit se lire, pas se deviner :
+        # un code emprunté et des correspondances reprises sont des affirmations
+        # sur l'habitat, pas des commodités de saisie.
         self.label_catalogue = QLabel()
         self.label_catalogue.setWordWrap(True)
         self.label_catalogue.setStyleSheet("color: palette(mid); font-style: italic;")
@@ -381,7 +384,7 @@ class HabitatForm(QWidget):
         """Une proposition HABREF retenue renseigne le code ET le nom cité."""
         self.spin_cdhab.setValue(int(cd_hab))
         if self.edit_nom_cite.alliance_choisie_valeur is not None:
-            # La proposition vient du catalogue : `_on_alliance_choisie` suit
+            # La proposition vient du tableau : `_on_alliance_choisie` suit
             # immédiatement et fera tout. Repasser ici garnirait les lignes deux
             # fois, dont une avec le mauvais jeu de candidats.
             return
@@ -390,7 +393,7 @@ class HabitatForm(QWidget):
             # le nom cité, par exemple) : ne rien réinitialiser. Sinon un
             # arbitrage déjà rendu redeviendrait « repris », en silence.
             return
-        # Un choix HABREF direct n'est plus une détermination du catalogue : on
+        # Un choix HABREF direct n'est plus une détermination du tableau : on
         # efface ce qu'un choix précédent aurait posé, sans quoi l'habitat
         # garderait une alliance et des correspondances qui ne le décrivent plus.
         self._determination = None
@@ -400,8 +403,9 @@ class HabitatForm(QWidget):
     def _proposer_pour(self, cd_hab, garder_valeurs=False):
         """Garnir les correspondances de CET habitat, quelle qu'en soit l'origine.
 
-        Deux sources, dans cet ordre : le catalogue ANA s'il connaît ce `cd_hab`,
-        sinon les correspondances que HABREF publie dans la fiche de l'habitat.
+        Deux sources, dans cet ordre : le Tableau des alliances s'il connaît ce
+        `cd_hab`, sinon les correspondances que HABREF publie dans la fiche de
+        l'habitat.
         Aucune n'est requise — sans l'une ni l'autre, les lignes restent en
         recherche libre. La section est TOUJOURS proposée : la bonne
         correspondance dépend de la station, donc elle doit rester ajustable même
@@ -507,7 +511,7 @@ class HabitatForm(QWidget):
         return (nom, fiche.get("lb_code"))
 
     def _on_alliance_choisie(self, alliance):
-        """Une alliance du catalogue ANA : détermination et correspondances.
+        """Une alliance du tableau : détermination et correspondances.
 
         Appelé APRÈS `_on_habitat_chosen`, qui vient de poser le `cd_hab` et de
         remettre les deux clés à zéro — l'ordre est celui des connexions, et il
@@ -561,14 +565,25 @@ class HabitatForm(QWidget):
         a_trancher = self.corresp_edit.a_trancher()
         if a_trancher:
             lignes.append(
-                "⚠ Le catalogue propose plusieurs correspondances pour %s : "
+                "⚠ Plusieurs correspondances sont possibles pour %s : "
                 "choisissez-en une." % ", ".join(a_trancher)
             )
         if alliance is not None and alliance.condition_n2000:
             lignes.append(
                 "⚠ Natura 2000 sous condition : %s" % alliance.condition_n2000
             )
+        # Ce que propose le tableau est cité là où il sert : sources en clair,
+        # détail et limites au survol. Lu dans le contexte des propositions, et
+        # non dans `alliance`, pour valoir aussi à la relecture.
+        du_tableau = (self._contexte_propose or ("",))[0] == "catalogue"
+        if du_tableau:
+            lignes.append(
+                "Propositions du %s — synthèse ANA-CEN d'après %s. À utiliser "
+                "avec discernement : les correspondances restent à valider."
+                % (NOM_TABLEAU, SOURCES_TABLEAU_COURT)
+            )
         self.label_catalogue.setText("\n".join(lignes))
+        self.label_catalogue.setToolTip(mention_sources() if du_tableau else "")
         self.label_catalogue.setVisible(bool(lignes))
 
     def _on_recouvrement_changed(self, value):
@@ -672,6 +687,9 @@ class HabitatForm(QWidget):
         # dirait plus jamais, et la ligne de la typologie déterminée
         # redemanderait un code que l'habitat porte déjà.
         alliance = None
+        # Sans code, rien n'est proposé : la mention du tableau ne doit pas
+        # survivre à l'habitat précédent.
+        self._contexte_propose = None
         if habitat.get("cd_hab"):
             alliance = self._proposer_pour(int(habitat["cd_hab"]),
                                            garder_valeurs=True)

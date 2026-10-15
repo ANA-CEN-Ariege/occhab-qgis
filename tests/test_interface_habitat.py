@@ -258,6 +258,35 @@ def test_la_condition_natura_2000_revient_a_la_relecture():
     assert "sous condition" in relecture.label_catalogue.text()
 
 
+# ------------------------------------------------- le tableau cite ses sources
+def test_le_tableau_est_cite_la_ou_il_sert():
+    """Proposition ★, formulaire et mention « repris du… » citent le tableau et
+    ses sources ; un choix HABREF hors tableau n'en garde pas la mention."""
+    alliance = next(
+        a for a in co.catalogue().alliances
+        if any(len(a.candidats(cle)) == 1 for cle, _lib, _court in co.TYPOLOGIES)
+    )
+    form = _formulaire()
+    proposition = form.edit_nom_cite._ligne_alliance(alliance)
+    assert proposition.text().startswith("★ " + co.NOM_TABLEAU)
+    assert co.mention_sources() in proposition.toolTip()
+
+    form.edit_nom_cite._retenir_alliance(alliance)
+    assert co.SOURCES_TABLEAU_COURT in form.label_catalogue.text()
+    assert form.label_catalogue.toolTip() == co.mention_sources()
+    reprises = [cle for cle, valeurs in (form.corresp_edit.get_data() or {}).items()
+                if valeurs.get("src") == "catalogue"]
+    assert reprises
+    for cle in reprises:
+        mention = form.corresp_edit._lignes[cle].mention
+        assert co.NOM_TABLEAU in mention.text()
+        assert mention.toolTip() == co.mention_sources()
+
+    _choisir_habref(form)
+    assert co.NOM_TABLEAU not in form.label_catalogue.text()
+    assert form.label_catalogue.toolTip() == ""
+
+
 # ------------------------------------------------------ jusqu'à la restitution
 def test_l_arbitrage_ressort_a_l_export():
     """Seul « manuel » atteste d'un contrôle : c'est lui que l'export isole."""

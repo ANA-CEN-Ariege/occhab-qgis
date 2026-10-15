@@ -26,7 +26,7 @@ Développée par l'**ANA-CEN Ariège**.
 8. [Brouillon / validé, et la table attributaire](#8-brouillon--validé-et-la-table-attributaire)
 9. [Cartographie : charger un export du serveur](#9-cartographie--charger-un-export-du-serveur)
 10. [Mise en page cartographique](#10-mise-en-page-cartographique)
-11. [Déterminer dans le catalogue des végétations, arbitrer les correspondances](#11-déterminer-dans-le-catalogue-des-végétations-arbitrer-les-correspondances)
+11. [Déterminer dans le Tableau des alliances, arbitrer les correspondances](#11-déterminer-dans-le-tableau-des-alliances-arbitrer-les-correspondances)
 12. [API GeoNature utilisée](#12-api-geonature-utilisée)
 13. [Configuration (`config.json`)](#13-configuration-configjson)
 14. [Structure du projet](#14-structure-du-projet)
@@ -83,9 +83,10 @@ Développée par l'**ANA-CEN Ariège**.
   (§9).
 - **Mise en page** : planche imprimable depuis un gabarit ANA `.qpt`, légende
   groupée par milieu, report en page 2 si elle ne tient pas (§10).
-- **Catalogue des végétations de l'Ariège** : détermination par alliance, qui
-  apporte ses correspondances CORINE / EUNIS / Natura 2000, et **arbitrage**
-  de ces correspondances à la main, traçable (§11).
+- **Tableau des alliances** (synthèse des botanistes de l'ANA-CEN, d'après
+  Corriol 2023 et le Prodrome des végétations de France II) : détermination par
+  alliance, qui apporte ses correspondances CORINE / EUNIS / Natura 2000, et
+  **arbitrage** de ces correspondances à la main, traçable (§11).
 - **Contrôle des géométries** : SCR source exigé, domaine WGS84 vérifié, et
   **validité topologique contrôlée puis réparée** — un contour qui se recoupe
   fait échouer le calcul d'altitude côté PostGIS (§5).
@@ -153,8 +154,8 @@ démarrage de QGIS sans réseau donne des menus déroulants vides (un message le
 signale) et prive de la recherche d'habitat.
 
 Deux choses tiennent malgré tout sans réseau, et ce sont elles qui rendent une
-journée de terrain possible après une connexion initiale : le **catalogue des
-végétations**, lu depuis un CSV livré avec le plugin (il nomme 184 alliances et
+journée de terrain possible après une connexion initiale : le **Tableau des
+alliances**, lu depuis un CSV livré avec le plugin (il nomme 184 alliances et
 restitue 97,7 % des libellés de correspondance), et le **cache des libellés
 HABREF** déjà obtenus (table `habref_libelles`). Perdre le réseau APRÈS s'être
 connecté ne coûte donc que l'altitude et la recherche d'un habitat inconnu.
@@ -442,9 +443,9 @@ entière.
 
 La règle d'arbitrage mérite d'être connue, parce qu'une première version
 effaçait de la donnée : **le libellé part toujours** — c'est lui qui pesait —
-mais **le code ne part que si le catalogue sait le restituer**. Sans cette
-nuance, l'allègement supprimait la seule copie du code d'une correspondance
-arbitrée hors catalogue. Le repli `code_stocke()` lit ce code résiduel à
+mais **le code ne part que si le Tableau des alliances sait le restituer**.
+Sans cette nuance, l'allègement supprimait la seule copie du code d'une
+correspondance arbitrée hors tableau. Le repli `code_stocke()` lit ce code résiduel à
 l'export. À lancer sur la sélection ou sur toute la base ; les stations
 touchées repassent « à synchroniser ».
 
@@ -531,7 +532,7 @@ dizaine de `regexp_match`.
 | `zone_humide` | station | `oui` `non` `a_verifier` — extension **ANA**. Anciennement un booléen : les *chaînes* `true`/`false` de l'ancien format `clé=valeur` se relisent `oui`/`non` (cf. `ALIAS_ZONE_HUMIDE`). Seul un booléen JSON `false` est écarté à la lecture |
 | `recouvrement` | habitat | **N'est plus écrit dans le bloc.** La colonne native `recovery_percentage` fait foi, et la clé est **purgée du bloc à chaque enregistrement** (`champs._COLONNE_DOUBLE`) — elle n'y subsiste qu'en repli, pour les habitats saisis avant la 0.11.6. Valeur 0-100, qui **pré-sélectionne** l'Abondance (< 5 %, 5-25 %, 25-50 %, 50-75 %, > 75 %) |
 | `determination` | habitat | `{"nom": …, "ancre": …}` — présente **seulement** quand `cd_hab` est une ancre (cf. §11) |
-| `corresp` | habitat | `{typologie: {"cd_hab": …, "src": …}}` — correspondances inscrites dans la donnée (cf. §11). `code` n'est **plus écrit par la saisie** : il n'est qu'accepté en relecture, et réécrit dans le seul cas où le catalogue ne sait pas restituer le code. Le libellé, lui, ne revient jamais : c'est lui qui pesait |
+| `corresp` | habitat | `{typologie: {"cd_hab": …, "src": …}}` — correspondances inscrites dans la donnée (cf. §11). `code` n'est **plus écrit par la saisie** : il n'est qu'accepté en relecture, et réécrit dans le seul cas où le Tableau des alliances ne sait pas restituer le code. Le libellé, lui, ne revient jamais : c'est lui qui pesait |
 
 Ces deux dernières clés sont les seules **structurées** du bloc ; toutes les
 autres sont scalaires. Elles sont validées typologie par typologie : une
@@ -904,7 +905,7 @@ SELECT
     -- alliance ne se traduit pas pareil d'un polygone à l'autre. La colonne
     -- `habitat_*_source` dit d'où vient la valeur retenue :
     --   manuel        arbitré par un botaniste — le SEUL qui atteste d'un contrôle
-    --   catalogue     repris du catalogue des végétations de l'Ariège
+    --   catalogue     repris du Tableau des alliances (ANA-CEN)
     --   habref        proposé par HABREF et accepté tel quel
     --   determination l'habitat est DÉJÀ dans cette typologie : son code fait foi
     --   (vide)        rien de saisi : c'est `habref_equivalents` qui a parlé, et
@@ -2335,22 +2336,51 @@ ajouter une typologie à la vue la fait apparaître dans le menu sans autre
 changement. Le Prodrome n'y figure pas — la vue ne le calcule pas, et les
 déterminations de l'ANA y sont déjà, donc « Habitat saisi » donne cette carte.
 
-## 11. Déterminer dans le catalogue des végétations, arbitrer les correspondances
+## 11. Déterminer dans le Tableau des alliances, arbitrer les correspondances
 
 ### Le problème
 
 Les correspondances entre typologies calculées depuis HABREF (§ « Correspondances
 entre typologies ») ne sont pas toujours justes, et la bonne **dépend de la
 station** : une même alliance ne se traduit pas pareil d'un polygone à l'autre.
-Le catalogue des végétations de l'Ariège porte d'ailleurs **quatre lignes** pour
+Le Tableau des alliances porte d'ailleurs **quatre lignes** pour
 `Luzulo luzuloidis – Fagion sylvaticae`, qui ne diffèrent que par leurs codes.
 Il faut donc que le botaniste puisse trancher, station par station, et que son
 arbitrage **prime** sur le calcul.
 
-### Le catalogue, importé une fois
+### Le Tableau des alliances et ses sources
+
+Le tableau est un **travail de synthèse et de mise en correspondance** entre
+différents travaux, réalisé par les botanistes de l'ANA-CEN. Ses ressources
+principales :
+
+- **Corriol G., 2023** — *Synopsis phytosociologique et catalogue descriptif des
+  végétations de l'Ariège*. Conservatoire botanique national des Pyrénées et de
+  Midi-Pyrénées (CBNPMP) —
+  [document](https://doctech.cbnpmp.fr/Catalogue-vegetations_Ariege_2023.pdf) ;
+- le ***Prodrome des végétations de France II*** (PVF II).
+
+La feuille « Références » du classeur liste toutes les ressources consultées.
+Les correspondances sont **à utiliser avec discernement** : au sein d'une
+alliance, les codes CORINE biotopes, EUNIS et Natura 2000 peuvent varier selon
+l'association ; certains groupements ne sont pas détaillés dans le catalogue
+descriptif de l'Ariège ; et les correspondances, élaborées par les botanistes de
+l'ANA-CEN, restent à valider.
+
+**Le tableau est cité partout où il sert**, depuis une rédaction unique dans
+`processing/correspondances.py` (`NOM_TABLEAU`, `SOURCES_TABLEAU`,
+`LIMITES_TABLEAU`, `mention_sources()`) : info-bulle de chaque proposition
+**★ Tableau des alliances**, ligne de sources sous le nom cité du formulaire
+d'habitat (détail au survol), info-bulle de la mention *repris du Tableau des
+alliances*. Le code dit encore `catalogue` (classe `Catalogue`, origine
+`catalogue` des correspondances) : cette origine est **inscrite dans la donnée**
+et lue par la vue d'export, la renommer rendrait illisibles les stations déjà
+saisies.
+
+### Le tableau, importé une fois
 
 `scripts/import_typologie.py` transforme le tableur des botanistes
-(`0_Typologie.xlsx`, feuille *Classif*, qui **fait autorité**) en
+(`0_Typologie.xlsx`, feuille *Classif*, qui **fait foi pour le plugin**) en
 `resources/typologie/dictionnaire_typologie.csv`, livré avec le plugin. Le script
 tourne hors QGIS, n'écrit **jamais** dans le fichier source, et met ses
 résolutions HABREF en cache — une seconde exécution est instantanée.
@@ -2368,7 +2398,7 @@ Trois règles portent l'essentiel :
 
 | Règle | Pourquoi |
 |---|---|
-| **Ancrage** | 43 alliances sont absentes de HABREF — le catalogue diverge délibérément du Prodrome. `cd_hab` étant obligatoire, on y met le code CORINE (à défaut EUNIS) de la ligne |
+| **Ancrage** | 43 alliances sont absentes de HABREF — le tableau diverge délibérément du Prodrome. `cd_hab` étant obligatoire, on y met le code CORINE (à défaut EUNIS) de la ligne |
 | **Routage Natura 2000** | La colonne « Natura 2000 » du tableur mélange deux typologies HABREF : `6510` (intérêt communautaire) et `6510-1` (Cahiers d'habitats). Un code suffixé part vers les Cahiers |
 | **Tirets** | Le tableur écrit `–`, HABREF `-`. Sans normalisation, la résolution tombe de 81 % à 63 %, **en silence** |
 
@@ -2405,7 +2435,7 @@ a donc sa ligne dans le formulaire, garnie de propositions **avec leurs
 libellés** — « 41.112 — Hêtraies montagnardes à Luzule » se choisit, « 41.112 »
 se devine. Deux sources, dans cet ordre :
 
-1. le **catalogue**, quand il connaît le `cd_hab` déterminé ;
+1. le **Tableau des alliances**, quand il connaît le `cd_hab` déterminé ;
 2. les **correspondances que HABREF publie** dans la fiche de l'habitat
    (`/habref/habitat/<cd_hab>`), sinon.
 
@@ -2415,7 +2445,7 @@ qu'un code. La saisie n'est **jamais** bloquée.
 Deux règles d'ergonomie qui sont en réalité des règles de données :
 
 - **rien n'est retenu d'office dès qu'il y a plusieurs candidats.** Trancher en
-  silence une question que le catalogue laisse ouverte produirait de la donnée
+  silence une question que le tableau laisse ouverte produirait de la donnée
   fausse et muette ; la ligne affiche « n propositions — à choisir » ;
 - **la typologie de la détermination ne pose pas de question.** Un habitat
   déterminé en EUNIS *est* sa propre correspondance EUNIS ; la ligne se remplit
@@ -2426,7 +2456,7 @@ Deux règles d'ergonomie qui sont en réalité des règles de données :
 
 | `src` | Sens |
 |---|---|
-| `catalogue` | repris du catalogue des végétations tel quel |
+| `catalogue` | repris du Tableau des alliances tel quel (le code garde l'ancien nom, cf. plus haut) |
 | `habref` | proposé par HABREF et accepté tel quel |
 | `manuel` | **arbitré par un botaniste** — le seul qui atteste d'un contrôle |
 
@@ -2455,10 +2485,10 @@ libellé.
 
 ### Limites connues
 
-- Le catalogue est **désactivé dans les cellules de la table attributaire** :
-  une cellule n'écrit que le nom cité et le `cd_hab`, elle y poserait une ancre
-  sans la détermination qui dit que c'en est une. Le catalogue se choisit au
-  formulaire. Les autres éditions de la table sont sûres — `champs.ecrire()`
+- Le Tableau des alliances est **désactivé dans les cellules de la table
+  attributaire** : une cellule n'écrit que le nom cité et le `cd_hab`, elle y
+  poserait une ancre sans la détermination qui dit que c'en est une. Le tableau
+  se choisit au formulaire. Les autres éditions de la table sont sûres — `champs.ecrire()`
   passe par `merge_eval`, donc modifier un enjeu ne détruit pas les
   correspondances de la même ligne (un test le verrouille).
 - Seules les correspondances **directes** de HABREF sont proposées. Il en publie
@@ -2587,11 +2617,11 @@ occhab/
 ├── requirements.txt · LICENSE · README.md · GUIDE_UTILISATEUR.md
 ├── sql/             v_occhab_complet.sql       # vue d'export, 1 ligne/habitat (PG 15)
 │                  v_habitats_mosaique.sql    # gabarit à colonnes plates, 1 ligne/station
-├── scripts/         import_typologie.py        # catalogue des végétations → CSV
+├── scripts/         import_typologie.py        # Tableau des alliances → CSV
 ├── tests/                                      # suite pytest (cf. §15)
 ├── resources/       icons/occhab.svg
 │                    typologie/0_Typologie.xlsx           # classeur source des botanistes
-│                    typologie/dictionnaire_typologie.csv # catalogue embarqué, lu à l'exécution
+│                    typologie/dictionnaire_typologie.csv # tableau embarqué, lu à l'exécution
 └── src/
     ├── utils/        config.py · logger.py
     ├── database/     sqlite_local.py            # modèle station/habitat + CRUD
@@ -2600,7 +2630,8 @@ occhab/
     ├── processing/   referentiels.py            # vocabulaires fermés ANA + N2000 (pur, testé)
     │                 champs.py                  # registre des champs saisissables (pur, testé)
     │                 eval_fields.py             # bloc ANA-EVAL : encodage JSON (pur, testé)
-    │                 correspondances.py         # catalogue ANA, arbitrage, allègement (pur, testé)
+    │                 correspondances.py         # Tableau des alliances, arbitrage, allègement
+    │                                            #   (pur, testé)
     │                 grille.py                  # tampon d'édition en masse (pur, testé)
     │                 export.py                  # aplatissement cartographie (pur, testé)
     │                 ordre_colonnes.py          # remet le gabarit livré dans son ordre
@@ -2625,7 +2656,7 @@ occhab/
                       station_picker_dialog.py   # choix d'une station à recopier
                       server_picker_dialog.py    # recherche d'une station du serveur
                       correspondance_widget.py   # arbitrage des correspondances
-                      habref_widget.py           # recherche HABREF + catalogue ANA
+                      habref_widget.py           # recherche HABREF + Tableau des alliances
                       export_dialog.py           # choix export / période / typologie
                       export_layers.py           # couches d'export : bandes, damier, enjeux, PEE
                       flow_layout.py · no_wheel.py           # utilitaires Qt

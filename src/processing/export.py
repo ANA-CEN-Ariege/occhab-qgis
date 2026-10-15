@@ -38,7 +38,8 @@ HABITAT_FIELDS = [
     "sensibilite", "interet_com", "hab_enjeu", "hab_etat_cons",
     # Natura 2000 (annexe 2 : id_typi, id_dynam, id_restaur) + extensions ANA
     "typicite", "dynamique", "restauration", "critere", "pee", "remarque",
-    # Détermination du catalogue ANA et correspondances INSCRITES dans la donnée.
+    # Détermination du Tableau des alliances et correspondances INSCRITES dans
+    # la donnée.
     # `alliance` n'est renseignée que si `cd_hab` est une ANCRE — un code CORINE
     # ou EUNIS emprunté faute d'entrée HABREF. La lire vide ne veut donc pas dire
     # « pas d'alliance », mais « le cd_hab est lui-même la détermination ».

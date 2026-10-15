@@ -41,10 +41,10 @@ from ..processing import correspondances as corresp
 from .dialog_size import ecran_de
 
 MIN_RECHERCHE = 3  # en deçà, la recherche serveur ne discrimine rien
-#: Marque des propositions venant du catalogue ANA. Elles précèdent celles de
-#: HABREF : ce sont les déterminations que les botanistes emploient réellement,
-#: et une partie d'entre elles n'existe nulle part ailleurs.
-PREFIXE_CATALOGUE = "★ Catalogue ANA"
+#: Marque des propositions venant du Tableau des alliances. Elles précèdent
+#: celles de HABREF : ce sont les déterminations que les botanistes emploient
+#: réellement, et une partie d'entre elles n'existe nulle part ailleurs.
+PREFIXE_CATALOGUE = "★ %s" % corresp.NOM_TABLEAU
 _DELAI_MS = 300  # laisser finir de taper avant d'interroger le serveur
 #: Largeur maximale du menu de propositions. Un libellé HABREF préfixé de sa
 #: typologie (« Habitats_naturels_et_semi-naturels_de_La_Réunion_(2017) 1.4.1.4 -
@@ -68,8 +68,9 @@ class HabrefLineEdit(QLineEdit):
 
     habitat_choisi = pyqtSignal(int, str)
     #: Émis EN PLUS de `habitat_choisi` quand la proposition retenue vient du
-    #: catalogue ANA : elle apporte une détermination et ses correspondances, que
-    #: `habitat_choisi` (cd_hab + nom) ne sait pas transporter. Les appelants qui
+    #: Tableau des alliances : elle apporte une détermination et ses
+    #: correspondances, que `habitat_choisi` (cd_hab + nom) ne sait pas
+    #: transporter. Les appelants qui
     #: n'ont besoin que du code — une cellule de tableau — l'ignorent.
     alliance_choisie = pyqtSignal(object)
     etat_change = pyqtSignal(str, str)
@@ -99,10 +100,12 @@ class HabrefLineEdit(QLineEdit):
             )
             return
         if habref_search is None:
-            # Hors connexion, le catalogue ANA reste interrogeable : il est sur
-            # le disque. C'est même là qu'il rend le plus de services — sur le
+            # Hors connexion, le Tableau des alliances reste interrogeable : il
+            # est sur le disque. C'est même là qu'il rend le plus de services — sur le
             # terrain, sans réseau.
-            self.setPlaceholderText("Tapez le nom de l'alliance (catalogue ANA)…")
+            self.setPlaceholderText(
+                "Tapez le nom de l'alliance (%s)…" % corresp.NOM_TABLEAU
+            )
         else:
             self.setPlaceholderText("Tapez le nom (ou code) de l'habitat…")
         self._modele = QStandardItemModel(0, 1, self)
@@ -120,7 +123,7 @@ class HabrefLineEdit(QLineEdit):
 
     @property
     def catalogue(self):
-        """Catalogue ANA effectivement interrogé (jamais None, parfois vide)."""
+        """Tableau des alliances interrogé (jamais None, parfois vide)."""
         return self._catalogue
 
     def definir_typologie(self, cd_typo):
@@ -172,7 +175,8 @@ class HabrefLineEdit(QLineEdit):
 
         if self._modele.rowCount():
             self._etat(
-                "Recherche HABREF en échec — propositions du catalogue seulement."
+                "Recherche HABREF en échec — propositions du %s seulement."
+                % corresp.NOM_TABLEAU
                 if echec else "",
                 echec,
             )
@@ -221,14 +225,17 @@ class HabrefLineEdit(QLineEdit):
         return ligne
 
     def _ligne_alliance(self, alliance):
-        """Proposition venant du catalogue ANA, marquée comme telle."""
+        """Proposition venant du Tableau des alliances, marquée et sourcée."""
         texte = "%s · %s" % (PREFIXE_CATALOGUE, alliance.libelle())
         ligne = QStandardItem(texte)
+        # Les sources dans l'info-bulle de CHAQUE proposition : c'est là que le
+        # tableau est utilisé, donc là qu'il doit être cité.
         ligne.setToolTip(
-            "%s\nClasse : %s%s" % (
+            "%s\nClasse : %s%s\n\n%s" % (
                 texte, alliance.classe or "—",
                 "\nCode emprunté : ce nom d'alliance est absent de HABREF."
                 if alliance.est_ancree else "",
+                corresp.mention_sources(),
             )
         )
         ligne.setData(alliance, Qt.ItemDataRole.UserRole)
@@ -300,7 +307,7 @@ class HabrefSearchEdit(QWidget):
     """Saisie du nom cité, assistée par HABREF, avec filtre de typologie.
 
     `habitat_choisi(cd_hab, nom)` est émis quand une proposition est retenue, et
-    `alliance_choisie(alliance)` en plus quand elle vient du catalogue ANA.
+    `alliance_choisie(alliance)` en plus quand elle vient du Tableau des alliances.
     """
 
     habitat_choisi = pyqtSignal(int, str)
@@ -362,13 +369,13 @@ class HabrefSearchEdit(QWidget):
             # La ligne de saisie a signalé son état hors connexion avant que le
             # label existe : on le repose ici, sans quoi le champ resterait muet
             # — le défaut même que ce composant a été écrit pour corriger. Le
-            # filtre par typologie ne concerne que HABREF ; le catalogue, lui,
+            # filtre par typologie ne concerne que HABREF ; le tableau, lui,
             # reste interrogeable, et il faut le dire plutôt que de laisser
             # croire que la saisie assistée est perdue.
             self.combo_typo.setEnabled(False)
             self._etat(
-                "Recherche HABREF indisponible hors connexion — le catalogue ANA "
-                "reste proposé."
+                "Recherche HABREF indisponible hors connexion — le %s "
+                "reste proposé." % corresp.NOM_TABLEAU
                 if len(self.edit.catalogue) else
                 "Recherche HABREF indisponible hors connexion — saisissez le nom "
                 "et le code à la main."

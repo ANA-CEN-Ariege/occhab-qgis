@@ -410,12 +410,12 @@ class ChampDelegate(QStyledItemDelegate):
                 habref_search=self.contexte.habref_search,
                 typo_names=dict(self.contexte.typologies),
                 cd_typo=self.contexte.cd_typo,
-                # Pas de catalogue ANA ici : une cellule n'écrit que le nom cité
-                # et le cd_hab. Une alliance ancrée y poserait un code CORINE
-                # d'emprunt SANS la détermination qui dit que c'en est un —
-                # exactement l'ambiguïté que cette détermination existe pour
-                # lever. Le catalogue se choisit au formulaire, qui sait écrire
-                # le bloc complet.
+                # Pas de Tableau des alliances ici : une cellule n'écrit que le
+                # nom cité et le cd_hab. Une alliance ancrée y poserait un code
+                # CORINE d'emprunt SANS la détermination qui dit que c'en est
+                # un — exactement l'ambiguïté que cette détermination existe
+                # pour lever. Le tableau se choisit au formulaire, qui sait
+                # écrire le bloc complet.
                 catalogue=SANS_CATALOGUE,
                 parent=parent,
             )

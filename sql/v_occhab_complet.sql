@@ -343,7 +343,7 @@ SELECT
     -- alliance ne se traduit pas pareil d'un polygone à l'autre. La colonne
     -- `habitat_*_source` dit d'où vient la valeur retenue :
     --   manuel        arbitré par un botaniste — le SEUL qui atteste d'un contrôle
-    --   catalogue     repris du catalogue des végétations de l'Ariège
+    --   catalogue     repris du Tableau des alliances (ANA-CEN)
     --   habref        proposé par HABREF et accepté tel quel
     --   determination l'habitat est DÉJÀ dans cette typologie : son code fait foi
     --   (vide)        rien de saisi : c'est `habref_equivalents` qui a parlé, et

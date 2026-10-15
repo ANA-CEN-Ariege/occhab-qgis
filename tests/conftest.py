@@ -6,8 +6,8 @@
 `payload` et `sqlite_local` n'importent que la bibliothèque standard, donc on peut
 les tester directement en ajoutant leurs dossiers au chemin d'import.
 
-`scripts/` suit la même règle : ses outils hors QGIS (import du catalogue de
-typologie) portent des règles métier qui méritent d'être testées.
+`scripts/` suit la même règle : ses outils hors QGIS (import du Tableau des
+alliances) portent des règles métier qui méritent d'être testées.
 
 Le DOSSIER PARENT est ajouté en plus, pour que `occhab.src.ui…` s'importe comme
 dans QGIS : les modules d'interface utilisent des imports relatifs

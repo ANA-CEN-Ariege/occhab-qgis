@@ -1,12 +1,14 @@
 # SPDX-FileCopyrightText: 2026 Cédric Roy <it@ariegenature.fr>
 # SPDX-License-Identifier: GPL-3.0-or-later
 
-"""Catalogue des végétations de l'Ariège : déterminations et correspondances.
+"""Tableau des alliances : déterminations et correspondances.
 
-Les botanistes de l'ANA déterminent à l'**alliance**, dans leur propre catalogue
-(`0_Typologie.xlsx`, tenu par eux et faisant autorité). HABREF, lui, ne connaît
-pas toutes ces alliances : le catalogue diverge délibérément du Prodrome sur une
-quarantaine d'entrées. Ce module porte le pont entre les deux, préparé hors ligne
+Les botanistes de l'ANA-CEN déterminent à l'**alliance**, dans leur propre
+tableau (`0_Typologie.xlsx`, tenu par eux et faisant autorité). C'est un travail
+de synthèse et de mise en correspondance, établi d'après plusieurs travaux dont
+`SOURCES_TABLEAU` cite les principaux. HABREF, lui, ne connaît pas toutes ces
+alliances : le tableau diverge délibérément du Prodrome sur une quarantaine
+d'entrées. Ce module porte le pont entre les deux, préparé hors ligne
 par `scripts/import_typologie.py` et livré en CSV dans `resources/typologie/`.
 
 Il répond à deux questions, et à deux seulement :
@@ -31,6 +33,12 @@ ne résout rien à la lecture — ce que le botaniste retient est recopié dans
 l'habitat au moment de la saisie. Sans quoi corriger une entrée du catalogue
 réécrirait après coup des stations déjà validées et livrées.
 
+**Le nom.** L'interface et la documentation disent « Tableau des alliances »
+(`NOM_TABLEAU`). Le code dit encore `catalogue` — classe `Catalogue`, fonction
+`catalogue()`, et surtout l'origine `catalogue` des correspondances
+enregistrées : celle-ci est inscrite dans la donnée et lue par la vue d'export
+du serveur, la renommer rendrait illisibles les stations déjà saisies.
+
 Module **pur** : bibliothèque standard seulement, testable hors QGIS.
 """
 import csv
@@ -51,6 +59,51 @@ try:  # importable dans le paquet (plugin) comme en isolation (tests)
 except ImportError:  # pragma: no cover - repli hors paquet
     import referentiels as ref
     from eval_fields import bloc_brut, decode_eval, encode_eval
+
+#: Nom du tableau dans tout ce que l'utilisateur lit (interface, guide).
+NOM_TABLEAU = "Tableau des alliances"
+
+#: Principales sources du tableau, citées partout où il est proposé : les
+#: déterminations et correspondances proposées reposent sur ces travaux.
+SOURCES_TABLEAU = (
+    "Corriol G., 2023 — Synopsis phytosociologique et catalogue descriptif des "
+    "végétations de l'Ariège. Conservatoire botanique national des Pyrénées et "
+    "de Midi-Pyrénées (CBNPMP).",
+    "Prodrome des végétations de France II (PVF II).",
+)
+
+#: Forme courte, pour une ligne d'interface où la référence complète ne tient
+#: pas (elle est alors en info-bulle, cf. `mention_sources`).
+SOURCES_TABLEAU_COURT = "Corriol 2023 (CBNPMP) et le Prodrome des végétations de France II"
+
+#: Pourquoi ces correspondances se prennent avec discernement. Le tableau les
+#: donne à l'alliance, mais elles varient d'une association à l'autre.
+LIMITES_TABLEAU = (
+    "Au sein d'une même alliance, les codes CORINE biotopes, EUNIS et Natura 2000 "
+    "peuvent varier selon l'association végétale.",
+    "Certains groupements ne sont pas détaillés dans le catalogue descriptif des "
+    "végétations de l'Ariège.",
+    "Les correspondances, élaborées par les botanistes de l'ANA-CEN, restent à "
+    "valider.",
+)
+
+
+def mention_sources():
+    """Texte complet citant le tableau : nature, sources, limites.
+
+    Une seule rédaction pour toute l'interface (info-bulles des propositions,
+    formulaire d'habitat, correspondances) : une citation tenue à plusieurs
+    endroits finit toujours par diverger.
+    """
+    return "\n".join(
+        ["%s : synthèse et mise en correspondance de plusieurs travaux, établie "
+         "par les botanistes de l'ANA-CEN Ariège." % NOM_TABLEAU,
+         "Sources principales :"]
+        + ["• %s" % source for source in SOURCES_TABLEAU]
+        + ["À utiliser avec discernement :"]
+        + ["• %s" % limite for limite in LIMITES_TABLEAU]
+    )
+
 
 #: (clé HABREF, libellé, préfixe des colonnes du CSV). Les trois viennent de
 #: `referentiels` : la liste des typologies et leurs noms courts y sont définis
