@@ -847,23 +847,49 @@ class OccHabDatabase:
         self.disconnect()
         return ids
 
+    def stations_purgeables(self, months=None):
+        """[{id, id_station, id_dataset, serveur}] des stations purgeables.
+
+        De quoi vérifier, AVANT de les retirer, qu'elles sont toujours sur
+        GeoNature (cf. `dock_widget._purge_old_synced_stations`).
+        """
+        if months is None:
+            months = self.RETENTION_MONTHS
+        ids = self._purgeable_station_ids(months)
+        if not ids:
+            return []
+        self.connect()
+        try:
+            cursor = self.connection.cursor()
+            cursor.execute(
+                "SELECT id, id_station, id_dataset, serveur FROM t_stations "
+                "WHERE id IN (%s)" % ", ".join("?" * len(ids)),  # nosec B608 - « ? » seuls
+                ids,
+            )
+            return [dict(row) for row in cursor.fetchall()]
+        finally:
+            self.disconnect()
+
     def count_purgeable_stations(self, months=None):
         """Nombre de stations purgeables (cf. `_purgeable_station_ids`)."""
         if months is None:
             months = self.RETENTION_MONTHS
         return len(self._purgeable_station_ids(months))
 
-    def purge_synced_stations(self, months=None):
+    def purge_synced_stations(self, months=None, ids=None):
         """Retirer du local les stations synchronisées non touchées depuis `months`
         mois (cascade habitats + observateurs), puis VACUUM. Retourne le nombre retiré.
 
         Ne touche JAMAIS aux stations 'pending' / 'conflict' / 'to_delete' : seules
         les copies déjà synchronisées — re-récupérables via « Récupérer du serveur » —
-        sont concernées.
+        sont concernées. `ids` restreint la purge à ces stations (celles dont la
+        présence sur GeoNature a été vérifiée) ; elles doivent rester purgeables.
         """
         if months is None:
             months = self.RETENTION_MONTHS
-        ids = self._purgeable_station_ids(months)
+        ids_purgeables = self._purgeable_station_ids(months)
+        ids = (ids_purgeables if ids is None
+               else [i for i in ids_purgeables if i in set(ids)])
         for station_id in ids:
             self.delete_station(station_id)  # cascade habitats + observateurs
         if ids:
