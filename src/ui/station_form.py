@@ -59,6 +59,9 @@ class StationForm(QWidget):
         # liste (type de sol, mosaïque hors connexion) : rendues telles quelles
         # par `get_data`, au lieu d'un None qui les effaçait.
         self._sans_menu = {}
+        # Observateurs et leur texte tels qu'enregistrés (cf. `get_data`).
+        self._observateurs_charges = None
+        self._observers_txt_charge = None
         self._observers = observers or []  # [(id_role, nom)]
         self._current_observer = current_observer  # {id_role, observer_name} ou None
         # Reprise de la saisie précédente (création seulement — en édition, les
@@ -488,13 +491,23 @@ class StationForm(QWidget):
             echelle=self.spin_echelle.value() or None,
         )
         observers = self._selected_observers()
+        observers_txt = ", ".join(o["observer_name"] for o in observers) or None
+        if (
+            self._observers_txt_charge
+            and [o["id_role"] for o in observers] == self._observateurs_charges
+        ):
+            # Observateurs inchangés : garder le texte tel qu'enregistré. Le
+            # recalculer depuis la seule liste des utilisateurs effaçait les
+            # observateurs externes ou saisis en texte libre (stations venues du
+            # serveur, instances en OBSERVER_AS_TXT), ici puis sur GeoNature.
+            observers_txt = self._observers_txt_charge
         return {
             "id_dataset": self._id_dataset(),
             "validation_status": self.combo_statut.currentData() or BROUILLON,
             "station_name": self.edit_name.text().strip() or None,
             "date_min": self.date_min.date().toString("yyyy-MM-dd"),
             "date_max": self.date_max.date().toString("yyyy-MM-dd"),
-            "observers_txt": ", ".join(o["observer_name"] for o in observers) or None,
+            "observers_txt": observers_txt,
             "_observers": observers,  # géré à part (cor_station_observer)
             "altitude_min": self.spin_alt_min.value() or None,
             "altitude_max": self.spin_alt_max.value() or None,
@@ -534,6 +547,8 @@ class StationForm(QWidget):
             self._select_dataset(int(station["id_dataset"]))
         self.edit_name.setText(station.get("station_name") or "")
         self._apply_observers(station.get("observers", []))
+        self._observateurs_charges = [id_role for id_role, _nom in self._selected]
+        self._observers_txt_charge = station.get("observers_txt")
         # Dates de la station : sans cela le formulaire garderait la date du jour
         # et l'enregistrement écraserait la date d'observation d'origine.
         self._charger_dates(
