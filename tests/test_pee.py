@@ -75,3 +75,26 @@ def test_repartition_quand_il_y_a_moins_de_points_que_d_especes():
 def test_repartition_vide():
     assert pee.repartir([], [1, 2]) == {}
     assert pee.repartir(["a"], []) == {}
+
+
+def test_la_vue_separe_par_des_points_virgules():
+    """Un nom d'auteur porte une virgule : « 1876 » n'est pas une espèce."""
+    assert pee.especes(
+        "Reynoutria japonica Houtt., 1876 ; Buddleja davidii Franch., 1887"
+    ) == ["Reynoutria japonica Houtt., 1876", "Buddleja davidii Franch., 1887"]
+
+
+def test_une_vue_ancienne_a_virgules_se_lit_encore():
+    """Avant la 0.16.0, la vue assemblait par « , » : on ne coupe pas avant une
+    année d'auteur."""
+    assert pee.especes(
+        "Reynoutria japonica Houtt., 1876, Buddleja davidii Franch., 1887"
+    ) == ["Reynoutria japonica Houtt., 1876", "Buddleja davidii Franch., 1887"]
+
+
+def test_une_espece_n_a_qu_un_nom_quelle_que_soit_la_casse():
+    """Saisie « robinia pseudoacacia » sur une station, elle n'avait aucune
+    règle de légende et n'était pas dessinée."""
+    entites = [_entite("Robinia pseudoacacia"), _entite("robinia  pseudoacacia")]
+    assert pee.representants(entites) == {
+        "robinia pseudoacacia": "Robinia pseudoacacia"}

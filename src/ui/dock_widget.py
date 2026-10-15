@@ -2009,10 +2009,12 @@ class OccHabDockWidget(QDockWidget):
             return
         self._charger_export(dialog.id_export(), dialog.libelle_export(),
                              dialog.filtres(), dialog.mode(), dialog.libelle_mode(),
-                             dialog.typologie(), dialog.libelle_typologie())
+                             dialog.typologie(), dialog.libelle_typologie(),
+                             srid=dialog.srid())
 
     def _charger_export(self, id_export, libelle, filtres, mode=None,
-                        libelle_mode=None, typologie=None, libelle_typologie=None):
+                        libelle_mode=None, typologie=None, libelle_typologie=None,
+                        srid=None):
         """Rapatrier toutes les pages d'un export et le poser en couche."""
         from qgis.PyQt.QtCore import Qt as _Qt
         from qgis.PyQt.QtWidgets import QApplication
@@ -2051,7 +2053,7 @@ class OccHabDockWidget(QDockWidget):
             )
             return
         layer, count = self.export_layers.show(nom_couche, features, mode=mode,
-                                               typologie=typologie)
+                                               typologie=typologie, srid=srid)
         if layer is None:
             QMessageBox.warning(
                 self, "OccHab",
@@ -2063,9 +2065,19 @@ class OccHabDockWidget(QDockWidget):
             "Export %s chargé : %d entité(s) (annoncées : %s filtrées sur %s au total)",
             id_export, count, total_filtre, total,
         )
-        self.iface.messageBar().pushInfo(
-            "OccHab", "Export « %s » : %d entité(s) chargée(s)." % (nom_couche, count)
-        )
+        if total_filtre and count < total_filtre:
+            # Pages plafonnées par l'instance, lignes sans géométrie écartées
+            # par le serveur… : une couche incomplète ne doit pas passer pour
+            # l'export entier.
+            self.iface.messageBar().pushWarning(
+                "OccHab",
+                "Export « %s » INCOMPLET : %d entité(s) chargée(s) sur %d annoncée(s) "
+                "par le serveur." % (nom_couche, count, total_filtre),
+            )
+        else:
+            self.iface.messageBar().pushInfo(
+                "OccHab", "Export « %s » : %d entité(s) chargée(s)." % (nom_couche, count)
+            )
         self._avertir_filtres_ignores(total_filtre, total, filtres)
 
     def _avertir_filtres_ignores(self, total_filtre, total, filtres):
@@ -3632,6 +3644,8 @@ class OccHabDockWidget(QDockWidget):
             self.config.set(CLE_DOSSIER, dialogue.dossier())
 
         choix = dialogue.parametres()
+        if not self._place_pour_la_planche(choix.get("titre") or "Carte des habitats"):
+            return
         canevas = self.iface.mapCanvas()
         emprise = canevas.extent() if choix.pop("emprise_vue") else None
         try:
@@ -3665,6 +3679,38 @@ class OccHabDockWidget(QDockWidget):
         for message in avertissements:
             self.iface.messageBar().pushWarning("OccHab — mise en page", message)
         self.iface.openLayoutDesigner(mise)
+
+    def _place_pour_la_planche(self, titre):
+        """Une planche porte déjà ce titre : la remplacer, ou garder les deux ?
+
+        Le bandeau des gabarits affiche le NOM de la planche (`@layout_name`) :
+        refaire une carte du même titre — le geste ordinaire, on recadre, on
+        change de fond — imprimait « Titre (2) » dans le bandeau du PDF. False
+        si l'utilisateur renonce.
+        """
+        from qgis.core import QgsProject
+
+        gestionnaire = QgsProject.instance().layoutManager()
+        existante = gestionnaire.layoutByName(titre)
+        if existante is None:
+            return True
+        boite = QMessageBox(self)
+        boite.setWindowTitle("Mise en page")
+        boite.setText(
+            "Une planche « %s » existe déjà.\n\nLe bandeau imprime le nom de la "
+            "planche : en garder deux, la nouvelle s'appellerait « %s (2) », et "
+            "c'est ce « (2) » qui sortirait sur la carte." % (titre, titre)
+        )
+        remplacer = boite.addButton("Remplacer l'ancienne", QMessageBox.ButtonRole.AcceptRole)
+        garder = boite.addButton("Garder les deux", QMessageBox.ButtonRole.ActionRole)
+        boite.addButton(QMessageBox.StandardButton.Cancel)
+        boite.setDefaultButton(remplacer)
+        executer(boite)
+        clique = boite.clickedButton()
+        if clique is remplacer:
+            gestionnaire.removeLayout(existante)
+            return True
+        return clique is garder
 
     def _stations_en_attente(self, id_dataset=None):
         """Stations locales pas encore parties, dans ce jeu de données.
@@ -3765,7 +3811,14 @@ class OccHabDockWidget(QDockWidget):
         parsed, failed = [], 0
         for id_station in ids:
             try:
-                parsed.append(parse_server_station(self.client.get_station(id_station)))
+                detail = self.client.get_station(id_station)
+                station, habitats, observers = parse_server_station(detail)
+                # `parse_server_station` écarte le numérisateur — il ne sert pas
+                # à l'import local —, et la colonne `numerisateur` de l'export
+                # sortait vide sur toutes les lignes.
+                props = (detail.get("properties") or {}) if isinstance(detail, dict) else {}
+                station = dict(station, id_digitiser=props.get("id_digitiser"))
+                parsed.append((station, habitats, observers))
             except Exception as exc:  # noqa: BLE001
                 failed += 1
                 self.logger.warning("Station %s non exportée : %s", id_station, exc)
@@ -3799,10 +3852,11 @@ class OccHabDockWidget(QDockWidget):
             # — le cas courant, la liste ne propose que ça. HABREF n'est sollicité
             # que pour celles arbitrées via « Autre… », et une seule fois chacune.
             fiche = catalogue.fiche_correspondance(cd_hab)
-            code = (fiche or {}).get("code") or (habref_label(cd_hab) or {}).get("code")
-            # Non résolu (hors ligne, ou fiche en 500) : le cd_hab nu plutôt que
-            # rien, pour que la correspondance reste traçable dans l'export.
-            return code or str(cd_hab)
+            # Non résolu (hors ligne, ou fiche en 500) : None, et l'export se
+            # rabat sur le code inscrit dans le bloc (correspondances d'avant
+            # la 0.11.0), puis seulement sur le cd_hab nu. Rendre ici le cd_hab
+            # privait ces correspondances anciennes de leur vrai code.
+            return (fiche or {}).get("code") or (habref_label(cd_hab) or {}).get("code")
 
         rows = flatten_cartography(
             parsed,
