@@ -497,10 +497,10 @@ def reparer_cadres_orphelins(projet=None):
     à partir de la 3.34 il plante à la destruction de la mise en page —
     fermeture du projet, sortie de QGIS — le bloc étant libéré avant elles.
 
-    Chaque cadre orphelin est remplacé par l'étiquette HTML que pose désormais
-    `_habiller_pages_suivantes`, à la même place : la planche ne perd rien. Sans
-    effet sur une mise en page saine — un cadre posé par QGIS figure toujours
-    dans la liste de son bloc.
+    Le cadre orphelin d'un bloc HTML est remplacé par l'étiquette HTML que pose
+    désormais `_habiller_pages_suivantes`, à la même place ; celui d'un autre
+    bloc (tableau) est retiré. Sans effet sur une mise en page saine — un cadre
+    posé par QGIS figure toujours dans la liste de son bloc.
     """
     projet = projet or QgsProject.instance()
     total = 0
@@ -510,6 +510,7 @@ def reparer_cadres_orphelins(projet=None):
 
 
 def _reparer_mise(mise):
+    from qgis.PyQt import sip
     from qgis.core import QgsLayoutFrame, QgsLayoutItemHtml, QgsLayoutPoint
 
     orphelins = []
@@ -519,7 +520,11 @@ def _reparer_mise(mise):
         bloc = item.multiFrame()
         if bloc is None:
             continue
-        if item.uuid() not in {cadre.uuid() for cadre in bloc.frames()}:
+        # Comparer les OBJETS, pas les identifiants : les copies des versions
+        # plus anciennes reprenaient l'uuid de l'original, et l'orphelin portait
+        # alors le même identifiant que le cadre légitime.
+        legitimes = {sip.unwrapinstance(cadre) for cadre in bloc.frames()}
+        if sip.unwrapinstance(item) not in legitimes:
             orphelins.append((item, bloc))
     if not orphelins:
         return 0

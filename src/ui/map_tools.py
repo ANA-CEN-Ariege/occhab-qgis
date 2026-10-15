@@ -19,6 +19,7 @@ Deux pièges de cycle de vie, gérés ici :
    périmée sont ignorés) et on **préserve l'outil d'origine réel** entre sessions
    pour ne jamais restaurer un de nos propres outils déjà supprimé.
 """
+from qgis.PyQt import sip
 from qgis.PyQt.QtCore import QObject, QTimer, pyqtSignal
 from qgis.PyQt.QtWidgets import QPushButton
 from qgis.core import (
@@ -61,6 +62,16 @@ _MESSAGE_CORRIGEE = (
 #: toutes les échelles d'affichage. C'est le défaut de QGIS, et le seul réglage
 #: utilisable sur le terrain, où l'on numérise aussi bien au 1:500 qu'au 1:5000.
 TOLERANCE_ACCROCHAGE_PX = 12
+
+
+def _meme_objet(a, b):
+    """`a` et `b` désignent-ils le même objet C++ (enveloppes Python comprises) ?"""
+    if a is None or b is None:
+        return False
+    try:
+        return sip.unwrapinstance(a) == sip.unwrapinstance(b)
+    except (RuntimeError, TypeError):
+        return False
 
 
 class AideAuTrace:
@@ -318,6 +329,13 @@ class GeometryCaptureController(QObject):
         self._tool.setLayer(self._layer)
         self._tool.digitizingCompleted.connect(self._on_completed)
         self._tool.deactivated.connect(self._on_deactivated)
+        # L'outil mémorise À SON ACTIVATION la couche courante, par une adresse
+        # brute, pour la remettre à sa désactivation. Si l'utilisateur retirait
+        # cette couche pendant le tracé, QGIS plantait en fin de tracé. On lui
+        # fait mémoriser notre couche de saisie, qui vit jusqu'après la
+        # désactivation ; la couche active est rendue par
+        # `_liberer_couche_courante`.
+        self._canvas.setCurrentLayer(self._layer)
         self._canvas.setMapTool(self._tool)
 
     def cancel(self):
@@ -411,12 +429,13 @@ class GeometryCaptureController(QObject):
         self._pending_notice = None
 
     def _liberer_couche_courante(self):
-        """Que la couche de saisie ne reste pas la couche courante du canevas.
+        """Rendre au canevas la couche active, au lieu de la couche de saisie.
 
-        L'outil de numérisation en fait la couche courante, et ne rend la
-        précédente que s'il y en avait une. Le canevas oublie sans bruit une
-        couche détruite, mais l'accrochage, lui, garde son adresse : en mode
-        « couche active », QGIS plantait au premier accrochage suivant.
+        À sa désactivation, l'outil remet la couche courante qu'il a mémorisée —
+        notre couche de saisie (cf. `start`). Le canevas oublie sans bruit une
+        couche détruite, mais l'accrochage, lui, garde son adresse : laissée
+        courante, la couche de saisie faisait planter QGIS au premier
+        accrochage suivant en mode « couche active ».
         """
         try:
             courante = self._canvas.currentLayer()
@@ -606,9 +625,24 @@ class GeometryEditController(QObject):
                 pass
             self._msg_item = None
         self._abandonner_geste()
+        courant = self._canvas.mapTool()
+        if _meme_objet(courant, self._prev_tool):
+            # L'outil d'avant l'édition est aussi l'outil en place (l'utilisateur
+            # avait l'outil de sommets en main) : `setMapTool` ne ferait que le
+            # RÉACTIVER, sans jamais le désactiver. Il gardait alors ses sommets
+            # sélectionnés, ses validations et son entité verrouillée sur la
+            # couche d'édition détruite juste après — Suppr suffisait à faire
+            # planter QGIS. On le désactive d'abord, puis on le remet.
+            try:
+                courant.clean()
+                self._canvas.unsetMapTool(courant)
+            except (RuntimeError, TypeError):
+                pass
         if self._prev_tool is not None:
             try:
-                self._canvas.setMapTool(self._prev_tool)
+                # `True` : nettoyer l'outil quitté — par exemple l'outil de
+                # sommets « toutes couches », pris pendant la session.
+                self._canvas.setMapTool(self._prev_tool, True)
             except RuntimeError:
                 pass
         precedente = (
@@ -648,6 +682,12 @@ class GeometryEditController(QObject):
         que l'outil soit encore actif ou que l'utilisateur en ait changé
         entre-temps. L'outil est retenu tel qu'activé par `start` : c'est
         celui de QGIS, qui vit aussi longtemps que l'application.
+
+        Limite : `clean()` n'efface PAS l'ajout de sommet armé par un double-clic
+        dont le relâchement n'est jamais parvenu à l'outil — rien dans l'API ne
+        le permet. Ce cas ne survient que si une fenêtre modale s'ouvre entre
+        le double-clic et le relâchement ; c'est le filtre du panneau, qui
+        n'ouvre plus la fiche station pendant un tracé, qui l'écarte.
         """
         outil, self._outil_sommets = self._outil_sommets, None
         if outil is None:
