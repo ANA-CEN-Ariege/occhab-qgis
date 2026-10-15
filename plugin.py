@@ -4,9 +4,9 @@
 """Classe principale du plugin OccHab."""
 from pathlib import Path
 
-from qgis.PyQt.QtCore import Qt, QTimer
-from qgis.PyQt.QtGui import QIcon
-from qgis.PyQt.QtWidgets import QAction
+from qgis.PyQt.QtCore import Qt, QTimer, QUrl
+from qgis.PyQt.QtGui import QDesktopServices, QIcon
+from qgis.PyQt.QtWidgets import QAction, QMessageBox
 from qgis.core import QgsApplication, QgsProject
 
 from .src.utils.config import Config
@@ -152,7 +152,12 @@ class OccHabPlugin:
             # Import différé : évite de charger l'UI (et ses deps) au démarrage.
             from .src.ui.dock_widget import OccHabDockWidget
 
-            self.dock_widget = OccHabDockWidget(self.iface, self.config, self.logger)
+            try:
+                dock = OccHabDockWidget(self.iface, self.config, self.logger)
+            except Exception as exc:  # noqa: BLE001 - base illisible, clé USB absente…
+                self._ouverture_impossible(exc)
+                return
+            self.dock_widget = dock
             self.dock_widget.visibilityChanged.connect(self._on_visibility)
             self.iface.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.dock_widget)
             # Largeur initiale raisonnable (l'utilisateur peut ensuite redimensionner).
@@ -164,6 +169,36 @@ class OccHabPlugin:
                 self.logger.debug("Largeur initiale du dock non appliquée : %s", exc)
         else:
             self.dock_widget.setVisible(not self.dock_widget.isVisible())
+
+    def _ouverture_impossible(self, exc):
+        """Dire pourquoi le panneau ne s'ouvre pas, et où regarder.
+
+        Une base locale illisible (copie interrompue, conflit de synchronisation
+        d'un dossier cloud) ou un chemin indisponible (clé USB, partage réseau)
+        faisait lever une erreur Python brute à chaque clic, l'icône restait
+        enfoncée, et « Ouvrir le dossier » était inaccessible — il est dans le
+        panneau.
+        """
+        if self.action is not None:
+            self.action.setChecked(False)
+        chemin = str(self.config.get("local_db.path") or "")
+        self.logger.error("Panneau OccHab non ouvert (base %s) : %s", chemin, exc)
+        boite = QMessageBox(self.iface.mainWindow())
+        boite.setIcon(QMessageBox.Icon.Critical)
+        boite.setWindowTitle("OccHab")
+        boite.setText(
+            "Le panneau OccHab ne peut pas s'ouvrir : la base locale est illisible "
+            "ou inaccessible.\n\nBase : %s\nCause : %s\n\nVérifiez que le disque "
+            "ou la clé qui la porte est branché. Si le fichier est abîmé, "
+            "remplacez-le par une sauvegarde (« occhab_local_backup… »)."
+            % (chemin or "?", exc)
+        )
+        dossier = boite.addButton("Ouvrir le dossier", QMessageBox.ButtonRole.ActionRole)
+        boite.addButton(QMessageBox.StandardButton.Close)
+        boite.exec()
+        if boite.clickedButton() is dossier and chemin:
+            QDesktopServices.openUrl(QUrl.fromLocalFile(str(Path(chemin).parent)))
+        boite.deleteLater()
 
     def _on_visibility(self, visible):
         if self.action is not None:

@@ -249,6 +249,19 @@ class StationLayerManager:
             total += layer.featureCount()
         return total
 
+    def oublier_couches(self):
+        """Oublier les couches connues, sans rien retirer du projet.
+
+        À appeler quand le projet change : les identifiants retenus désignent
+        des couches qui n'existent plus — ou, si l'on rouvre le même projet,
+        des couches de même identifiant mais NEUVES, que `_brancher_selection`
+        croyait déjà branchées. La sélection sur la carte ne remontait alors
+        plus jusqu'à la liste. Les couches seront retrouvées ou recréées au
+        rafraîchissement suivant.
+        """
+        self._layer_ids = {}
+        self._branchees = set()
+
     def cleanup(self):
         """Retirer les couches et le groupe (au déchargement du plugin).
 
