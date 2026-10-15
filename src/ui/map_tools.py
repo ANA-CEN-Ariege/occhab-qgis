@@ -24,8 +24,6 @@ from qgis.PyQt.QtCore import QObject, QTimer, pyqtSignal
 from qgis.PyQt.QtWidgets import QPushButton
 from qgis.core import (
     Qgis,
-    QgsCoordinateReferenceSystem,
-    QgsCoordinateTransform,
     QgsFeature,
     QgsGeometry,
     QgsProject,
@@ -48,6 +46,19 @@ _CAPTURE_MODE = {
     "polygon": QgsMapToolCapture.CaptureMode.CapturePolygon,
 }
 _WKB_TYPE = {"point": "Point", "line": "LineString", "polygon": "Polygon"}
+
+#: SCR des couches de travail (saisie, édition) : CELUI DES STATIONS, et non
+#: celui du canevas. QGIS ne recopie à l'identique un sommet accroché que si la
+#: couche accrochée et la couche de travail partagent leur SCR
+#: (`QgsMapToolCapture::fetchLayerPoint`, `QgsVertexTool::matchToLayerPoint`).
+#: Sinon le sommet faisait un aller-retour de reprojection : une limite pourtant
+#: accrochée ne coïncidait plus exactement avec celle de la voisine, et la
+#: découpe jointive se déclenchait presque à chaque tracé (« Le tracé débordait
+#: sur une station voisine »), laissant parfois un micro-morceau. Le tracé est
+#: aussi relu dans le SCR de SA couche, et non dans celui du canevas au moment
+#: de valider : changer le SCR du projet en cours d'édition déplaçait la
+#: station.
+_CRS_TRAVAIL = "EPSG:4326"
 
 #: Avertissement commun à la numérisation et à l'édition de sommets. La forme
 #: enregistrée n'est plus celle qui a été dessinée — un contour qui se recoupe
@@ -316,8 +327,7 @@ class GeometryCaptureController(QObject):
         self._pending_wkt = None
 
         self._aide.appliquer(couches_reference)
-        crs = self._canvas.mapSettings().destinationCrs()
-        self._layer = self._make_layer(self._geom_type, crs)
+        self._layer = self._make_layer(self._geom_type)
         # La couche doit être dans le projet ET éditable pour l'outil natif.
         QgsProject.instance().addMapLayer(self._layer, False)
         self._layer.startEditing()
@@ -464,9 +474,11 @@ class GeometryCaptureController(QObject):
         """
         if geometry is None or geometry.isNull() or geometry.isEmpty():
             return None
-        source_crs = self._canvas.mapSettings().destinationCrs()
         try:
-            wkt, corrigee = assainir_wkt(geometry_to_wkt_4326(geometry, source_crs))
+            # L'outil rend la géométrie dans le SCR de SA couche.
+            wkt, corrigee = assainir_wkt(
+                geometry_to_wkt_4326(geometry, self._layer.crs())
+            )
             if corrigee:
                 self._pending_notice = _MESSAGE_CORRIGEE
             return wkt
@@ -480,10 +492,11 @@ class GeometryCaptureController(QObject):
             return None
 
     @staticmethod
-    def _make_layer(geom_type, crs):
+    def _make_layer(geom_type):
         wkb = _WKB_TYPE.get(geom_type, "Polygon")
-        authid = crs.authid() if crs is not None and crs.authid() else "EPSG:4326"
-        layer = QgsVectorLayer("%s?crs=%s" % (wkb, authid), "occhab_capture", "memory")
+        layer = QgsVectorLayer(
+            "%s?crs=%s" % (wkb, _CRS_TRAVAIL), "occhab_capture", "memory"
+        )
         # Couche de travail éphémère : exclue de l'avertissement « couches
         # temporaires » de QGIS à la fermeture (cf. station_layers).
         layer.setCustomProperty("skipMemoryLayersCheck", 1)
@@ -494,7 +507,7 @@ class GeometryEditController(QObject):
     """Édite la géométrie EXISTANTE d'une station avec l'outil de sommets QGIS.
 
     On charge la géométrie enregistrée (EPSG:4326) dans une couche mémoire
-    temporaire éditable (dans le CRS du projet), on active `QgsVertexTool`, et on
+    temporaire éditable (même SCR, cf. `_CRS_TRAVAIL`), on active `QgsVertexTool`, et on
     valide/annule via des boutons de la barre de messages (appels synchrones, donc
     pas de piège de ré-entrance). La géométrie éditée est renvoyée en EPSG:4326.
     """
@@ -531,14 +544,13 @@ class GeometryEditController(QObject):
         self._finished = False
         self._geom_type = geom_type if geom_type in _WKB_TYPE else "polygon"
 
-        geom = self._to_project_geometry(wkt_4326)
-        if geom is None:
+        geom = QgsGeometry.fromWkt(wkt_4326 or "")
+        if geom.isNull():
             self.cancelled.emit()
             return
 
         self._aide.appliquer(couches_reference)
-        project_crs = self._canvas.mapSettings().destinationCrs()
-        self._layer = self._make_edit_layer(self._geom_type, project_crs)
+        self._layer = self._make_edit_layer(self._geom_type)
         feature = QgsFeature(self._layer.fields())
         feature.setGeometry(geom)
         self._layer.dataProvider().addFeatures([feature])
@@ -558,7 +570,12 @@ class GeometryEditController(QObject):
         self._activate_vertex_tool()
         self._outil_sommets = self._canvas.mapTool()
 
-        self._canvas.setExtent(self._layer.extent())
+        # L'emprise est dans le SCR de la couche : la ramener à celui du canevas.
+        self._canvas.setExtent(
+            self._canvas.mapSettings().layerExtentToOutputExtent(
+                self._layer, self._layer.extent()
+            )
+        )
         self._canvas.zoomByFactor(1.2)
         self._canvas.refresh()
         self._show_prompt()
@@ -705,10 +722,9 @@ class GeometryEditController(QObject):
         feature = next(self._layer.getFeatures(), None)
         if feature is None or not feature.hasGeometry():
             return None, None
-        project_crs = self._canvas.mapSettings().destinationCrs()
         try:
             wkt, corrigee = assainir_wkt(
-                geometry_to_wkt_4326(feature.geometry(), project_crs)
+                geometry_to_wkt_4326(feature.geometry(), self._layer.crs())
             )
             return wkt, (_MESSAGE_CORRIGEE if corrigee else None)
         except (CrsIndetermine, GeometrieIrreparable, ValueError) as exc:
@@ -716,24 +732,12 @@ class GeometryEditController(QObject):
         except Exception:  # noqa: BLE001
             return None, "Géométrie inexploitable."
 
-    def _to_project_geometry(self, wkt_4326):
-        geom = QgsGeometry.fromWkt(wkt_4326 or "")
-        if geom.isNull():
-            return None
-        project_crs = self._canvas.mapSettings().destinationCrs()
-        if project_crs.isValid() and project_crs.authid() != "EPSG:4326":
-            transform = QgsCoordinateTransform(
-                QgsCoordinateReferenceSystem("EPSG:4326"), project_crs,
-                QgsProject.instance(),
-            )
-            geom.transform(transform)
-        return geom
-
     @staticmethod
-    def _make_edit_layer(geom_type, crs):
+    def _make_edit_layer(geom_type):
         wkb = _WKB_TYPE.get(geom_type, "Polygon")
-        authid = crs.authid() if crs is not None and crs.authid() else "EPSG:4326"
-        layer = QgsVectorLayer("%s?crs=%s" % (wkb, authid), "occhab_edit", "memory")
+        layer = QgsVectorLayer(
+            "%s?crs=%s" % (wkb, _CRS_TRAVAIL), "occhab_edit", "memory"
+        )
         # Couche de travail éphémère : exclue de l'avertissement « couches
         # temporaires » de QGIS à la fermeture (cf. station_layers).
         layer.setCustomProperty("skipMemoryLayersCheck", 1)
