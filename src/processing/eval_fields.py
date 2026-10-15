@@ -363,7 +363,22 @@ def fill_eval_combo(combo, items, placeholder="— non renseigné —"):
         combo.addItem(label, code)
 
 
-def select_combo_data(combo, code):
-    """Sélectionner l'entrée dont l'itemData vaut `code` (placeholder sinon)."""
+#: Libellé d'une valeur enregistrée absente de la liste (cf. `select_combo_data`).
+LIBELLE_VALEUR_CONSERVEE = "Valeur enregistrée (%s)"
+
+
+def select_combo_data(combo, code, conserver=False):
+    """Sélectionner l'entrée dont l'itemData vaut `code` (placeholder sinon).
+
+    `conserver` : pour une valeur ENREGISTRÉE (édition d'une station, d'un
+    habitat). Si `code` est renseigné mais absent de la liste — liste de
+    référence non chargée hors connexion, valeur devenue inactive —, il est
+    ajouté à la liste plutôt que de retomber sur le placeholder. Sans cela,
+    rouvrir une fiche et la valider effaçait la valeur, et la synchronisation
+    l'effaçait ensuite sur GeoNature.
+    """
     index = combo.findData(code) if code else -1
+    if index < 0 and code and conserver:
+        combo.addItem(LIBELLE_VALEUR_CONSERVEE % code, code)
+        index = combo.count() - 1
     combo.setCurrentIndex(index if index >= 0 else 0)

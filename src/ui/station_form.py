@@ -55,6 +55,10 @@ class StationForm(QWidget):
         self.config = config
         self.nomenclatures = nomenclatures or {}
         self._defaults = defaults or {}  # id_nomenclature par défaut (instance)
+        # Valeurs enregistrées des champs dont le menu n'est pas créé faute de
+        # liste (type de sol, mosaïque hors connexion) : rendues telles quelles
+        # par `get_data`, au lieu d'un None qui les effaçait.
+        self._sans_menu = {}
         self._observers = observers or []  # [(id_role, nom)]
         self._current_observer = current_observer  # {id_role, observer_name} ou None
         # Reprise de la saisie précédente (création seulement — en édition, les
@@ -423,6 +427,15 @@ class StationForm(QWidget):
     def _select_dataset(self, id_dataset):
         if self.combo_dataset is not None:
             index = self.combo_dataset.findData(id_dataset)
+            if index < 0 and id_dataset:
+                # JDD absent de la liste (devenu inactif, liste non chargée) :
+                # le proposer tel quel. Sans cela le menu restait sur un autre
+                # JDD, et valider la fiche y déplaçait la station sans le dire —
+                # sur GeoNature aussi, à la synchro.
+                self.combo_dataset.addItem(
+                    "JDD %s (inactif ou non chargé)" % id_dataset, id_dataset
+                )
+                index = self.combo_dataset.count() - 1
             if index >= 0:
                 self.combo_dataset.setCurrentIndex(index)
         elif self.spin_dataset is not None:
@@ -492,10 +505,12 @@ class StationForm(QWidget):
             "id_nomenclature_area_surface_calculation": self.combo_surface_method.currentData(),
             "id_nomenclature_geographic_object": self.combo_geo_object.currentData(),
             "id_nomenclature_type_sol": (
-                self.combo_type_sol.currentData() if self.combo_type_sol else None
+                self.combo_type_sol.currentData() if self.combo_type_sol
+                else self._sans_menu.get("id_nomenclature_type_sol")
             ),
             "id_nomenclature_type_mosaique_habitat": (
-                self.combo_mosaique.currentData() if self.combo_mosaique else None
+                self.combo_mosaique.currentData() if self.combo_mosaique
+                else self._sans_menu.get("id_nomenclature_type_mosaique_habitat")
             ),
             "comment": comment or None,
             "geom": self._geom_wkt,
@@ -536,20 +551,29 @@ class StationForm(QWidget):
             self.spin_depth_max.setValue(int(station["depth_max"]))
         if station.get("area"):
             self.spin_area.setValue(int(station["area"]))
-        select_combo_data(self.combo_exposure, station.get("id_nomenclature_exposure"))
+        # `conserver` : une valeur absente de la liste (hors connexion, valeur
+        # devenue inactive) est gardée, et non effacée (cf. `select_combo_data`).
+        select_combo_data(
+            self.combo_exposure, station.get("id_nomenclature_exposure"), conserver=True
+        )
         select_combo_data(
             self.combo_surface_method,
             station.get("id_nomenclature_area_surface_calculation"),
+            conserver=True,
         )
         select_combo_data(
-            self.combo_geo_object, station.get("id_nomenclature_geographic_object")
+            self.combo_geo_object, station.get("id_nomenclature_geographic_object"),
+            conserver=True,
         )
-        if self.combo_type_sol:
-            select_combo_data(self.combo_type_sol, station.get("id_nomenclature_type_sol"))
-        if self.combo_mosaique:
-            select_combo_data(
-                self.combo_mosaique, station.get("id_nomenclature_type_mosaique_habitat")
-            )
+        self._sans_menu = {}
+        for cle, combo in (
+            ("id_nomenclature_type_sol", self.combo_type_sol),
+            ("id_nomenclature_type_mosaique_habitat", self.combo_mosaique),
+        ):
+            if combo:
+                select_combo_data(combo, station.get(cle), conserver=True)
+            else:
+                self._sans_menu[cle] = station.get(cle)
         comment = station.get("comment") or ""
         self.text_comment.setPlainText(strip_eval(comment))
         codes = decode_eval(comment)

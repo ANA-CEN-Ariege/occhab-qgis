@@ -61,6 +61,7 @@ from ..database.sqlite_local import BROUILLON, VALIDE
 from ..processing import champs as ch
 from ..processing import correspondances as corresp
 from ..processing.correspondances import Catalogue
+from ..processing.eval_fields import LIBELLE_VALEUR_CONSERVEE
 from ..processing.grille import Grille
 from ..processing.referentiels import TYPOLOGIES_CORRESPONDANCE, label_for
 from ..processing.tableur import tsv
@@ -464,6 +465,17 @@ class ChampDelegate(QStyledItemDelegate):
         valeur = index.data(Qt.ItemDataRole.EditRole)
         if isinstance(editor, QComboBox):
             position = editor.findData(valeur if champ.type != ch.BOOLEEN else bool(valeur))
+            if position < 0 and champ.type != ch.BOOLEEN and valeur not in (None, ""):
+                # Valeur enregistrée absente de la liste (liste non chargée hors
+                # connexion, nomenclature ou JDD devenus inactifs) : la proposer
+                # telle quelle. Retomber sur « non renseigné » l'effaçait dès
+                # qu'on quittait la cellule, et la synchro l'effaçait ensuite
+                # sur GeoNature.
+                libelle = self.contexte.libelle(champ, valeur)
+                if libelle == str(valeur):
+                    libelle = LIBELLE_VALEUR_CONSERVEE % valeur
+                editor.addItem(libelle, valeur)
+                position = editor.count() - 1
             editor.setCurrentIndex(position if position >= 0 else 0)
         elif isinstance(editor, QDateEdit):
             date = QDate.fromString((valeur or "")[:10], "yyyy-MM-dd")
@@ -520,6 +532,10 @@ class ChampDelegate(QStyledItemDelegate):
                 valeur = [p.strip() for p in texte.split(";") if p.strip()] or None
             else:
                 valeur = texte or None
+        if valeur is None and not champ.effacable:
+            # Colonne NOT NULL sur GeoNature : « non renseigné » n'efface rien
+            # (la station serait rejetée), on garde la valeur en place.
+            return
         model.setData(index, valeur, Qt.ItemDataRole.EditRole)
 
     @staticmethod

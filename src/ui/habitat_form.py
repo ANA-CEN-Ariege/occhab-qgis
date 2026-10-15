@@ -306,7 +306,9 @@ class HabitatForm(QWidget):
         complements_form.addRow("Abondance", self.combo_abundance)
 
         # Sensibilité : absente de certaines instances → menu créé seulement si dispo.
+        # Sans menu, la valeur enregistrée est rendue telle quelle par `get_data`.
         self.combo_sensitivity = None
+        self._sensibilite_sans_menu = None
         if self.nomenclatures.get("sensitivity"):
             self.combo_sensitivity = QComboBox()
             fill_eval_combo(self.combo_sensitivity, self.nomenclatures["sensitivity"])
@@ -620,7 +622,8 @@ class HabitatForm(QWidget):
             "id_nomenclature_collection_technique": self.combo_technique.currentData(),
             "id_nomenclature_abundance": self.combo_abundance.currentData(),
             "id_nomenclature_sensitivity": (
-                self.combo_sensitivity.currentData() if self.combo_sensitivity else None
+                self.combo_sensitivity.currentData() if self.combo_sensitivity
+                else self._sensibilite_sans_menu
             ),
             "id_nomenclature_community_interest": self.combo_community.currentData(),
             "technical_precision": technical_precision or None,
@@ -631,19 +634,30 @@ class HabitatForm(QWidget):
         if habitat.get("cd_hab"):
             self.spin_cdhab.setValue(int(habitat["cd_hab"]))
         self.combo_determiner.setCurrentText(habitat.get("determiner") or "")
+        # `conserver` : une valeur absente de la liste (hors connexion, valeur
+        # devenue inactive) est gardée, et non effacée (cf. `select_combo_data`).
         select_combo_data(
-            self.combo_determination, habitat.get("id_nomenclature_determination_type")
+            self.combo_determination, habitat.get("id_nomenclature_determination_type"),
+            conserver=True,
         )
         select_combo_data(
-            self.combo_technique, habitat.get("id_nomenclature_collection_technique")
+            self.combo_technique, habitat.get("id_nomenclature_collection_technique"),
+            conserver=True,
         )
-        select_combo_data(self.combo_abundance, habitat.get("id_nomenclature_abundance"))
+        select_combo_data(
+            self.combo_abundance, habitat.get("id_nomenclature_abundance"),
+            conserver=True,
+        )
         if self.combo_sensitivity:
             select_combo_data(
-                self.combo_sensitivity, habitat.get("id_nomenclature_sensitivity")
+                self.combo_sensitivity, habitat.get("id_nomenclature_sensitivity"),
+                conserver=True,
             )
+        else:
+            self._sensibilite_sans_menu = habitat.get("id_nomenclature_sensitivity")
         select_combo_data(
-            self.combo_community, habitat.get("id_nomenclature_community_interest")
+            self.combo_community, habitat.get("id_nomenclature_community_interest"),
+            conserver=True,
         )
         # Ne jamais cacher une valeur qui s'écarte du défaut (cf. N2000 plus bas).
         if self._complements_hors_defaut(habitat):
