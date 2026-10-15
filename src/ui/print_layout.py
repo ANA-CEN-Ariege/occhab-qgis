@@ -121,7 +121,7 @@ def creer(chemin_gabarit, titre, couche=None, couches_carte=None, emprise=None,
         QgsExpressionContextUtils.setLayoutVariable(mise, nom, valeur)
 
     avertissements += _sans_webkit(mise, fond)
-    _habiller_pages_suivantes(mise)
+    _habiller_pages_suivantes(mise, fond)
 
     # `addLayout` DÉTRUIT la mise en page si le nom est déjà pris — l'objet
     # Python survit mais son C++ a disparu, et le premier accès lève
@@ -143,18 +143,27 @@ def _a_reporter(item):
     la barre d'échelle : une échelle sans carte à laquelle se rapporter ne veut
     rien dire, et elle ferait croire que la page est une carte.
     """
-    from qgis.core import (QgsLayoutItem, QgsLayoutItemLegend, QgsLayoutItemMap,
+    from qgis.core import (QgsLayoutFrame, QgsLayoutItem, QgsLayoutItemGroup,
+                           QgsLayoutItemLegend, QgsLayoutItemMap,
                            QgsLayoutItemPage, QgsLayoutItemScaleBar)
 
     # `mise.items()` rend aussi les objets graphiques internes de Qt (poignées,
     # cadres de page) : seuls les vrais objets de mise en page savent s'écrire.
     if not isinstance(item, QgsLayoutItem):
         return False
+    # Ni les cadres de bloc HTML ou de tableau, ni les groupes : leur copie XML
+    # se rattache à l'ORIGINAL. Un cadre recopié pointait sur le bloc de la
+    # page 1 sans que celui-ci le compte parmi les siens ; à la destruction de
+    # la mise en page — fermeture du projet, sortie de QGIS — le bloc était
+    # libéré le premier et le cadre recopié s'adressait encore à lui : QGIS
+    # plantait (QGIS 3.34 et suivants). Les blocs HTML sont reportés en
+    # étiquettes, à part (cf. `_habiller_pages_suivantes`).
     return not isinstance(item, (QgsLayoutItemMap, QgsLayoutItemLegend,
-                                 QgsLayoutItemPage, QgsLayoutItemScaleBar))
+                                 QgsLayoutItemPage, QgsLayoutItemScaleBar,
+                                 QgsLayoutFrame, QgsLayoutItemGroup))
 
 
-def _habiller_pages_suivantes(mise):
+def _habiller_pages_suivantes(mise, fond=""):
     """Reporter le bandeau, le logo et les mentions sur la page de légende.
 
     Une page de légende nue ne s'identifie pas : sortie du PDF, imprimée seule,
@@ -164,10 +173,14 @@ def _habiller_pages_suivantes(mise):
     même place dans la page.
 
     Par sérialisation XML : les objets de mise en page n'ont pas de `clone()`
-    en Python, mais ils savent tous s'écrire et se relire.
+    en Python, mais ils savent tous s'écrire et se relire. Sauf les blocs HTML
+    (adresse, sources, mention du fond), qui ne se recopient pas sans rester
+    attachés à l'original : ils sont reportés en étiquettes HTML, comme
+    lorsque WebKit manque (cf. `_sans_webkit`).
     """
     from qgis.PyQt.QtXml import QDomDocument
-    from qgis.core import (QgsApplication, QgsLayoutPoint, QgsReadWriteContext)
+    from qgis.core import (QgsApplication, QgsLayoutFrame, QgsLayoutItemHtml,
+                           QgsLayoutPoint, QgsReadWriteContext)
 
     pages = mise.pageCollection()
     if pages.pageCount() < 2:
@@ -175,22 +188,39 @@ def _habiller_pages_suivantes(mise):
 
     modeles = [i for i in mise.items()
                if _a_reporter(i) and pages.pageNumberForPoint(i.pos()) == 0]
-    if not modeles:
+    blocs_html = [i for i in mise.items()
+                  if isinstance(i, QgsLayoutFrame)
+                  and isinstance(i.multiFrame(), QgsLayoutItemHtml)
+                  and pages.pageNumberForPoint(i.pos()) == 0]
+    if not modeles and not blocs_html:
         return
 
+    haut_page = pages.page(0).pos().y() if pages.page(0) else 0.0
     for numero in range(1, pages.pageCount()):
         for modele in modeles:
             copie = _copier_item(modele, mise, QDomDocument, QgsApplication,
                                  QgsReadWriteContext)
             if copie is None:
                 continue
-            haut_page = pages.page(0).pos().y() if pages.page(0) else 0.0
             copie.attemptMove(
                 QgsLayoutPoint(modele.pos().x(),
                                modele.pos().y() - haut_page, _MILLIMETRES),
                 page=numero,
             )
             copie.setId("")  # l'identifiant reste celui de la page 1
+        for bloc in blocs_html:
+            texte = _texte_html(bloc.multiFrame(), fond)
+            if not texte.strip():
+                continue
+            etiquette = _etiquette_html(
+                mise, texte, bloc.rect().width(), bloc.rect().height(),
+                bloc.frameEnabled(), bloc.hasBackground(),
+            )
+            etiquette.attemptMove(
+                QgsLayoutPoint(bloc.pos().x(), bloc.pos().y() - haut_page,
+                               _MILLIMETRES),
+                page=numero,
+            )
     _recadrer_legende(mise)
 
 
@@ -273,7 +303,8 @@ def _copier_item(modele, mise, QDomDocument, QgsApplication, QgsReadWriteContext
     # QGIS ne sait alors plus lequel des deux il manipule — à l'écran les deux
     # se dessinent, mais à l'EXPORT la page de légende ressortait nue, bandeau
     # et logo compris. En l'absence d'attribut, QGIS en fabrique un neuf.
-    for attribut in ("uuid", "templateUuid"):
+    # `groupUuid` de même : la copie se rangeait dans le groupe de l'ORIGINAL.
+    for attribut in ("uuid", "templateUuid", "groupUuid"):
         element.removeAttribute(attribut)
     fabrique = QgsApplication.layoutItemRegistry()
     copie = fabrique.createItem(modele.type(), mise)
@@ -388,16 +419,47 @@ def _habiller(html, taille_pt):
             'line-height:1.15;">%s</div>' % (taille_pt, html))
 
 
-def _en_etiquettes(mise, multiframe, fond):
-    """Convertir un cadre HTML en étiquette(s) de même position. Renvoie le compte."""
-    from qgis.core import QgsLayoutItemLabel, QgsLayoutPoint, QgsLayoutSize
-
+def _texte_html(multiframe, fond):
+    """Le balisage que ce cadre HTML doit afficher."""
     texte = multiframe.html() or ""
     if texte.strip().startswith(gb.DEBUT_MENTION_FOND):
         # Ce cadre-là est figé sur le fond du gabarit d'origine — SCAN25 dans
         # les nôtres. Le laisser tel quel citerait une source qu'on n'affiche
         # pas ; c'est l'erreur que le choix « Fond de plan cité » sert à éviter.
         texte = gb.MENTIONS_FOND.get(fond, "")
+    return texte
+
+
+def _etiquette_html(mise, texte, largeur, hauteur, cadre, fond_plein):
+    """Étiquette en mode HTML tenant lieu d'un cadre HTML, ajoutée à `mise`.
+
+    Dimensionnée, mais pas placée : c'est à l'appelant de la poser.
+    """
+    from qgis.core import QgsLayoutItemLabel, QgsLayoutSize
+
+    mode = getattr(getattr(QgsLayoutItemLabel, "Mode", QgsLayoutItemLabel),
+                   "ModeHtml")
+    etiquette = QgsLayoutItemLabel(mise)
+    etiquette.setMode(mode)
+    # La feuille de style du cadre HTML ne survit pas à la conversion, et une
+    # étiquette ne réduit jamais son texte : sans corps imposé, l'adresse
+    # s'affiche à la taille par défaut, trois fois trop grosse, à cheval sur
+    # le pied de page.
+    corps = mep.taille_pour_bloc(texte, largeur, hauteur)
+    etiquette.setText(_habiller(texte, corps))
+    _corps_de_texte(etiquette, corps)
+    mise.addLayoutItem(etiquette)
+    etiquette.attemptResize(QgsLayoutSize(largeur, hauteur, _MILLIMETRES))
+    etiquette.setFrameEnabled(cadre)
+    etiquette.setBackgroundEnabled(fond_plein)
+    return etiquette
+
+
+def _en_etiquettes(mise, multiframe, fond):
+    """Convertir un cadre HTML en étiquette(s) de même position. Renvoie le compte."""
+    from qgis.core import QgsLayoutPoint
+
+    texte = _texte_html(multiframe, fond)
 
     geometries = [(f.id(), f.pos().x(), f.pos().y(),
                    f.rect().width(), f.rect().height(),
@@ -408,27 +470,14 @@ def _en_etiquettes(mise, multiframe, fond):
     if not geometries:
         return 0
 
-    mode = getattr(getattr(QgsLayoutItemLabel, "Mode", QgsLayoutItemLabel),
-                   "ModeHtml")
     for identifiant, x, y, largeur, hauteur, cadre, fond_plein in geometries:
         if not texte.strip():
             continue  # rien à dire : ne pas poser une étiquette vide
-        etiquette = QgsLayoutItemLabel(mise)
-        etiquette.setMode(mode)
-        # La feuille de style du cadre HTML ne survit pas à la conversion, et une
-        # étiquette ne réduit jamais son texte : sans corps imposé, l'adresse
-        # s'affiche à la taille par défaut, trois fois trop grosse, à cheval sur
-        # le pied de page.
-        corps = mep.taille_pour_bloc(texte, largeur, hauteur)
-        etiquette.setText(_habiller(texte, corps))
-        _corps_de_texte(etiquette, corps)
-        mise.addLayoutItem(etiquette)
+        etiquette = _etiquette_html(mise, texte, largeur, hauteur, cadre,
+                                    fond_plein)
         etiquette.attemptMove(QgsLayoutPoint(x, y, _MILLIMETRES))
-        etiquette.attemptResize(QgsLayoutSize(largeur, hauteur, _MILLIMETRES))
         if identifiant:
             etiquette.setId(identifiant)
-        etiquette.setFrameEnabled(cadre)
-        etiquette.setBackgroundEnabled(fond_plein)
 
     # Retirer le multiframe APRÈS avoir relevé ses cadres : il les emporte.
     mise.removeMultiFrame(multiframe)
@@ -437,6 +486,63 @@ def _en_etiquettes(mise, multiframe, fond):
         if cadre_html is not None:
             mise.removeLayoutItem(cadre_html)
     return len(geometries)
+
+
+def reparer_cadres_orphelins(projet=None):
+    """Remplacer les cadres recopiés par les versions précédentes. Renvoie le compte.
+
+    Jusqu'à la 0.14.0, la page de légende recevait des COPIES des cadres HTML
+    de la page 1 : elles pointaient sur le bloc d'origine sans qu'il les compte
+    parmi les siens. QGIS les recrée telles quelles à l'ouverture du projet, et
+    à partir de la 3.34 il plante à la destruction de la mise en page —
+    fermeture du projet, sortie de QGIS — le bloc étant libéré avant elles.
+
+    Chaque cadre orphelin est remplacé par l'étiquette HTML que pose désormais
+    `_habiller_pages_suivantes`, à la même place : la planche ne perd rien. Sans
+    effet sur une mise en page saine — un cadre posé par QGIS figure toujours
+    dans la liste de son bloc.
+    """
+    projet = projet or QgsProject.instance()
+    total = 0
+    for mise in projet.layoutManager().printLayouts():
+        total += _reparer_mise(mise)
+    return total
+
+
+def _reparer_mise(mise):
+    from qgis.core import QgsLayoutFrame, QgsLayoutItemHtml, QgsLayoutPoint
+
+    orphelins = []
+    for item in mise.items():
+        if not isinstance(item, QgsLayoutFrame):
+            continue
+        bloc = item.multiFrame()
+        if bloc is None:
+            continue
+        if item.uuid() not in {cadre.uuid() for cadre in bloc.frames()}:
+            orphelins.append((item, bloc))
+    if not orphelins:
+        return 0
+
+    # Pas d'annulation possible : « Annuler » recréerait le cadre orphelin.
+    pile = mise.undoStack()
+    pile.blockCommands(True)
+    try:
+        for cadre, bloc in orphelins:
+            texte = bloc.html() if isinstance(bloc, QgsLayoutItemHtml) else ""
+            if texte and texte.strip():
+                etiquette = _etiquette_html(
+                    mise, texte, cadre.rect().width(), cadre.rect().height(),
+                    cadre.frameEnabled(), cadre.hasBackground(),
+                )
+                etiquette.attemptMove(
+                    QgsLayoutPoint(cadre.pos().x(), cadre.pos().y(), _MILLIMETRES)
+                )
+            # Le bloc vit encore : retirer le cadre maintenant est sûr.
+            mise.removeLayoutItem(cadre)
+    finally:
+        pile.blockCommands(False)
+    return len(orphelins)
 
 
 def _charger(chemin, projet):

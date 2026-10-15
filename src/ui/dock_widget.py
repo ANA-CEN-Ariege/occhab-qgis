@@ -184,6 +184,8 @@ class OccHabDockWidget(QDockWidget):
         self._build_ui()
         self._install_map_interaction()
         QgsProject.instance().removeAll.connect(self._sur_vidage_projet)
+        QgsProject.instance().readProject.connect(self._sur_projet_lu)
+        self._reparer_mises_en_page()  # projet déjà ouvert (extension rechargée)
         self._oublier_ancien_cache_habref()
         self.refresh()
         self._reconnecter()
@@ -2589,10 +2591,14 @@ class OccHabDockWidget(QDockWidget):
                 self.logger.debug("removeEventFilter ignoré : %s", exc)
             self._map_filter_installed = False
         self._clear_server_prompt()
-        try:
-            QgsProject.instance().removeAll.disconnect(self._sur_vidage_projet)
-        except (TypeError, RuntimeError):
-            pass
+        for signal, slot in (
+            (QgsProject.instance().removeAll, self._sur_vidage_projet),
+            (QgsProject.instance().readProject, self._sur_projet_lu),
+        ):
+            try:
+                signal.disconnect(slot)
+            except (TypeError, RuntimeError):
+                pass
         # Annuler une saisie rappelle `_recharger_serveur_reporte` : pas de
         # requête réseau ni de couche neuve pendant le déchargement.
         self._serveur_en_attente = False
@@ -2619,6 +2625,31 @@ class OccHabDockWidget(QDockWidget):
             self._capture.abandonner()
         if self._geom_editor is not None:
             self._geom_editor.abandonner()
+
+    def _sur_projet_lu(self, *_args):
+        self._reparer_mises_en_page()
+
+    def _reparer_mises_en_page(self):
+        """Remplacer les cadres recopiés par les versions précédentes (cf.
+        `print_layout.reparer_cadres_orphelins`) : ils font planter QGIS à la
+        fermeture du projet."""
+        try:
+            from .print_layout import reparer_cadres_orphelins
+
+            nombre = reparer_cadres_orphelins()
+        except Exception as exc:  # noqa: BLE001 - ne jamais bloquer l'ouverture
+            self.logger.warning("Mises en page non vérifiées : %s", exc)
+            return
+        if not nombre:
+            return
+        self.logger.info("%d cadre(s) de mise en page orphelin(s) remplacé(s)", nombre)
+        self.iface.messageBar().pushWarning(
+            "OccHab",
+            "%d bloc(s) recopié(s) sur une page de légende par une version "
+            "précédente du plugin ont été remplacés par des étiquettes : ils "
+            "faisaient planter QGIS à la fermeture du projet. Enregistrez le "
+            "projet pour conserver la correction." % nombre,
+        )
 
     def _last_observers(self):
         """Observateurs de la dernière saisie, pour pré-remplir la suivante."""
