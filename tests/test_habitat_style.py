@@ -754,3 +754,55 @@ def test_homonymes_de_deux_milieux_gardent_chacun_leur_couleur():
     for p in props:
         assert p[hs.CHAMP_COULEUR] == attendues[p[hs.CHAMP_CLASSE]]
     assert props[0][hs.CHAMP_COULEUR] != props[1][hs.CHAMP_COULEUR]
+
+
+# --- Mosaïque : un habitat sans recouvrement garde une part visible ---------
+def _avec_recouvrements(*valeurs):
+    return [{"properties": {"recouvrement_pct": v}} for v in valeurs]
+
+
+def test_un_habitat_sans_recouvrement_se_partage_le_reste():
+    """Chênaie 60 %, Mare sans recouvrement : la Mare prend les 40 % restants."""
+    lot = _avec_recouvrements(60, None)
+    bornes = hs._bandes(lot)
+    assert bornes[id(lot[0])] == (0.0, 60.0)
+    assert bornes[id(lot[1])] == (60.0, 100.0)
+
+
+def test_sans_reste_l_habitat_sans_recouvrement_recoit_une_part_moyenne():
+    """60 + 40 = 100 et une Mare sans recouvrement : sa bande valait 100 → 100,
+    donc rien sur la carte, et le damier la peignait sur toute la station."""
+    lot = _avec_recouvrements(60, 40, None)
+    bornes = hs._bandes(lot)
+    largeurs = [fin - debut for debut, fin in (bornes[id(f)] for f in lot)]
+    assert all(largeur > 20 for largeur in largeurs)
+    assert bornes[id(lot[-1])][1] == 100.0
+
+
+# --- Une même détermination, un seul milieu ----------------------------------
+def _alliance(id_station, eunis, rang, source=None, cd_hab=16747):
+    return {"type": "Feature", "geometry": None, "properties": {
+        "id_station": id_station, "cd_hab": cd_hab,
+        "habitat": "Mentho longifoliae-Juncion inflexi", "code_habref": "3.0.1.0.5",
+        "nom_cite": "Mentho-Juncion", "recouvrement_pct": 100,
+        "habitat_code_eunis": eunis, "habitat_nom_eunis": "x",
+        "habitat_eunis_rang": rang, "habitat_eunis_source": source}}
+
+
+def test_une_meme_alliance_garde_un_seul_milieu_et_une_seule_couleur():
+    """Arbitrée en D5.21 sur deux stations, gardant E3.41 sur une troisième :
+    la légende la montrait sous deux milieux, en deux couleurs."""
+    lot = [_alliance(1, "E3.41", 10), _alliance(2, "D5.21", None, "manuel"),
+           _alliance(3, "D5.21", None, "manuel")]
+    hs.enrichir(lot)
+    assert len({f["properties"][hs.CHAMP_CLASSE] for f in lot}) == 1
+    entrees = [habitat for _classe, _lib, habitats in hs.palette(lot)
+               for habitat in habitats]
+    assert len(entrees) == 1
+
+
+def test_deux_habitats_differents_de_meme_nom_gardent_leur_milieu():
+    lot = [_alliance(1, "E3.41", 10, cd_hab=1),
+           _alliance(2, "D5.21", None, "manuel", cd_hab=2)]
+    hs.enrichir(lot)
+    assert len({f["properties"][hs.CHAMP_CLASSE] for f in lot}) == 2

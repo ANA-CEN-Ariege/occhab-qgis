@@ -356,10 +356,15 @@ class GeoNatureAPIClient:
             features.extend(lot)
             if on_progress is not None:
                 on_progress(len(features), total_filtered)
-            # Page incomplète = dernière page. On s'arrête aussi dès que le
-            # compte annoncé est atteint, sans réclamer une page vide de plus.
-            if len(lot) < limit or (total_filtered and len(features) >= total_filtered):
+            # La taille de page EFFECTIVE est celle que le serveur rend : il
+            # plafonne la demande (`max_page_size_api`). Comparée à celle qu'on
+            # avait demandée, une page pleine à 500 passait pour la dernière, et
+            # l'export s'arrêtait à 500 lignes sur 1 200, sans un mot.
+            taille = data.get("limit") or limit
+            if not lot or (total_filtered and len(features) >= total_filtered):
                 break
+            if total_filtered is None and len(lot) < taille:
+                break  # sans total annoncé, une page incomplète est la dernière
             page += 1
         return features, total_filtered, total
 

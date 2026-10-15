@@ -223,3 +223,27 @@ def test_une_reponse_perdue_peut_avoir_abouti():
             client.update_station(42, {})
         except gc.GeoNatureAPIError as erreur:
             assert erreur.reseau and erreur.peut_avoir_abouti is attendu
+
+
+class _ServeurPlafonne(_SessionEspionne):
+    """Rend des pages de 500 au plus, quelle que soit la taille demandée
+    (`max_page_size_api`), sur 1 200 lignes."""
+
+    def request(self, method, url, **kwargs):
+        page = kwargs["params"]["offset"]
+        debut = page * 500
+        lot = [{"type": "Feature", "geometry": None, "properties": {"n": n}}
+               for n in range(debut, min(debut + 500, 1200))]
+        corps = {"total": 1200, "total_filtered": 1200, "limit": 500,
+                 "items": {"type": "FeatureCollection", "features": lot}}
+        return type("R", (), {"status_code": 200, "text": "x",
+                              "json": staticmethod(lambda: corps)})()
+
+
+def test_un_export_plafonne_par_l_instance_est_lu_jusqu_au_bout():
+    """Une page pleine à 500 passait pour la dernière (1 000 demandées) : 500
+    lignes sur 1 200, sans un mot."""
+    client = _client()
+    client.session = _ServeurPlafonne()
+    features, total_filtre, _total = client.iter_export_features(9)
+    assert total_filtre == 1200 and len(features) == 1200
