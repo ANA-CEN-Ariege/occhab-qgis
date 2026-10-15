@@ -232,3 +232,29 @@ def test_la_reprise_jette_determination_et_correspondances():
     assert codes["enjeu"] == "fort"
     assert reprise["id_nomenclature_collection_technique"] == 3
     assert ef.strip_eval(reprise["technical_precision"]) == "Relevé du 12 mai."
+
+
+def test_ni_serveur_ni_consigne_d_altitude_ne_se_collent():
+    """Régression 0.15.0 : coller recopiait le serveur d'origine et la consigne
+    de recalcul d'altitude de la station SOURCE."""
+    source = {"id_dataset": 3, "comment": "x", "serveur": "test.exemple/api",
+              "altitude_a_recalculer": 1, "altitude_min": 640}
+    colles = duplicate.paste_fields(duplicate.station_template(source))
+    assert colles == {"id_dataset": 3, "comment": "x"}
+
+
+def test_chaque_colonne_de_station_est_classee():
+    """Une colonne ajoutée à la base doit être rangée : recopiée (métier) ou
+    écartée (identité, état, géométrie). Sans ce garde-fou, `serveur` et
+    `altitude_a_recalculer` se sont collés d'une station à l'autre."""
+    import sqlite_local
+
+    metier = {
+        "id_dataset", "station_name", "date_min", "date_max", "observers_txt",
+        "depth_min", "depth_max", "comment",
+        "id_nomenclature_geographic_object", "id_nomenclature_exposure",
+        "id_nomenclature_type_sol", "id_nomenclature_area_surface_calculation",
+        "id_nomenclature_type_mosaique_habitat", "created_by", "updated_by",
+    }
+    ecartees = set(duplicate.STATION_DROP) | set(duplicate.STATION_GEOM)
+    assert sqlite_local.OccHabDatabase.STATION_COLS - ecartees == metier

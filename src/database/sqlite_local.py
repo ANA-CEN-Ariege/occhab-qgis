@@ -445,10 +445,7 @@ class OccHabDatabase:
         (ex. dicts issus de get_station), qui sinon entreraient en conflit.
         """
         data = {k: v for k, v in fields.items() if k in self.HABITAT_COLS}
-        if not data.get("cd_hab"):
-            raise ValueError("cd_hab est obligatoire")
-        if not data.get("nom_cite"):
-            raise ValueError("nom_cite est obligatoire")
+        self._verifier_habitat(data)
         data["id_station_local"] = id_station_local
         data.setdefault("sync_status", "pending")
         cols = list(data.keys())
@@ -472,23 +469,116 @@ class OccHabDatabase:
             self.disconnect()
         return habitat_id
 
-    def replace_habitats(self, id_station_local, habitats):
-        """Remplacer atomiquement tous les habitats d'une station.
+    @staticmethod
+    def _verifier_habitat(habitat):
+        """Lever si un habitat n'a pas ses deux champs obligatoires (NOT NULL)."""
+        if not habitat.get("cd_hab"):
+            raise ValueError("cd_hab est obligatoire")
+        if not habitat.get("nom_cite"):
+            raise ValueError("nom_cite est obligatoire")
 
-        DELETE + ré-insertions dans UNE SEULE transaction : si une insertion
-        échoue, tout est annulé (rollback) et les habitats existants ne sont PAS
-        perdus. `sync_status` est retiré pour que la ré-insertion repasse en
-        'pending'.
+    def replace_habitats(self, id_station_local, habitats):
+        """Remplacer, en UNE transaction, les habitats d'une station par `habitats`.
+
+        Un habitat qui porte l'`id` d'un habitat de CETTE station est mis à jour
+        sur place ; les autres sont insérés, et ceux qui manquent à la liste sont
+        supprimés. Garder les identifiants locaux n'est pas un détail : la table
+        attributaire retrouve ses modifications par l'`id` de l'habitat. Quand la
+        fiche supprimait puis ré-insérait tout, valider une fiche pendant que la
+        table attendait d'être enregistrée lui faisait perdre ses modifications
+        d'habitat, sans un mot.
+
+        Un habitat mis à jour est réécrit en entier (une colonne absente du dict
+        vaut NULL), comme l'était sa ré-insertion, et repasse en 'pending'. Si
+        une écriture échoue, tout est annulé : les habitats existants restent.
         """
+        colonnes = sorted(self.HABITAT_COLS - {"sync_status"})
         self.connect()
         try:
             cursor = self.connection.cursor()
-            cursor.execute(
-                "DELETE FROM t_habitats WHERE id_station_local = ?", (id_station_local,)
-            )
+            existants = {
+                ligne[0] for ligne in cursor.execute(
+                    "SELECT id FROM t_habitats WHERE id_station_local = ?",
+                    (id_station_local,),
+                )
+            }
+            gardes = set()
             for habitat in habitats:
-                clean = {k: v for k, v in habitat.items() if k != "sync_status"}
-                self._insert_habitat(cursor, id_station_local, clean)
+                identifiant = habitat.get("id")
+                if identifiant in existants and identifiant not in gardes:
+                    self._verifier_habitat(habitat)
+                    # Colonnes issues d'une whitelist figée (HABITAT_COLS) ;
+                    # valeurs paramétrées (?). Aucune donnée utilisateur dans le SQL.
+                    cursor.execute(
+                        "UPDATE t_habitats SET %s, sync_status = 'pending' "  # nosec B608
+                        "WHERE id = ?" % ", ".join("%s = ?" % c for c in colonnes),
+                        [habitat.get(c) for c in colonnes] + [identifiant],
+                    )
+                    gardes.add(identifiant)
+                else:
+                    clean = {k: v for k, v in habitat.items() if k != "sync_status"}
+                    self._insert_habitat(cursor, id_station_local, clean)
+            for identifiant in existants - gardes:
+                cursor.execute("DELETE FROM t_habitats WHERE id = ?", (identifiant,))
+            self.connection.commit()
+        except Exception:
+            self.connection.rollback()
+            raise
+        finally:
+            self.disconnect()
+
+    def ecrire_modifications(self, station_id, champs, habitats=None,
+                             observateurs=None, effacer_empreinte=False):
+        """Écrire, en UNE transaction, des colonnes de station et d'habitats.
+
+        `champs` : colonnes de la station ; `habitats` : `{id local: {colonne:
+        valeur}}` ; `observateurs` : liste qui remplace celle de la station
+        (None = inchangée) ; `effacer_empreinte` : oublier l'empreinte serveur
+        (conflit résolu côté local). Tout passe ou rien : écrites séparément, une
+        station pouvait passer « à synchroniser » et en brouillon alors que
+        l'écriture de ses habitats échouait.
+        """
+        data = {k: v for k, v in champs.items() if k in self.STATION_COLS}
+        if effacer_empreinte:
+            data["server_snapshot"] = None
+        data["date_update"] = datetime.now().isoformat()
+        self.connect()
+        try:
+            cursor = self.connection.cursor()
+            # Colonnes issues des whitelists figées (STATION_COLS, HABITAT_COLS) ;
+            # valeurs paramétrées (?). Aucune donnée utilisateur dans le SQL.
+            cursor.execute(
+                "UPDATE t_stations SET %s WHERE id = ?"  # nosec B608
+                % ", ".join("%s = ?" % k for k in data),
+                list(data.values()) + [station_id],
+            )
+            for id_habitat, colonnes in (habitats or {}).items():
+                valeurs = {
+                    k: v for k, v in colonnes.items()
+                    if k in self.HABITAT_COLS and k != "sync_status"
+                }
+                for obligatoire in ("cd_hab", "nom_cite"):
+                    if obligatoire in valeurs and not valeurs[obligatoire]:
+                        raise ValueError("%s est obligatoire" % obligatoire)
+                if valeurs:
+                    cursor.execute(
+                        "UPDATE t_habitats SET %s WHERE id = ? "  # nosec B608
+                        "AND id_station_local = ?"
+                        % ", ".join("%s = ?" % k for k in valeurs),
+                        list(valeurs.values()) + [id_habitat, station_id],
+                    )
+            if observateurs is not None:
+                cursor.execute(
+                    "DELETE FROM cor_station_observer WHERE id_station_local = ?",
+                    (station_id,),
+                )
+                for observateur in observateurs:
+                    cursor.execute(
+                        "INSERT INTO cor_station_observer "
+                        "(id_station_local, observer_name, id_role) VALUES (?, ?, ?)",
+                        (station_id, observateur.get("observer_name"),
+                         observateur.get("id_role")),
+                    )
             self.connection.commit()
         except Exception:
             self.connection.rollback()

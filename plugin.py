@@ -12,6 +12,25 @@ from qgis.core import QgsApplication, QgsProject
 from .src.utils.config import Config
 from .src.utils.logger import setup_logger
 
+try:  # QGIS ≥ 3.16
+    from qgis.gui import QgsApplicationExitBlockerInterface
+except ImportError:  # pragma: no cover
+    QgsApplicationExitBlockerInterface = None
+
+if QgsApplicationExitBlockerInterface is not None:
+    class _GardeFermeture(QgsApplicationExitBlockerInterface):
+        """Consultée par QGIS AVANT de se fermer, quand il est encore temps de
+        demander quelque chose (cf. `OccHabPlugin.peut_fermer`)."""
+
+        def __init__(self, plugin):
+            super().__init__()
+            self._plugin = plugin
+
+        def allowExit(self):
+            return self._plugin.peut_fermer("QGIS va se fermer.")
+else:  # pragma: no cover
+    _GardeFermeture = None
+
 
 class OccHabPlugin:
     """Plugin OccHab pour QGIS : point d'entrée, menu/toolbar et dock."""
@@ -23,6 +42,7 @@ class OccHabPlugin:
         self.logger = setup_logger("occhab", self.config)
         self.dock_widget = None
         self.action = None
+        self._garde_fermeture = None
         self.logger.info("Plugin OccHab initialisé")
 
     # ------------------------------------------------------------------ GUI
@@ -48,7 +68,25 @@ class OccHabPlugin:
         # réparé lui aussi, ou QGIS plante à sa fermeture.
         QgsProject.instance().readProject.connect(self._reparer_mises_en_page)
         self._reparer_mises_en_page()  # projet déjà ouvert (extension activée en cours de route)
+        if _GardeFermeture is not None:
+            # Fermer QGIS avec le tableau modifié et non enregistré perdait
+            # tout : le déchargement ne peut plus rien demander. QGIS consulte
+            # cette garde avant, et renonce à se fermer si on annule.
+            self._garde_fermeture = _GardeFermeture(self)
+            self.iface.registerApplicationExitBlocker(self._garde_fermeture)
         self.logger.info("Interface initialisée")
+
+    def peut_fermer(self, raison, annulable=True):
+        """Le tableau a-t-il des modifications à sauver ? Demande si oui."""
+        dock = self.dock_widget
+        tableau = getattr(dock, "_table_dialog", None) if dock is not None else None
+        if tableau is None:
+            return True
+        try:
+            return tableau.proposer_enregistrement(raison, annulable=annulable)
+        except Exception as exc:  # noqa: BLE001 - ne jamais empêcher QGIS de se fermer
+            self.logger.warning("Garde de fermeture ignorée : %s", exc)
+            return True
 
     def unload(self):
         """Nettoyer à la désactivation du plugin. Appelé par QGIS."""
@@ -56,6 +94,16 @@ class OccHabPlugin:
             QgsProject.instance().readProject.disconnect(self._reparer_mises_en_page)
         except (TypeError, RuntimeError):
             pass
+        if self._garde_fermeture is not None:
+            try:
+                self.iface.unregisterApplicationExitBlocker(self._garde_fermeture)
+            except (AttributeError, RuntimeError, TypeError):
+                pass
+            self._garde_fermeture = None
+        # Extension rechargée, mise à jour ou désactivée : à la fermeture de
+        # QGIS la garde a déjà posé la question, il ne reste donc rien ici.
+        self.peut_fermer("L'extension OccHab va être déchargée (mise à jour, "
+                         "désactivation ou rechargement).", annulable=False)
         if self.dock_widget is not None:
             self.dock_widget.shutdown()
             self.iface.removeDockWidget(self.dock_widget)

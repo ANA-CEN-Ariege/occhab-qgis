@@ -2,8 +2,13 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 
 """Tests du module pur `payload` (construction et lecture du GeoJSON OccHab)."""
+import pytest
+
 import eval_fields
 import payload as p
+
+#: Géométrie valide quelconque : sans géométrie, l'envoi est désormais refusé.
+_GEOM = {"type": "Point", "coordinates": [1.5, 42.9]}
 
 
 def test_date_value():
@@ -37,7 +42,7 @@ def test_build_station_payload_structure():
 
 
 def test_build_station_payload_drops_empty_observers():
-    feature = p.build_station_payload({"id_dataset": 3}, [], [], None)
+    feature = p.build_station_payload({"id_dataset": 3}, [], [], _GEOM)
     assert "observers" not in feature["properties"]
 
 
@@ -46,7 +51,7 @@ def test_creation_ne_transmet_aucune_valeur_vide():
     station = {"id_dataset": 3, "station_name": None, "comment": None}
     habitats = [{"cd_hab": 10, "nom_cite": "h", "determiner": None}]
 
-    props = p.build_station_payload(station, habitats, [], None)["properties"]
+    props = p.build_station_payload(station, habitats, [], _GEOM)["properties"]
 
     assert "station_name" not in props
     assert "comment" not in props
@@ -69,7 +74,7 @@ def test_mise_a_jour_efface_un_champ_vide():
         "id_nomenclature_community_interest": None, "determiner": None,
     }]
 
-    props = p.build_station_payload(station, habitats, [], None)["properties"]
+    props = p.build_station_payload(station, habitats, [], _GEOM)["properties"]
 
     assert props["station_name"] is None
     assert props["id_nomenclature_type_sol"] is None
@@ -86,7 +91,7 @@ def test_mise_a_jour_ne_met_jamais_les_identifiants_a_null():
                  "unique_id_sinp_hab": None,
                  "id_nomenclature_collection_technique": None}]
 
-    props = p.build_station_payload(station, habitats, [], None)["properties"]
+    props = p.build_station_payload(station, habitats, [], _GEOM)["properties"]
 
     assert "date_min" not in props
     habitat = props["habitats"][0]
@@ -105,7 +110,7 @@ def test_mise_a_jour_n_efface_jamais_la_nature_d_objet_geographique():
     station = {"id_station": 42, "id_dataset": 3,
                "id_nomenclature_geographic_object": None}
 
-    props = p.build_station_payload(station, [], [], None)["properties"]
+    props = p.build_station_payload(station, [], [], _GEOM)["properties"]
 
     assert "id_nomenclature_geographic_object" not in props
 
@@ -115,7 +120,7 @@ def test_mise_a_jour_transmet_la_nature_d_objet_geographique_renseignee():
     station = {"id_station": 42, "id_dataset": 3,
                "id_nomenclature_geographic_object": 614}
 
-    props = p.build_station_payload(station, [], [], None)["properties"]
+    props = p.build_station_payload(station, [], [], _GEOM)["properties"]
 
     assert props["id_nomenclature_geographic_object"] == 614
 
@@ -158,7 +163,7 @@ def test_habitat_neuf_dans_une_station_connue_reste_une_creation():
     habitats = [{"cd_hab": 10, "nom_cite": "h", "determiner": None}]
 
     habitat = p.build_station_payload(
-        station, habitats, [], None
+        station, habitats, [], _GEOM
     )["properties"]["habitats"][0]
 
     assert "determiner" not in habitat
@@ -167,7 +172,7 @@ def test_habitat_neuf_dans_une_station_connue_reste_une_creation():
 def test_mise_a_jour_efface_les_observateurs():
     station = {"id_station": 42, "id_dataset": 3}
 
-    props = p.build_station_payload(station, [], [], None)["properties"]
+    props = p.build_station_payload(station, [], [], _GEOM)["properties"]
 
     assert props["observers"] == []
 
@@ -451,7 +456,7 @@ def test_l_uuid_fourni_part_dans_le_payload_d_un_habitat_neuf():
     """GeoNature reprend l'UUID fourni : c'est par lui qu'on retrouve l'habitat."""
     payload = p.build_station_payload(
         {"id_dataset": 1, "date_min": "2026-01-01", "date_max": "2026-01-01"},
-        [{"cd_hab": 10, "nom_cite": "A", "unique_id_sinp_hab": "u-1"}], [], None,
+        [{"cd_hab": 10, "nom_cite": "A", "unique_id_sinp_hab": "u-1"}], [], _GEOM,
     )
     habitat = payload["properties"]["habitats"][0]
     assert habitat["unique_id_sinp_hab"] == "u-1"
@@ -486,3 +491,37 @@ def test_cle_serveur_distingue_deux_serveurs():
         p.cle_serveur("https://geo.exemple.fr/api")
     )
     assert p.cle_serveur("") is None and p.cle_serveur(None) is None
+
+
+# ------------------------------------------- refus prévisibles, dits avant l'envoi
+def test_station_sans_geometrie_refusee_avec_un_motif():
+    """La colonne serveur est NOT NULL : la station partait et revenait en 500."""
+    with pytest.raises(ValueError, match="sans géométrie"):
+        p.build_station_payload({"id_dataset": 3}, [], [], None)
+
+
+def test_texte_trop_long_refuse_avant_l_envoi():
+    """technical_precision est un varchar(500) côté serveur : au-delà, toute la
+    station était refusée en « HTTP 500 », sans dire quel champ dépassait."""
+    habitat = {"cd_hab": 10, "nom_cite": "Pelouse", "technical_precision": "x" * 501}
+    with pytest.raises(ValueError) as erreur:
+        p.build_station_payload({"id_dataset": 3}, [habitat], [], _GEOM)
+    message = str(erreur.value)
+    assert "habitat 1 « Pelouse »" in message
+    assert "501 caractères (500 au plus)" in message
+
+
+def test_texte_a_la_limite_accepte():
+    habitat = {"cd_hab": 10, "nom_cite": "Pelouse", "technical_precision": "x" * 500}
+    p.build_station_payload({"id_dataset": 3, "station_name": "n" * 1000},
+                            [habitat], [], _GEOM)
+
+
+def test_coordonnees_3d_ramenees_en_2d():
+    """Une entité reprise d'une couche 3D gardait son Z : GeoNature exige du 2D."""
+    geom = {"type": "Polygon",
+            "coordinates": [[[1.5, 42.9, 812.0], [1.6, 42.9, 815.0],
+                             [1.6, 43.0, 820.0], [1.5, 42.9, 812.0]]]}
+    envoyee = p.build_station_payload({"id_dataset": 3}, [], [], geom)["geometry"]
+    assert envoyee["coordinates"] == [[[1.5, 42.9], [1.6, 42.9], [1.6, 43.0],
+                                       [1.5, 42.9]]]
