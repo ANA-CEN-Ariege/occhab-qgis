@@ -1613,6 +1613,10 @@ class AttributeTableDialog(QDialog):
         `reject()` — et laisse la fenêtre ouverte si elle l'est restée —, donc les
         trois chemins passent par cette garde, une seule fois.
         """
+        # Une cellule encore en cours d'édition n'est validée qu'à la perte du
+        # focus : sans cela, fermer par la croix testait les modifications AVANT
+        # elle, et sa valeur partait avec la fenêtre sans question.
+        self.table.setFocus()
         if self.grille.a_des_modifications():
             reponse = QMessageBox.question(
                 self, "Modifications non enregistrées",

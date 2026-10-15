@@ -545,7 +545,7 @@ class ExportLayerManager:
         # projet. La remplacer effacerait ce travail sans le dire. Le rechargement
         # d'un même export dépose donc une couche de plus, à côté.
         libelle = self._nom_libre(libelle)
-        chemin = os.path.join(self._directory, "%s.geojson" % nom_de_fichier(libelle))
+        chemin = self._chemin_libre(libelle)
         # L'API rend les propriétés PAR ORDRE ALPHABÉTIQUE, quel que soit
         # l'ordre des colonnes de la vue. Sans importance pour cartographier —
         # décisif pour livrer : un gabarit imposé se lit colonne après colonne,
@@ -646,6 +646,23 @@ class ExportLayerManager:
         group = root.findGroup(GROUP_NAME)
         if group is not None and not group.children():
             root.removeChildNode(group)
+
+    def _chemin_libre(self, libelle):
+        """Fichier NEUF pour cet export, jamais celui d'une couche existante.
+
+        Le nom de fichier est tronqué à 80 caractères : deux libellés longs ne
+        différant que par la fin — la typologie, le mode, le « (2) » d'un
+        rechargement — tombaient sur le même fichier. Le second export
+        réécrivait alors les données qu'une couche déjà chargée, ou un projet
+        enregistré, lit encore.
+        """
+        base = nom_de_fichier(libelle)
+        chemin = os.path.join(self._directory, "%s.geojson" % base)
+        numero = 2
+        while os.path.exists(chemin):
+            chemin = os.path.join(self._directory, "%s_%d.geojson" % (base, numero))
+            numero += 1
+        return chemin
 
     def _nom_libre(self, souhaite):
         """Nom de couche encore inutilisé dans le projet, en numérotant au besoin."""

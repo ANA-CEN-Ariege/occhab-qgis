@@ -90,6 +90,20 @@ class ConnectionDialog(QDialog):
         if not api_url:
             QMessageBox.warning(self, "Connexion", "Renseignez l'URL de l'API.")
             return
+        if api_url.lower().startswith("http://"):
+            # L'identifiant et le mot de passe partent dans la requête de
+            # connexion : sans HTTPS, ils circulent en clair sur le réseau.
+            reponse = QMessageBox.question(
+                self, "Connexion non chiffrée",
+                "Cette adresse commence par « http:// » : l'identifiant et le mot "
+                "de passe circuleront EN CLAIR sur le réseau.\n\n"
+                "Utilisez « https:// » si le serveur le permet. Continuer quand "
+                "même ?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if reponse != QMessageBox.StandardButton.Yes:
+                return
 
         authcfg = self.auth_select.configId()
         if not authcfg:
