@@ -54,7 +54,8 @@ _CODE_FIELDS = {
     "zone_humide": (ref.codes(ref.ZONES_HUMIDES), ref.ALIAS_ZONE_HUMIDE),
 }
 _TEXT_FIELDS = ("critere", "remarque")
-_LIST_FIELDS = {"pee": 3}  # plantes exotiques envahissantes : 3 taxons au plus
+MAX_PEE = 3  # plantes exotiques envahissantes : 3 taxons au plus
+_LIST_FIELDS = {"pee": MAX_PEE}
 
 # --- Détermination hors HABREF et correspondances arbitrées. -----------------
 # Deux clés STRUCTURÉES, seules de leur espèce dans le bloc :

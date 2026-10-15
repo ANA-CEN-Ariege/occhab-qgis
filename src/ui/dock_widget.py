@@ -146,6 +146,23 @@ def _meme_geometrie(wkt_a, wkt_b):
     return not a.isNull() and not b.isNull() and a.isGeosEqual(b)
 
 
+def _rang_au_clic(geom, centre):
+    """Clé de tri des stations proches d'un clic : la plus petite l'emporte.
+
+    D'abord un point ou une ligne à portée du clic (le plus proche), puis le
+    polygone qui CONTIENT le clic — le plus petit, pour l'îlot posé dans une
+    station plus grande —, enfin un polygone seulement frôlé.
+    """
+    from qgis.core import QgsWkbTypes
+
+    types = getattr(QgsWkbTypes, "GeometryType", QgsWkbTypes)
+    if geom.type() != types.PolygonGeometry:
+        return (0, geom.distance(centre))
+    if geom.contains(centre):
+        return (1, geom.area())
+    return (2, geom.distance(centre))
+
+
 def _outil_d_edition(outil):
     """L'outil de carte modifie-t-il des entités (sommets, ajout, découpe…) ?"""
     if outil is None:
@@ -2958,6 +2975,12 @@ class OccHabDockWidget(QDockWidget):
         dialog = self._make_station_dialog(station=full)
         if not executer(dialog):
             return
+        if not dialog.modifiee():
+            # Ouvrir une fiche pour la lire puis cliquer OK la remettait « à
+            # synchroniser » : renvoyée sans raison, et en conflit si un
+            # collègue l'avait modifiée sur GeoNature entre-temps.
+            self.iface.messageBar().pushInfo("OccHab", "Fiche inchangée.")
+            return
         station, habitats = dialog.get_result()
         observers = station.pop("_observers", [])
         # L'éditeur devient updated_by ; created_by (créateur d'origine) reste inchangé.
@@ -3260,6 +3283,8 @@ class OccHabDockWidget(QDockWidget):
                 QgsCoordinateReferenceSystem,
                 QgsCoordinateTransform,
                 QgsFeatureRequest,
+                QgsGeometry,
+                QgsPointXY,
                 QgsProject,
                 QgsRectangle,
             )
@@ -3270,6 +3295,7 @@ class OccHabDockWidget(QDockWidget):
             rect = QgsRectangle(
                 point.x() - tol, point.y() - tol, point.x() + tol, point.y() + tol
             )
+            centre = QgsGeometry.fromPointXY(QgsPointXY(point))
             canvas_crs = canvas.mapSettings().destinationCrs()
             if canvas_crs.isValid() and canvas_crs.authid() != "EPSG:4326":
                 transform = QgsCoordinateTransform(
@@ -3278,14 +3304,29 @@ class OccHabDockWidget(QDockWidget):
                     QgsProject.instance(),
                 )
                 rect = transform.transformBoundingBox(rect)
+                centre.transform(transform)
+            # Test EXACT, et la station réellement sous le clic. Le filtre seul
+            # ne compare que les emprises : dans une mosaïque, double-cliquer
+            # dans le creux d'une station en L ouvrait sa voisine — la plus
+            # récente, première servie —, et la fiche corrigée était la sienne.
+            exact = getattr(QgsFeatureRequest, "ExactIntersect", None)
+            if exact is None:  # pragma: no cover - énumérations scopées seules
+                from qgis.core import Qgis
+
+                exact = Qgis.FeatureRequestFlag.ExactIntersect
+            requete = QgsFeatureRequest().setFilterRect(rect).setFlags(exact)
+            candidats = []
             for layer in self.layers.existing_layers():
                 if layer.fields().indexOf("id") < 0:
                     continue
-                for feature in layer.getFeatures(QgsFeatureRequest().setFilterRect(rect)):
+                for feature in layer.getFeatures(requete):
                     value = feature["id"]
-                    if value is not None:
-                        self._edit_station_by_id(int(value))
-                        return
+                    geom = feature.geometry()
+                    if value is None or geom is None or geom.isEmpty():
+                        continue
+                    candidats.append((_rang_au_clic(geom, centre), int(value)))
+            if candidats:
+                self._edit_station_by_id(min(candidats)[1])
         except Exception as exc:  # noqa: BLE001
             self.logger.warning("Ouverture depuis la carte échouée : %s", exc)
 

@@ -510,6 +510,8 @@ class ChampDelegate(QStyledItemDelegate):
             # encore être en train d'y réécrire le libellé préfixé de la
             # typologie, qui n'est pas le nom cité.
             nom = editor.nom_choisi or editor.text().strip() or None
+            if nom is None and not champ.effacable:
+                return  # un nom cité vidé n'efface rien (NOT NULL)
             # La ligne SOURCE se lit AVANT d'écrire le nom : la table est triable
             # et filtrable, et le proxy re-trie ou re-filtre dès ce `setData`. Lu
             # après, `index` désignait la ligne venue prendre la place de
@@ -717,9 +719,31 @@ class AppliquerDialog(QDialog):
         boutons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
         )
-        boutons.accepted.connect(self.accept)
+        boutons.accepted.connect(self._valider)
         boutons.rejected.connect(self.reject)
         layout.addWidget(boutons)
+
+    def _valider(self):
+        """Refuser un nom cité tapé sans être choisi dans la liste.
+
+        Seul le CHOIX d'une proposition coche aussi le cd_hab (`_lier_habref`).
+        Un nom simplement tapé partait seul : trente habitats recevaient le
+        nouveau nom en gardant l'ancien code — une donnée incohérente.
+        """
+        nom = self._editeurs.get((ch.HABITAT, "nom_cite"))
+        code = self._editeurs.get((ch.HABITAT, "cd_hab"))
+        if nom and code and nom[0].isChecked() and not (
+            code[0].isChecked() and code[1].value()
+        ):
+            QMessageBox.warning(
+                self, "Nom cité sans code",
+                "Choisissez le nom cité dans la liste des propositions : c'est ce "
+                "choix qui pose aussi le cd_hab. Tapé sans être choisi, le nom "
+                "remplacerait l'ancien en gardant l'ancien code.\n\n"
+                "(Si le code est connu, cochez et renseignez aussi « cd_hab ».)",
+            )
+            return
+        self.accept()
 
     #: Largeur des listes déroulantes, en caractères (cf. `dialog_size`). Choisie
     #: pour que le contenu tienne dans `TAILLE_VOULUE` sans ascenseur horizontal,
@@ -1411,15 +1435,22 @@ class AttributeTableDialog(QDialog):
         self._maj_etat()
 
     # ------------------------------------------------------------- écriture
-    def enregistrer(self):
+    def enregistrer(self, silencieux=False):
+        """Écrire les modifications en base. True si plus rien n'est en attente.
+
+        `silencieux` : pas de bilan quand tout s'est bien passé (fermeture de
+        QGIS) ; les contrôles bloquants et les échecs restent affichés.
+        """
         modifiees = self.grille.modifications()
         if not modifiees:
-            QMessageBox.information(self, "OccHab", "Aucune modification à enregistrer.")
-            return
+            if not silencieux:
+                QMessageBox.information(self, "OccHab",
+                                        "Aucune modification à enregistrer.")
+            return True
         if not self._verifier_mesures():
-            return
+            return False
         if not self._verifier_recouvrements():
-            return
+            return False
 
         # Une station validée sur laquelle on est revenu redevient un brouillon.
         self.grille.retrograder_statuts()
@@ -1428,6 +1459,7 @@ class AttributeTableDialog(QDialog):
                       if len(modifiees) >= self.SEUIL_SAUVEGARDE else None)
         ecrites = echecs = disparues = 0
         self._a_supprimer_gardees = 0  # compté par `_ecrire_station`
+        self._habitats_perdus = 0  # idem
         for station in modifiees:
             try:
                 if self._ecrire_station(station):
@@ -1439,8 +1471,11 @@ class AttributeTableDialog(QDialog):
                 if self.logger:
                     self.logger.error("Station %s non enregistrée : %s",
                                       station.get("id"), exc)
-        if not echecs and not disparues:
-            self.grille.oublier_modifications()
+                continue
+            # Écrite ou disparue : plus rien à reporter. Seules les stations en
+            # échec restent modifiées — tout garder faisait réécrire plus tard
+            # des valeurs corrigées entre-temps dans la fiche.
+            self.grille.oublier_station(station)
         self.model.rafraichir_tout()
         self._maj_etat()
         # La liste du dock et la carte affichent encore l'état d'avant : la table
@@ -1457,14 +1492,21 @@ class AttributeTableDialog(QDialog):
                         "supprimées de GeoNature à la prochaine synchronisation "
                         "(clic droit → Supprimer pour l'annuler)."
                         % self._a_supprimer_gardees)
+        if self._habitats_perdus:
+            message += ("\n%d modification(s) d'habitat abandonnée(s) : l'habitat "
+                        "a été supprimé entre-temps dans la fiche."
+                        % self._habitats_perdus)
         if echecs:
-            message += " %d échec(s) — voir le journal." % echecs
+            message += ("\n%d station(s) en échec — voir le journal. Leurs "
+                        "modifications restent dans la table." % echecs)
         if sauvegarde:
             # Le chemin complet part au journal : on n'en a besoin qu'au moment
             # de restaurer, et le dossier s'ouvre depuis « Base locale… ».
             message += ("\nUne copie de la base a été faite avant l'opération "
                         "(menu « Base locale… »).")
-        QMessageBox.information(self, "OccHab", message)
+        if echecs or not silencieux:
+            QMessageBox.information(self, "OccHab", message)
+        return not echecs
 
     def _ecrire_station(self, station):
         """Écrire les SEULS champs modifiés. False si la station n'existe plus.
@@ -1487,10 +1529,14 @@ class AttributeTableDialog(QDialog):
                                     station.get("id"))
             return False
         etait_en_conflit = fraiche.get("sync_status") == "conflict"
+        self._habitats_perdus += len(
+            self.grille.habitats_introuvables(station, fraiche)
+        )
         colonnes, colonnes_habitats = self.grille.reporter_modifications(
             station, fraiche
         )
         champs = {cle: fraiche.get(cle) for cle in colonnes}
+        observateurs = None
         if "observers" in champs:
             # Ni une colonne ni un champ envoyé tel quel : la liste vit dans une
             # table à part, et sa version texte alimente la liste du dock,
@@ -1500,7 +1546,6 @@ class AttributeTableDialog(QDialog):
             champs["observers_txt"] = ", ".join(
                 o.get("observer_name") or "" for o in observateurs
             ) or None
-            self.db.replace_observers(station["id"], observateurs)
         if fraiche.get("sync_status") == "to_delete":
             # Une modification en lot n'annule pas une suppression demandée :
             # la station était sinon renvoyée au lieu d'être supprimée, sans
@@ -1509,15 +1554,21 @@ class AttributeTableDialog(QDialog):
             self._a_supprimer_gardees = getattr(self, "_a_supprimer_gardees", 0) + 1
         else:
             champs["sync_status"] = "pending"  # toute édition remet en attente d'envoi
-        self.db.update_station(station["id"], **champs)
         habitats_frais = {h.get("id"): h for h in fraiche.get("habitats") or []}
-        for id_habitat, cles in colonnes_habitats.items():
-            habitat = habitats_frais[id_habitat]
-            self.db.update_habitat(id_habitat, **{c: habitat.get(c) for c in cles})
-        if etait_en_conflit:
-            # Conflit résolu côté local : oublier l'empreinte pour que la
-            # prochaine synchro impose cette version (cf. édition unitaire).
-            self.db.set_server_snapshot(station["id"], None)
+        # Station, habitats et observateurs en UNE transaction : écrits l'un
+        # après l'autre, un habitat refusé (nom cité vidé) laissait la station
+        # déjà passée « à synchroniser » et en brouillon. Un conflit est résolu
+        # côté local : l'empreinte oubliée, la prochaine synchro impose cette
+        # version (cf. édition unitaire).
+        self.db.ecrire_modifications(
+            station["id"], champs,
+            habitats={
+                id_habitat: {c: habitats_frais[id_habitat].get(c) for c in cles}
+                for id_habitat, cles in colonnes_habitats.items()
+            },
+            observateurs=observateurs,
+            effacer_empreinte=etait_en_conflit,
+        )
         return True
 
     def _verifier_mesures(self):
@@ -1642,6 +1693,35 @@ class AttributeTableDialog(QDialog):
         self._desabonner_de_la_carte()
         # `finished` part d'ici : le dock oublie la fenêtre et la détruit.
         super().reject()
+
+    def proposer_enregistrement(self, raison, annulable=True):
+        """Avant une fermeture imposée : QGIS qui se ferme, extension rechargée.
+
+        `liberer()` ne demande rien — une boîte modale au milieu du déchargement
+        —, si bien que fermer QGIS jetait les modifications non enregistrées
+        sans un mot. On pose donc la question AVANT, quand c'est encore
+        possible. Renvoie False si l'utilisateur annule (ou si l'enregistrement
+        laisse des échecs) : l'appelant renonce alors à fermer.
+        """
+        self.table.setFocus()  # valider une cellule en cours d'édition
+        if not self.grille.a_des_modifications():
+            return True
+        boutons = (QMessageBox.StandardButton.Save
+                   | QMessageBox.StandardButton.Discard)
+        if annulable:
+            boutons |= QMessageBox.StandardButton.Cancel
+        reponse = QMessageBox.question(
+            self, "Modifications non enregistrées",
+            "%d station(s) modifiée(s) dans le tableau OccHab ne sont pas "
+            "enregistrées.\n\n%s" % (len(self.grille.modifications()), raison),
+            boutons, QMessageBox.StandardButton.Save,
+        )
+        if reponse == QMessageBox.StandardButton.Save:
+            return self.enregistrer(silencieux=True) or not annulable
+        if reponse == QMessageBox.StandardButton.Discard:
+            self.grille.oublier_modifications()
+            return True
+        return False
 
     def liberer(self):
         """Fermer sans rien demander ni rien émettre (déchargement de l'extension).

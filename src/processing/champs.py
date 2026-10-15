@@ -127,8 +127,10 @@ CHAMPS = [
     # ---------------------------------------------------------- identité
     _champ(ID_STATION, STATION, "id_station", ENTIER, COLONNE, G_IDENTITE,
            masse=False, cellule=False, lecture_seule=True, largeur=90),
+    # Vidé, le statut excluait la station des deux filtres « Brouillons » et
+    # « Validées » : elle disparaissait de la table.
     _champ("validation_status", STATION, "Statut", CODE, COLONNE, G_IDENTITE,
-           referentiel=ref.STATUTS_VALIDATION, largeur=90),
+           referentiel=ref.STATUTS_VALIDATION, effacable=False, largeur=90),
     _champ("sync_status", STATION, "Synchro", TEXTE, COLONNE, G_IDENTITE,
            masse=False, lecture_seule=True, largeur=90),
 
@@ -194,8 +196,12 @@ CHAMPS = [
     # de polygones, et une correction de détermination doit pouvoir se propager.
     # Les deux vont ensemble — l'interface les remplit d'un seul choix HABREF,
     # car un code sans son nom (ou l'inverse) serait une donnée incohérente.
-    _champ("cd_hab", HABITAT, "cd_hab", ENTIER, COLONNE, G_HABITAT, largeur=80),
-    _champ("nom_cite", HABITAT, "Nom cité", TEXTE, COLONNE, G_HABITAT, largeur=200),
+    # NOT NULL l'un et l'autre, en local comme sur GeoNature : vidés dans une
+    # cellule, ils faisaient échouer l'enregistrement de la station entière.
+    _champ("cd_hab", HABITAT, "cd_hab", ENTIER, COLONNE, G_HABITAT,
+           effacable=False, largeur=80),
+    _champ("nom_cite", HABITAT, "Nom cité", TEXTE, COLONNE, G_HABITAT,
+           effacable=False, largeur=200),
     # Le nom cité est celui que le botaniste a ÉCRIT ; celui-ci est celui que
     # HABREF donne au cd_hab retenu. Les deux diffèrent souvent — abréviation,
     # variante, faute de frappe — et c'est justement ce qu'on veut voir : la

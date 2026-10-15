@@ -300,6 +300,33 @@ class Grille:
         """Repartir d'un état « propre » (après un enregistrement réussi)."""
         self._modifies = set()
 
+    def oublier_station(self, station):
+        """Oublier les modifications d'UNE station et de ses habitats.
+
+        Après un enregistrement partiel, seules les stations en échec doivent
+        rester modifiées. Tout garder faisait réécrire plus tard, depuis la
+        copie de la table, des valeurs corrigées entre-temps dans la fiche.
+        """
+        habitat_ids = {h.get("id") for h in station.get("habitats") or []}
+        self._modifies = {
+            (niveau, objet_id, cle) for niveau, objet_id, cle in self._modifies
+            if not ((niveau == ch.STATION and objet_id == station.get("id"))
+                    or (niveau == ch.HABITAT and objet_id in habitat_ids))
+        }
+
+    def habitats_introuvables(self, station, fraiche):
+        """Ids des habitats modifiés ici mais absents de `fraiche` (relue en base).
+
+        Un habitat supprimé dans la fiche entre-temps : sa modification ne peut
+        plus être écrite, et il faut le dire plutôt que l'ignorer.
+        """
+        sources = {h.get("id") for h in station.get("habitats") or []}
+        cibles = {h.get("id") for h in fraiche.get("habitats") or []}
+        return {
+            objet_id for niveau, objet_id, _cle in self._modifies
+            if niveau == ch.HABITAT and objet_id in sources and objet_id not in cibles
+        }
+
     # ------------------------------------------------------- cohérence
     def recouvrements_incoherents(self, stations=None):
         """Stations dont la somme des recouvrements s'écarte de 100 %.

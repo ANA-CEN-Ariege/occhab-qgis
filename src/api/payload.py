@@ -154,6 +154,51 @@ def mesures_incoherentes(station):
     return fautifs
 
 
+#: Longueur maximale des colonnes texte de GeoNature (schéma pr_occhab). Au-delà,
+#: PostgreSQL refuse l'écriture et GeoNature répond « HTTP 500 » pour la
+#: station ENTIÈRE, sans dire quel champ dépasse. `technical_precision` porte le
+#: bloc ANA-EVAL : enjeu, état, critère, remarque, PEE et correspondances s'y
+#: additionnent, et 500 caractères s'atteignent avec un critère un peu détaillé.
+LONGUEURS_MAX_STATION = (
+    ("station_name", 1000, "nom de la station"),
+    ("observers_txt", 500, "observateurs"),
+)
+LONGUEURS_MAX_HABITAT = (
+    ("nom_cite", 500, "nom cité"),
+    ("determiner", 500, "déterminateur"),
+    ("technical_precision", 500,
+     "précision technique, avec enjeu, état, critère, remarque, PEE et "
+     "correspondances"),
+)
+
+
+def textes_trop_longs(objet, limites):
+    """[(libellé, longueur, maximum)] des textes de `objet` trop longs pour GeoNature."""
+    trop = []
+    for cle, maximum, libelle in limites:
+        valeur = (objet or {}).get(cle)
+        if valeur is not None and len(str(valeur)) > maximum:
+            trop.append((libelle, len(str(valeur)), maximum))
+    return trop
+
+
+def _en_2d(geometrie):
+    """GeoJSON sans Z ni M : GeoNature refuse toute géométrie qui n'est pas 2D.
+
+    Une entité reprise d'une couche 3D (BD TOPO…) gardait son altitude dans
+    chaque coordonnée, et la contrainte `enforce_dims_geom_4326` refusait la
+    station avec une erreur 500.
+    """
+    def plat(coordonnees):
+        if coordonnees and isinstance(coordonnees[0], (int, float)):
+            return list(coordonnees[:2])
+        return [plat(c) for c in coordonnees]
+
+    if not isinstance(geometrie, dict) or "coordinates" not in geometrie:
+        return geometrie
+    return dict(geometrie, coordinates=plat(geometrie["coordinates"]))
+
+
 def build_station_payload(station, habitats, observers, geom_geojson):
     """Construire le GeoJSON Feature attendu par POST /occhab/stations/.
 
@@ -179,10 +224,31 @@ def build_station_payload(station, habitats, observers, geom_geojson):
             La synchro traite les stations une par une : celle-ci échoue avec un
             message clair, les autres passent.
     """
-    if geom_geojson is not None and not coordonnees_wgs84(geom_geojson):
+    if geom_geojson is None:
+        # Station créée « sans géométrie (à tracer plus tard) » : la colonne
+        # serveur est NOT NULL, l'envoi échouait en « HTTP 500 ».
+        raise ValueError(
+            "Station sans géométrie : tracez-la (menu « Géométrie ») avant de la "
+            "synchroniser."
+        )
+    geom_geojson = _en_2d(geom_geojson)
+    if not coordonnees_wgs84(geom_geojson):
         raise ValueError(
             "Géométrie hors du domaine WGS84 (longitude ±180, latitude ±90) : "
             "vérifiez le SCR de la couche d'origine."
+        )
+    trop_longs = textes_trop_longs(station, LONGUEURS_MAX_STATION)
+    for numero, habitat in enumerate(habitats or [], 1):
+        trop_longs += [
+            ("habitat %d « %s » : %s" % (numero, habitat.get("nom_cite") or "?",
+                                         libelle), longueur, maximum)
+            for libelle, longueur, maximum in textes_trop_longs(
+                habitat, LONGUEURS_MAX_HABITAT)
+        ]
+    if trop_longs:
+        raise ValueError(
+            "Texte trop long pour GeoNature — %s. Raccourcissez-le dans la fiche."
+            % " ; ".join("%s : %d caractères (%d au plus)" % t for t in trop_longs)
         )
     fautifs = mesures_incoherentes(station)
     if fautifs:
