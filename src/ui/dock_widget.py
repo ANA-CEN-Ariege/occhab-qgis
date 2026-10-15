@@ -1749,7 +1749,14 @@ class OccHabDockWidget(QDockWidget):
 
         Toutes les entrées de création passent par ici pour que le modèle de
         duplication ne survive jamais à la création qui l'a demandé.
+
+        Une numérisation en cours est annulée d'abord : une création lancée
+        pendant le tracé d'une autre réécrivait sa cible. Le tracé destiné à la
+        station S ouvrait alors une fiche de NOUVELLE station, S restait sans
+        géométrie, et une duplication perdait son modèle.
         """
+        if self._capture is not None and self._capture.en_cours():
+            self._capture.cancel()  # remet cible et modèle à zéro (cf. annulation)
         self._duplicate_source = template
 
     def _new_station_draw(self, geom_type):
@@ -2477,6 +2484,10 @@ class OccHabDockWidget(QDockWidget):
         for key in ("area", "altitude_min", "altitude_max"):
             if (metrics or {}).get(key) is not None:
                 fields[key] = metrics[key]
+        if geom_type != "polygon":
+            # Une surface n'a de sens que pour un polygone : devenue point ou
+            # ligne, la station gardait celle de l'ancien polygone.
+            fields["area"] = None
         self.db.update_station(station_id, **fields)
         self.logger.info("Géométrie de la station %s mise à jour", station_id)
         self.refresh()
@@ -2505,6 +2516,10 @@ class OccHabDockWidget(QDockWidget):
         for key in ("area", "altitude_min", "altitude_max"):
             if (metrics or {}).get(key) is not None:
                 fields[key] = metrics[key]
+        if prev_type != "polygon":
+            # Une surface n'a de sens que pour un polygone : devenue point ou
+            # ligne, la station gardait celle de l'ancien polygone.
+            fields["area"] = None
         self.db.update_station(station_id, **fields)
         self.logger.info("Géométrie précédente rétablie (station %s)", station_id)
         self.refresh()

@@ -183,6 +183,14 @@ class StationLayerManager:
             return []
         wkts = []
         for feature in layer.getFeatures():
+            try:
+                if feature["sync_status"] == "to_delete":
+                    # Supprimée à la prochaine synchro : découper un nouveau
+                    # tracé contre elle y laissait un trou, ou un faux
+                    # avertissement de recouvrement.
+                    continue
+            except KeyError:
+                pass
             if exclure_id is not None:
                 try:
                     if int(feature["id"]) == int(exclure_id):

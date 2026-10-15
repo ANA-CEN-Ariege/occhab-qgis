@@ -339,6 +339,7 @@ class GeometryCaptureController(QObject):
         self._tool.setLayer(self._layer)
         self._tool.digitizingCompleted.connect(self._on_completed)
         self._tool.deactivated.connect(self._on_deactivated)
+        self._tool.digitizingCanceled.connect(self._on_escape)
         # L'outil mémorise À SON ACTIVATION la couche courante, par une adresse
         # brute, pour la remettre à sa désactivation. Si l'utilisateur retirait
         # cette couche pendant le tracé, QGIS plantait en fin de tracé. On lui
@@ -383,14 +384,31 @@ class GeometryCaptureController(QObject):
         session = self._session
         QTimer.singleShot(0, lambda: self._finish(session, cancelled=True))
 
-    def _finish(self, session, cancelled):
+    def _on_escape(self):
+        # Échap : le message annonce « Échap pour annuler », mais l'outil
+        # n'effaçait que le tracé. La session restait ouverte — accrochage
+        # jointif en place, double-clic de la carte neutralisé, rechargement
+        # serveur reporté —, et le tracé suivant ouvrait encore une fiche
+        # OccHab. Émis DEPUIS le code natif : annulation différée, et l'outil
+        # d'origine est rendu, puisque l'utilisateur n'en a pas choisi d'autre.
+        if self._finished:
+            return
+        self._finished = True
+        session = self._session
+        QTimer.singleShot(
+            0, lambda: self._finish(session, cancelled=True, restaurer_outil=True)
+        )
+
+    def _finish(self, session, cancelled, restaurer_outil=None):
         if session != self._session:
             return  # une nouvelle session a démarré entre-temps → ignorer
         wkt = None if cancelled else self._pending_wkt
         notice = None if cancelled else self._pending_notice
         geom_type = self._geom_type
         # Ne pas restaurer l'outil si l'utilisateur en a déjà choisi un autre.
-        self._teardown(restore_tool=not cancelled)
+        if restaurer_outil is None:
+            restaurer_outil = not cancelled
+        self._teardown(restore_tool=restaurer_outil)
         if notice:
             # Après `_teardown` : pousser un message depuis le code natif de
             # l'outil ferait vaciller le cycle de vie décrit en tête de module.
@@ -460,6 +478,7 @@ class GeometryCaptureController(QObject):
         for signal, slot in (
             (tool.digitizingCompleted, self._on_completed),
             (tool.deactivated, self._on_deactivated),
+            (tool.digitizingCanceled, self._on_escape),
         ):
             try:
                 signal.disconnect(slot)
