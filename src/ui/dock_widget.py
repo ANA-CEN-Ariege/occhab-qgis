@@ -2567,7 +2567,13 @@ class OccHabDockWidget(QDockWidget):
                 QgsCoordinateReferenceSystem("EPSG:4326"),
                 QgsProject.instance().transformContext(),
             )
-            calc.setEllipsoid(QgsProject.instance().ellipsoid() or "WGS84")
+            # TOUJOURS l'ellipsoïde WGS84, celui des coordonnées mesurées. Celui
+            # du projet vaut « NONE » (chaîne non vide) quand le projet n'en a
+            # pas : la surface était alors calculée en degrés carrés, convertis
+            # par un facteur équatorial — environ 37 % de trop sous nos
+            # latitudes, et c'est cette valeur qui partait sur GeoNature.
+            if not calc.setEllipsoid("EPSG:7030"):
+                raise ValueError("ellipsoïde WGS84 introuvable")
             area = calc.convertAreaMeasurement(
                 calc.measureArea(QgsGeometry.fromWkt(wkt)),
                 QgsUnitTypes.AreaUnit.AreaSquareMeters,
@@ -3058,7 +3064,19 @@ class OccHabDockWidget(QDockWidget):
         return station.get("station_name") or "(station sans habitat)"
 
     def _selected_station_id(self):
+        """Station visée par une action à station unique (Éditer, Géométrie…).
+
+        La ligne COURANTE si elle est sélectionnée, sinon la première ligne
+        sélectionnée. Une sélection faite sur la carte surligne ses lignes sans
+        déplacer la ligne courante : lire celle-ci seule faisait agir
+        « Géométrie », « Rétablir », « Dupliquer » ou « Affecter » sur la
+        station cliquée AVANT, et non sur celle surlignée.
+        """
         row = self.table.currentRow()
+        modele = self.table.selectionModel()
+        lignes = sorted({i.row() for i in modele.selectedRows()}) if modele else []
+        if lignes and row not in lignes:
+            row = lignes[0]
         if row < 0:
             return None
         item = self.table.item(row, 0)
@@ -3567,7 +3585,12 @@ class OccHabDockWidget(QDockWidget):
         # Déjà marquée « à supprimer » → proposer d'annuler (réversible avant synchro).
         if full.get("sync_status") == "to_delete":
             if self._ask("Annuler la suppression", "Annuler la suppression de « %s » ?" % label):
-                self.db.update_station(station_id, sync_status="synced")
+                # « À synchroniser », et non « synchronisée » : une station en
+                # attente d'envoi (ou en conflit) peut être marquée à supprimer,
+                # et la déclarer synchronisée enterrait ses modifications — jamais
+                # envoyées, puis effacées par la purge à six mois. Un envoi de
+                # trop ne coûte rien : le contrôle de conflit s'applique.
+                self.db.update_station(station_id, sync_status="pending")
                 self.refresh()
             return
 
