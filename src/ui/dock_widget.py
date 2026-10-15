@@ -7,6 +7,7 @@ import re
 
 from qgis.PyQt.QtCore import QItemSelection, QItemSelectionModel, Qt, QUrl
 from qgis.PyQt.QtGui import QDesktopServices
+from qgis.core import QgsProject
 from qgis.PyQt.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -182,6 +183,7 @@ class OccHabDockWidget(QDockWidget):
         self._listes_notice_shown = False
         self._build_ui()
         self._install_map_interaction()
+        QgsProject.instance().removeAll.connect(self._sur_vidage_projet)
         self._oublier_ancien_cache_habref()
         self.refresh()
         self._reconnecter()
@@ -2587,6 +2589,10 @@ class OccHabDockWidget(QDockWidget):
                 self.logger.debug("removeEventFilter ignoré : %s", exc)
             self._map_filter_installed = False
         self._clear_server_prompt()
+        try:
+            QgsProject.instance().removeAll.disconnect(self._sur_vidage_projet)
+        except (TypeError, RuntimeError):
+            pass
         # Annuler une saisie rappelle `_recharger_serveur_reporte` : pas de
         # requête réseau ni de couche neuve pendant le déchargement.
         self._serveur_en_attente = False
@@ -2597,6 +2603,22 @@ class OccHabDockWidget(QDockWidget):
         self.layers.cleanup()
         self.server_layers.cleanup()
         self.export_layers.cleanup()
+
+    def _sur_vidage_projet(self):
+        """Clore les saisies quand le projet se vide.
+
+        Nouveau projet, ouverture d'un autre, sortie de QGIS : rien ne prévenait
+        les saisies en cours, qui gardaient la couche active, l'outil précédent
+        et la couche de travail d'un projet disparu — et QGIS plantait à la
+        validation suivante, ou à la sortie, en leur repassant une couche
+        détruite. `removeAll` est émis alors que toutes les couches sont encore
+        là : c'est le dernier moment pour clore proprement.
+        """
+        self._serveur_en_attente = False
+        if self._capture is not None:
+            self._capture.abandonner()
+        if self._geom_editor is not None:
+            self._geom_editor.abandonner()
 
     def _last_observers(self):
         """Observateurs de la dernière saisie, pour pré-remplir la suivante."""

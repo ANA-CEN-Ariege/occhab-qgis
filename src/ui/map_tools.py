@@ -138,6 +138,27 @@ class AideAuTrace:
             self._reglages_precedents = {}
             self._tracage_precedent = None
 
+    def oublier(self):
+        """Abandonner les réglages retenus SANS les rendre au projet.
+
+        Pour un projet qu'on ferme (nouveau projet, ouverture d'un autre, sortie
+        de QGIS). QGIS remet alors l'accrochage à zéro AVANT de signaler le
+        retrait des couches, et ne retire plus les couches détruites de cette
+        configuration : y rendre les réglages réinstallerait l'adresse de
+        couches sur le point de disparaître. Le suivi de contour, réglage de
+        l'application et non du projet, est rendu.
+        """
+        if self._config_precedente is None:
+            return
+        try:
+            self._restaurer_tracage()
+        except Exception as exc:  # noqa: BLE001
+            self._avertir("Suivi de contour non restauré : %s", exc)
+        finally:
+            self._config_precedente = None
+            self._reglages_precedents = {}
+            self._tracage_precedent = None
+
     # ------------------------------------------------------------- interne
     @staticmethod
     def _couches_vecteur():
@@ -308,6 +329,13 @@ class GeometryCaptureController(QObject):
         self._teardown(restore_tool=True)
         self.cancelled.emit()
 
+    def abandonner(self):
+        """Le projet se vide : annuler sans rendre l'accrochage (cf. `oublier`)."""
+        if not self.en_cours():
+            return
+        self._aide.oublier()
+        self.cancel()
+
     # ----------------------------------------------------------- callbacks
     def _on_completed(self, feature):
         # Émis DEPUIS le code natif → on lit seulement la géométrie, nettoyage différé.
@@ -350,16 +378,26 @@ class GeometryCaptureController(QObject):
         self._aide.restaurer()
         tool = self._tool
         self._disconnect(tool)
+        restaure = False
         if restore_tool and self._prev_tool is not None:
             try:
                 self._canvas.setMapTool(self._prev_tool)
+                restaure = True
             except RuntimeError:
-                # L'outil précédent a été supprimé : au moins libérer le nôtre.
-                try:
-                    self._canvas.unsetMapTool(tool)
-                except (RuntimeError, TypeError):
-                    pass
+                pass  # l'outil précédent a été supprimé
+        if not restaure and tool is not None:
+            # Notre outil peut être encore celui du canevas : session résiduelle
+            # reprise par `start`, ou outil précédent disparu. Le détruire tel
+            # quel sautait sa désactivation, qui rend au canevas sa couche
+            # courante : la couche de saisie le restait, détruite juste après.
+            # `unsetMapTool` le désactive proprement — et ne fait rien s'il a
+            # déjà été remplacé.
+            try:
+                self._canvas.unsetMapTool(tool)
+            except (RuntimeError, TypeError):
+                pass
         if self._layer is not None:
+            self._liberer_couche_courante()
             try:
                 QgsProject.instance().removeMapLayer(self._layer.id())
             except (RuntimeError, AttributeError):
@@ -371,6 +409,21 @@ class GeometryCaptureController(QObject):
         self._prev_tool = None
         self._pending_wkt = None
         self._pending_notice = None
+
+    def _liberer_couche_courante(self):
+        """Que la couche de saisie ne reste pas la couche courante du canevas.
+
+        L'outil de numérisation en fait la couche courante, et ne rend la
+        précédente que s'il y en avait une. Le canevas oublie sans bruit une
+        couche détruite, mais l'accrochage, lui, garde son adresse : en mode
+        « couche active », QGIS plantait au premier accrochage suivant.
+        """
+        try:
+            courante = self._canvas.currentLayer()
+            if courante is not None and courante.id() == self._layer.id():
+                self._canvas.setCurrentLayer(self.iface.activeLayer())
+        except (RuntimeError, AttributeError):
+            pass
 
     def _disconnect(self, tool):
         if tool is None:
@@ -497,6 +550,13 @@ class GeometryEditController(QObject):
         self._finished = True
         self._teardown()
         self.cancelled.emit()
+
+    def abandonner(self):
+        """Le projet se vide : annuler sans rendre l'accrochage (cf. `oublier`)."""
+        if not self.en_cours():
+            return
+        self._aide.oublier()
+        self.cancel()
 
     # ----------------------------------------------------------- callbacks
     def _confirm(self):
