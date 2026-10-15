@@ -284,10 +284,17 @@ class OccHabDockWidget(QDockWidget):
         # Panne réseau rencontrée pendant le chargement des listes : on cesse
         # alors d'interroger le serveur (cf. `_appel_reference`).
         self._panne_reseau = False
+        # Couches à reposer après l'ouverture d'un projet (une seule fois).
+        self._couches_a_reposer = False
+        # Traitement long en cours (synchro, export, lot) : pas de second.
+        self._traitement_en_cours = None
+        # Le trousseau n'a pas rendu le mot de passe principal : ne pas
+        # redemander à chaque ouverture du panneau.
+        self._trousseau_essaye = False
         self._build_ui()
         self._install_map_interaction()
         QgsProject.instance().removeAll.connect(self._sur_vidage_projet)
-        QgsProject.instance().readProject.connect(self._sur_projet_change)
+        QgsProject.instance().readProject.connect(self._sur_projet_lu)
         QgsProject.instance().cleared.connect(self._sur_projet_change)
         self._oublier_ancien_cache_habref()
         self.refresh()
@@ -896,11 +903,12 @@ class OccHabDockWidget(QDockWidget):
         Trois garde-fous, parce qu'un plugin qui parle au réseau à l'ouverture
         de QGIS se fait vite détester :
 
-        - **rien sans mot de passe principal déjà donné.** Lire une
-          configuration d'authentification le réclame ; le demander de nous-même
-          au démarrage ferait surgir une fenêtre que personne n'a appelée. S'il
-          n'est pas encore saisi, on ne tente rien : le bouton « Connexion »
-          reste là, et c'est lui qui le demandera, au moment choisi ;
+        - **le mot de passe principal vient du trousseau du système**, où QGIS
+          le range par défaut (cf. `_mot_de_passe_principal_disponible`). Si
+          le trousseau ne le rend pas, QGIS le demande — une seule fois par
+          session, et seulement parce qu'on vient d'ouvrir le panneau OccHab :
+          « Annuler » laisse le panneau déconnecté, et le bouton « Connexion »
+          reste là ;
         - **aucun message en cas d'échec.** Hors ligne — le cas d'usage même de
           cette extension — la tentative échoue, et c'est normal : le plugin
           démarre déconnecté, comme avant ;
@@ -945,15 +953,15 @@ class OccHabDockWidget(QDockWidget):
         self._load_reference_data()
         self._update_conn_summary()
 
-    @staticmethod
-    def _mot_de_passe_principal_disponible():
+    def _mot_de_passe_principal_disponible(self):
         """QGIS peut-il relire ses configurations sans rien demander ?
 
         Avec le trousseau du système — le réglage par défaut de QGIS —, le mot
         de passe principal y est rangé, mais QGIS ne l'y lit qu'à la première
         demande : `masterPasswordIsSet()` restait faux au démarrage, et la
         reconnexion automatique promise par le guide ne se faisait jamais. On
-        le fait lire ici, sans fenêtre tant que le trousseau répond.
+        le fait lire ici. Si le trousseau ne répond pas, QGIS le demande dans une
+        fenêtre : une fois par session au plus, à l'ouverture du panneau.
         """
         try:
             from qgis.core import QgsApplication
@@ -963,7 +971,9 @@ class OccHabDockWidget(QDockWidget):
                 return False
             if manager.masterPasswordIsSet():
                 return True
-            if manager.passwordHelperEnabled() and manager.masterPasswordHashInDatabase():
+            if (not self._trousseau_essaye and manager.passwordHelperEnabled()
+                    and manager.masterPasswordHashInDatabase()):
+                self._trousseau_essaye = True
                 return bool(manager.setMasterPassword(True)) and manager.masterPasswordIsSet()
             return False
         except Exception:  # noqa: BLE001
@@ -2327,6 +2337,14 @@ class OccHabDockWidget(QDockWidget):
         self._create_stations_from_geometries(geoms)
 
     def _create_stations_from_geometries(self, geoms):
+        if not self._commencer_traitement("la création des stations"):
+            return
+        try:
+            self._creer_stations(geoms)
+        finally:
+            self._traitement_en_cours = None
+
+    def _creer_stations(self, geoms):
         """Créer une station par géométrie en partageant les métadonnées d'un formulaire.
 
         Le nom reste vide (propre à chaque station) ; surface et altitude sont
@@ -2953,7 +2971,7 @@ class OccHabDockWidget(QDockWidget):
         self._clear_server_prompt()
         projet = QgsProject.instance()
         for signal, slot in ((projet.removeAll, self._sur_vidage_projet),
-                             (projet.readProject, self._sur_projet_change),
+                             (projet.readProject, self._sur_projet_lu),
                              (projet.cleared, self._sur_projet_change)):
             try:
                 signal.disconnect(slot)
@@ -2997,9 +3015,23 @@ class OccHabDockWidget(QDockWidget):
         """
         self.layers.oublier_couches()
         self.server_layers.oublier()
-        QTimer.singleShot(0, self._reposer_couches)
+
+    def _sur_projet_lu(self, *_args):
+        """Projet ouvert : oublier les couches connues, puis les reposer.
+
+        Une seule fois par ouverture : QGIS vide le projet deux fois en
+        l'ouvrant (`cleared`), et reposer les couches à chacun de ces signaux
+        rechargeait trois fois les stations du serveur — dans le projet en
+        cours de fermeture compris. Un nouveau projet vide (`cleared` seul) ne
+        reçoit rien : y ajouter des couches le marquerait « modifié ».
+        """
+        self._sur_projet_change()
+        if not self._couches_a_reposer:
+            self._couches_a_reposer = True
+            QTimer.singleShot(0, self._reposer_couches)
 
     def _reposer_couches(self):
+        self._couches_a_reposer = False
         try:
             self.refresh()
             if self.client is not None and self.client.is_authenticated:
@@ -3226,10 +3258,12 @@ class OccHabDockWidget(QDockWidget):
         dialog = self._make_station_dialog(station=full)
         if not executer(dialog):
             return
-        if not dialog.modifiee():
+        if not dialog.modifiee() and not was_conflict:
             # Ouvrir une fiche pour la lire puis cliquer OK la remettait « à
             # synchroniser » : renvoyée sans raison, et en conflit si un
-            # collègue l'avait modifiée sur GeoNature entre-temps.
+            # collègue l'avait modifiée sur GeoNature entre-temps. Sauf en
+            # conflit : valider la fiche, même inchangée, c'est le geste qui
+            # impose la version locale — le bandeau de synchro le dit.
             self.iface.messageBar().pushInfo("OccHab", "Fiche inchangée.")
             return
         station, habitats = dialog.get_result()
@@ -3669,8 +3703,12 @@ class OccHabDockWidget(QDockWidget):
             else:
                 a_verifier.setdefault(station.get("id_dataset"), []).append(station)
         QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        panne = False
         try:
             for jdd, lot in a_verifier.items():
+                if panne:  # réseau perdu : les JDD restants ne sont pas vérifiés
+                    non_verifiees.extend(lot)
+                    continue
                 try:
                     fc = self.client.get_stations(params={"id_dataset": jdd},
                                                   geojson=True)
@@ -3680,6 +3718,7 @@ class OccHabDockWidget(QDockWidget):
                 except Exception as exc:  # noqa: BLE001 - invérifiable : gardé
                     self.logger.warning("Nettoyage : JDD %s non vérifié : %s", jdd, exc)
                     non_verifiees.extend(lot)
+                    panne = bool(getattr(exc, "reseau", False))
                     continue
                 presentes = {
                     str((f.get("properties") or {}).get("id_station") or f.get("id"))
@@ -3764,8 +3803,17 @@ class OccHabDockWidget(QDockWidget):
             self.config.set(CLE_DOSSIER, dialogue.dossier())
 
         choix = dialogue.parametres()
-        if not self._place_pour_la_planche(choix.get("titre") or "Carte des habitats"):
+        titre = choix.get("titre") or "Carte des habitats"
+        decision = self._place_pour_la_planche(titre)
+        if decision is None:
             return
+        # La planche à remplacer est seulement MISE DE CÔTÉ (renommée) : elle
+        # n'est retirée qu'une fois la nouvelle créée. Retirée d'abord, un
+        # gabarit illisible ou un partage réseau débranché la faisait perdre,
+        # retouches comprises, sans rien à sa place.
+        ancienne = decision if decision is not True else None
+        if ancienne is not None:
+            ancienne.setName(self._nom_de_cote(titre))
         canevas = self.iface.mapCanvas()
         emprise = canevas.extent() if choix.pop("emprise_vue") else None
         try:
@@ -3782,11 +3830,15 @@ class OccHabDockWidget(QDockWidget):
                 **choix
             )
         except (GabaritIntrouvable, GabaritIllisible) as exc:
+            if ancienne is not None:
+                ancienne.setName(titre)
             QMessageBox.warning(
                 self, "Mise en page",
                 "Ce gabarit n'a pas pu être ouvert : %s" % exc
             )
             return
+        if ancienne is not None:
+            QgsProject.instance().layoutManager().removeLayout(ancienne)
 
         jdd = self.combo_jdd.currentData() if self.combo_jdd.isEnabled() else None
         en_attente = self._stations_en_attente(jdd)
@@ -3805,8 +3857,11 @@ class OccHabDockWidget(QDockWidget):
 
         Le bandeau des gabarits affiche le NOM de la planche (`@layout_name`) :
         refaire une carte du même titre — le geste ordinaire, on recadre, on
-        change de fond — imprimait « Titre (2) » dans le bandeau du PDF. False
-        si l'utilisateur renonce.
+        change de fond — imprimait « Titre (2) » dans le bandeau du PDF.
+
+        Renvoie None si l'utilisateur renonce, True pour créer la planche (à
+        côté de l'ancienne, ou sans concurrente), ou la planche à remplacer —
+        que l'appelant ne retire qu'une fois la nouvelle créée.
         """
         from qgis.core import QgsProject
 
@@ -3828,9 +3883,21 @@ class OccHabDockWidget(QDockWidget):
         executer(boite)
         clique = boite.clickedButton()
         if clique is remplacer:
-            gestionnaire.removeLayout(existante)
-            return True
-        return clique is garder
+            return existante
+        return True if clique is garder else None
+
+    @staticmethod
+    def _nom_de_cote(titre):
+        """Nom provisoire, encore libre, pour la planche qu'on remplace."""
+        from qgis.core import QgsProject
+
+        pris = {m.name() for m in QgsProject.instance().layoutManager().layouts()}
+        numero = 1
+        while True:
+            nom = "%s (ancienne%s)" % (titre, " %d" % numero if numero > 1 else "")
+            if nom not in pris:
+                return nom
+            numero += 1
 
     def _stations_en_attente(self, id_dataset=None):
         """Stations locales pas encore parties, dans ce jeu de données.
@@ -3908,6 +3975,30 @@ class OccHabDockWidget(QDockWidget):
 
     def export_jdd_cartography(self):
         """Exporter la cartographie d'habitats du JDD (serveur) : 1 ligne / habitat."""
+        if not self._commencer_traitement("l'export de la cartographie"):
+            return
+        try:
+            self._exporter_cartographie()
+        finally:
+            self._traitement_en_cours = None
+
+    def _commencer_traitement(self, nom):
+        """Refuser un second traitement long pendant qu'un premier tourne.
+
+        La fenêtre de progression ne devient modale qu'au bout d'un instant,
+        et elle laisse passer les événements : un double-clic sur
+        « Synchroniser » relançait la synchronisation DANS la première — tout
+        partait deux fois, les questions et le bilan aussi.
+        """
+        if self._traitement_en_cours:
+            self.iface.messageBar().pushInfo(
+                "OccHab", "Patientez : %s est en cours." % self._traitement_en_cours
+            )
+            return False
+        self._traitement_en_cours = nom
+        return True
+
+    def _exporter_cartographie(self):
         if self.client is None or not self.client.is_authenticated:
             QMessageBox.information(self, "OccHab", "Connectez-vous à GeoNature d'abord.")
             return
@@ -4279,6 +4370,16 @@ class OccHabDockWidget(QDockWidget):
     _DELETE_THRESHOLD = 3  # au-delà : confirmation renforcée
 
     def synchronize(self, ids=None):
+        """Envoyer les stations en attente ; `ids` restreint à celles-là (cf.
+        `_synchroniser`), un seul traitement long à la fois."""
+        if not self._commencer_traitement("la synchronisation"):
+            return
+        try:
+            self._synchroniser(ids)
+        finally:
+            self._traitement_en_cours = None
+
+    def _synchroniser(self, ids=None):
         """Envoyer les stations en attente ; `ids` restreint à celles-là.
 
         Le bouton synchronise tout ; le menu contextuel ne vise que la
@@ -4781,17 +4882,27 @@ class OccHabDockWidget(QDockWidget):
         from ..api.payload import parse_server_station, server_fingerprint
 
         modifiees = []
-        for station in stations:
-            if not station.get("id_station") or not station.get("server_snapshot"):
-                continue
-            try:
-                courante = self.client.get_station(station["id_station"])
-                if server_fingerprint(*parse_server_station(courante)) != \
-                        station["server_snapshot"]:
-                    modifiees.append(station)
-            except Exception as exc:  # noqa: BLE001 - 404 : déjà partie ; réseau : la suppression échouera d'elle-même
-                self.logger.info("Contrôle avant suppression ignoré (station %s) : %s",
-                                 station["id_station"], exc)
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        try:
+            for station in stations:
+                if not station.get("id_station") or not station.get("server_snapshot"):
+                    continue
+                try:
+                    courante = self.client.get_station(station["id_station"])
+                    if server_fingerprint(*parse_server_station(courante)) != \
+                            station["server_snapshot"]:
+                        modifiees.append(station)
+                except Exception as exc:  # noqa: BLE001 - 404 : déjà partie
+                    self.logger.info(
+                        "Contrôle avant suppression ignoré (station %s) : %s",
+                        station["id_station"], exc)
+                    if getattr(exc, "reseau", False):
+                        # Réseau perdu : ne pas attendre le délai station par
+                        # station. La suppression elle-même échouera, et la
+                        # synchronisation s'interrompra (cf. `_arret_sur_erreur`).
+                        break
+        finally:
+            QApplication.restoreOverrideCursor()
         if not modifiees:
             return stations, 0
         listing = "\n".join(

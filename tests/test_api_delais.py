@@ -247,3 +247,11 @@ def test_un_export_plafonne_par_l_instance_est_lu_jusqu_au_bout():
     client.session = _ServeurPlafonne()
     features, total_filtre, _total = client.iter_export_features(9)
     assert total_filtre == 1200 and len(features) == 1200
+
+
+def test_seul_le_transport_signale_une_panne_reseau():
+    """Une erreur levée sans code HTTP par l'appelant (réponse inexploitable)
+    n'est pas une panne réseau : deux d'affilée interrompaient la synchro avec
+    le motif « réseau perdu »."""
+    assert gc.GeoNatureAPIError("réponse sans identifiant").reseau is False
+    assert gc.GeoNatureAPIError("HTTP 500", status_code=500).reseau is False

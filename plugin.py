@@ -65,6 +65,8 @@ class OccHabPlugin:
         self.iface.addPluginToMenu("OccHab", self.action)
         if self.config.avertissement:
             self.iface.messageBar().pushWarning("OccHab", self.config.avertissement)
+        self.config.signaler = lambda message: self.iface.messageBar().pushWarning(
+            "OccHab", message)
         # Ici et non dans le panneau, créé seulement au premier clic sur le
         # bouton : un projet ouvert puis fermé sans l'avoir affiché doit être
         # réparé lui aussi, ou QGIS plante à sa fermeture.
@@ -96,6 +98,7 @@ class OccHabPlugin:
             QgsProject.instance().readProject.disconnect(self._reparer_mises_en_page)
         except (TypeError, RuntimeError):
             pass
+        self.config.signaler = None
         if self._garde_fermeture is not None:
             try:
                 self.iface.unregisterApplicationExitBlocker(self._garde_fermeture)
