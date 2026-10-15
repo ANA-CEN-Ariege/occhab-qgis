@@ -111,6 +111,19 @@ def _code_habref(nom_cite):
     return trouve.group(1) if trouve else None
 
 
+def _outil_d_edition(outil):
+    """L'outil de carte modifie-t-il des entités (sommets, ajout, découpe…) ?"""
+    if outil is None:
+        return False
+    from qgis.gui import QgsMapTool
+
+    drapeau = getattr(getattr(QgsMapTool, "Flag", QgsMapTool), "EditTool", None)
+    try:
+        return drapeau is not None and bool(outil.flags() & drapeau)
+    except (RuntimeError, TypeError):
+        return False
+
+
 class OccHabDockWidget(QDockWidget):
     """Widget d'ancrage : connexion GeoNature, tableau des stations, synchro."""
 
@@ -2372,6 +2385,13 @@ class OccHabDockWidget(QDockWidget):
     def _jointif_actif(self):
         return bool(self.config.get("numerisation.jointif", True))
 
+    def _saisie_geometrie_en_cours(self):
+        """Une numérisation ou une édition de sommets attend-elle l'utilisateur ?"""
+        return bool(
+            (self._capture is not None and self._capture.en_cours())
+            or (self._geom_editor is not None and self._geom_editor.en_cours())
+        )
+
     def _start_capture(self, geom_type):
         self._ensure_capture().start(geom_type, self._couches_accrochage(geom_type))
         message = (
@@ -3010,6 +3030,13 @@ class OccHabDockWidget(QDockWidget):
                 QEvent.Type.MouseButtonDblClick, QEvent.Type.MouseButtonRelease
             ) and event.button() == Qt.MouseButton.LeftButton:
                 tool = self.iface.mapCanvas().mapTool()
+                if self._saisie_geometrie_en_cours() or _outil_d_edition(tool):
+                    # Double-clic sur une arête = AJOUT DE SOMMET pour l'outil de
+                    # sommets. Ouvrir la fiche par-dessus (fenêtre modale) privait
+                    # l'outil du relâchement qui suit, et le laissait armé sur une
+                    # couche détruite à la validation : QGIS plantait au clic
+                    # suivant. Pendant un tracé, la carte est à l'outil.
+                    return super().eventFilter(obj, event)
                 is_identify = bool(tool) and "identify" in type(tool).__name__.lower()
                 # Identifier → simple clic ; autres outils (Sélectionner…) → double-clic.
                 if (etype == QEvent.Type.MouseButtonRelease and is_identify) or (

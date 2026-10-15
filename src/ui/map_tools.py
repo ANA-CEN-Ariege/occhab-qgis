@@ -205,6 +205,10 @@ class GeometryCaptureController(QObject):
         self._finished = False
         self._session = 0
 
+    def en_cours(self):
+        """Une numérisation est-elle en cours (outil actif, tracé non terminé) ?"""
+        return self._tool is not None and not self._finished
+
     # --------------------------------------------------------------- API
     def start(self, geom_type, couches_reference=None):
         """Démarrer une numérisation (nettoie proprement une session résiduelle).
@@ -376,10 +380,15 @@ class GeometryEditController(QObject):
         self._aide = AideAuTrace(self._canvas, logger)
         self._layer = None
         self._prev_tool = None
-        self._prev_active = None
+        self._prev_active_id = None
+        self._outil_sommets = None
         self._msg_item = None
         self._geom_type = None
         self._finished = False
+
+    def en_cours(self):
+        """Une édition attend-elle « Valider » ou « Annuler » ?"""
+        return self._layer is not None and not self._finished
 
     # --------------------------------------------------------------- API
     def start(self, wkt_4326, geom_type, couches_reference=None):
@@ -405,13 +414,20 @@ class GeometryEditController(QObject):
         feature.setGeometry(geom)
         self._layer.dataProvider().addFeatures([feature])
         self._layer.updateExtents()
+        # Lue AVANT l'ajout : QGIS rend active toute couche ajoutée à l'arbre, et
+        # on mémorisait jusqu'ici la couche d'édition elle-même. Retenue par son
+        # IDENTIFIANT : une couche chargée par QGIS (et non par Python) peut être
+        # détruite pendant l'édition sans que Python le sache, et la lui
+        # repasser ferait planter QGIS.
+        active = self.iface.activeLayer()
+        self._prev_active_id = active.id() if active is not None else None
         QgsProject.instance().addMapLayer(self._layer, True)  # visible
 
         self._layer.startEditing()
-        self._prev_active = self.iface.activeLayer()
         self.iface.setActiveLayer(self._layer)
         self._prev_tool = self._canvas.mapTool()
         self._activate_vertex_tool()
+        self._outil_sommets = self._canvas.mapTool()
 
         self._canvas.setExtent(self._layer.extent())
         self._canvas.zoomByFactor(1.2)
@@ -472,16 +488,18 @@ class GeometryEditController(QObject):
             except (RuntimeError, TypeError):
                 pass
             self._msg_item = None
+        self._abandonner_geste()
         if self._prev_tool is not None:
             try:
                 self._canvas.setMapTool(self._prev_tool)
             except RuntimeError:
                 pass
-        if self._prev_active is not None:
-            try:
-                self.iface.setActiveLayer(self._prev_active)
-            except RuntimeError:
-                pass
+        precedente = (
+            QgsProject.instance().mapLayer(self._prev_active_id)
+            if self._prev_active_id else None
+        )
+        if precedente is not None:
+            self.iface.setActiveLayer(precedente)
         if self._layer is not None:
             try:
                 if self._layer.isEditable():
@@ -494,8 +512,33 @@ class GeometryEditController(QObject):
                 pass
         self._layer = None
         self._prev_tool = None
-        self._prev_active = None
+        self._prev_active_id = None
         self._canvas.refresh()
+
+    def _abandonner_geste(self):
+        """Interrompre un déplacement de sommet resté en suspens.
+
+        L'outil de sommets de QGIS est UNIQUE, partagé par toutes les sessions,
+        et il déplace un sommet en deux clics : un clic le prend, le suivant le
+        pose. Valider entre les deux — ou après un double-clic sur une arête, qui
+        arme l'ajout d'un sommet — lui laissait en mémoire un déplacement en
+        cours sur la couche d'édition. Changer d'outil ne l'efface pas
+        (`setMapTool` ne nettoie pas l'outil quitté), la couche était ensuite
+        détruite, et le premier clic sur la carte de la session suivante faisait
+        planter QGIS dans `QgsVertexTool::moveVertex`.
+
+        `clean()` est la porte prévue par QGIS pour abandonner le geste en cours,
+        que l'outil soit encore actif ou que l'utilisateur en ait changé
+        entre-temps. L'outil est retenu tel qu'activé par `start` : c'est
+        celui de QGIS, qui vit aussi longtemps que l'application.
+        """
+        outil, self._outil_sommets = self._outil_sommets, None
+        if outil is None:
+            return
+        try:
+            outil.clean()
+        except (RuntimeError, AttributeError):
+            pass
 
     def _read_wkt_4326(self):
         """(WKT EPSG:4326 assaini, message) — message non nul si l'utilisateur doit
