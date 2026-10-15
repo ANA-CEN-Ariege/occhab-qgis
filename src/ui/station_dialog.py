@@ -22,6 +22,7 @@ from qgis.PyQt.QtWidgets import (
 from ..processing.duplicate import habitat_reprise, paste_fields, station_template
 from .dialog_size import ajuster_a_l_ecran, rendre_defilant
 from .habitat_form import HabitatForm
+from .modal import executer
 from .station_form import StationForm
 
 # Identifiants serveur à préserver quand on rééedite un habitat déjà synchronisé
@@ -409,7 +410,7 @@ class StationDialog(QDialog):
         dialog = _FormDialog(
             self._new_habitat_form(reprise=True), "Nouvel habitat", self
         )
-        if dialog.exec():
+        if executer(dialog):
             data = dialog.get_data()
             self.habitats.append(data)
             self._rafraichir_habitats()
@@ -420,7 +421,7 @@ class StationDialog(QDialog):
         form = self._new_habitat_form()
         form.set_data(self.habitats[row])
         dialog = _FormDialog(form, "Modifier l'habitat", self)
-        if dialog.exec():
+        if executer(dialog):
             edited = dialog.get_data()
             # Préserver les identifiants serveur pour une synchro en mise à jour.
             for key in _HAB_KEEP_KEYS:

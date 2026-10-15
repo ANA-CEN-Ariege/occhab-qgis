@@ -125,6 +125,14 @@ def test_les_stations_du_serveur_prennent_le_delai_long():
     assert client.session.dernier["timeout"] == gc.DELAI_LONG
 
 
+def test_la_creation_d_une_station_prend_le_delai_long():
+    """Une création qui dépasse le délai a souvent abouti côté serveur : la
+    renvoyer ensuite créait un doublon."""
+    client = _client()
+    client.create_station({"type": "Feature"})
+    assert client.session.dernier["timeout"] == gc.DELAI_LONG
+
+
 def test_aucune_requete_ne_part_sans_delai():
     """Le défaut du transport doit être un délai, jamais l'attente infinie."""
     client = _client()

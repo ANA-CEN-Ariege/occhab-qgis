@@ -7,6 +7,7 @@ Configuration stockée en JSON dans le répertoire de profil QGIS de l'utilisate
 Les valeurs par défaut sont fusionnées récursivement avec le fichier existant.
 """
 import json
+import os
 from pathlib import Path
 
 try:  # disponible dans QGIS, absent lors de tests unitaires purs
@@ -112,6 +113,14 @@ class Config:
         self.save()
 
     def save(self):
-        """Persister la configuration en JSON."""
-        with open(self.config_file, "w", encoding="utf-8") as fh:
+        """Persister la configuration en JSON, d'un bloc.
+
+        Écrite dans un fichier voisin puis substituée à l'ancienne : réécrire
+        `config.json` en place laissait, si QGIS tombait pendant l'écriture, un
+        fichier tronqué — et toute la configuration revenait silencieusement
+        aux valeurs par défaut au lancement suivant.
+        """
+        provisoire = Path(str(self.config_file) + ".tmp")
+        with open(provisoire, "w", encoding="utf-8") as fh:
             json.dump(self.data, fh, indent=2, ensure_ascii=False)
+        os.replace(provisoire, self.config_file)

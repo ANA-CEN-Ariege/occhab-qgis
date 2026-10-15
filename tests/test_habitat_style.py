@@ -727,3 +727,30 @@ def test_sans_typologie_rien_ne_change():
     # La clé est normalisée (minuscules, squelette de genres) : on compare donc
     # au comportement d'origine, pas à une chaîne devinée.
     assert hs.cle_habitat(feature) == "nom:chênaies-charmaies"
+
+
+def test_homonymes_de_deux_milieux_gardent_chacun_leur_couleur():
+    """Même clé d'habitat, deux milieux : chaque entité prend la couleur du sien.
+
+    La couleur était indexée par clé seule : la dernière classe repeignait les
+    entités de l'autre, et le rendu les dessinait deux fois.
+    """
+    features = [
+        _f(1, habitat="Mentho longifoliae-Juncion inflexi", eunis="E3.44",
+           recouvrement=100),
+        _f(2, habitat="Mentho longifoliae - Juncion inflexi", eunis="D5.2",
+           recouvrement=100),
+    ]
+    hs.enrichir(features)
+    props = [f["properties"] for f in features]
+    # Le cas étudié : même clé, deux milieux.
+    assert props[0][hs.CHAMP_CLE] == props[1][hs.CHAMP_CLE]
+    assert props[0][hs.CHAMP_CLASSE] != props[1][hs.CHAMP_CLASSE]
+    palette = hs.palette(features)
+
+    attendues = {
+        classe: couleur for classe, _l, habitats in palette for _c, _h, couleur in habitats
+    }
+    for p in props:
+        assert p[hs.CHAMP_COULEUR] == attendues[p[hs.CHAMP_CLASSE]]
+    assert props[0][hs.CHAMP_COULEUR] != props[1][hs.CHAMP_COULEUR]

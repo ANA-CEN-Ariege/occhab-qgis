@@ -158,6 +158,10 @@ végétations**, lu depuis un CSV livré avec le plugin (il nomme 184 alliances 
 restitue 97,7 % des libellés de correspondance), et le **cache des libellés
 HABREF** déjà obtenus (table `habref_libelles`). Perdre le réseau APRÈS s'être
 connecté ne coûte donc que l'altitude et la recherche d'un habitat inconnu.
+L'altitude d'une géométrie tracée hors connexion est d'ailleurs rattrapée :
+la station est marquée (`altitude_a_recalculer`), et la synchronisation la
+recalcule avant l'envoi — sans quoi l'altitude de l'ANCIENNE géométrie partait
+sur GeoNature. Une altitude saisie à la main dans la fiche fait foi.
 
 ```
 Formulaires (PyQt)  ──►  SQLite local  ──►  Synchronisation  ──►  API GeoNature
@@ -337,7 +341,8 @@ l'auteur.
 ### Éditer
 Ouvrir une station : **« Éditer »** (barre au-dessus du tableau), **double-clic**
 sur la ligne, **clic-droit → Éditer**, ou — sur la carte — **double-clic / clic
-avec l'outil *Identifier***. Attributs et habitats modifiables (retirer un habitat
+avec l'outil *Identifier*** (pas pendant un tracé ni avec un outil d'édition :
+le double-clic y ajoute un sommet). Attributs et habitats modifiables (retirer un habitat
 demande confirmation). **« Géométrie ▾ »** propose trois entrées :
 *Redessiner / éditer sur la carte* (édition des sommets, ou nouveau tracé si
 aucune géométrie), *Copier la ou les entités sélectionnées d'une autre couche*,
@@ -374,8 +379,10 @@ Trois comportements de la boucle d'envoi méritent d'être connus :
   géométrie corrigée **et la surface recalculée** sont réécrites en base
   (`db.update_station`), sans quoi on réparerait à chaque synchro et le local
   divergerait du serveur. `prev_geom` et `sync_status` ne sont **pas** touchés.
-  L'altitude n'est délibérément pas recalculée ici : ce serait un aller-retour
-  réseau par station en pleine boucle.
+  L'altitude n'est pas recalculée pour une simple réparation (un aller-retour
+  réseau par station en pleine boucle) ; elle l'est, en revanche, pour les
+  stations marquées `altitude_a_recalculer` (géométrie changée hors
+  connexion), et le récapitulatif compte les altitudes recalculées.
 - **Le récapitulatif compte les réparations** — « dont N géométrie(s)
   corrigée(s) » —, ce qui les fait entrer dans `log_sync`, donc dans
   l'historique.
@@ -383,6 +390,15 @@ Trois comportements de la boucle d'envoi méritent d'être connus :
   stations en échec avec le message du serveur (puis « … (+N) »). Avant, ce
   message finissait dans un journal que personne n'ouvre et l'utilisateur ne
   lisait que « N échec(s) ».
+
+**Serveur d'origine.** Un `id_station` ne vaut que pour le serveur qui l'a
+attribué. Chaque station retient donc ce serveur (colonne `serveur`, clé
+`payload.cle_serveur` : hôte et chemin, sans schéma ni port par défaut ni « / »
+final). La synchronisation écarte les stations rattachées à un autre serveur
+que celui de la connexion — elle écrasait ou supprimait sinon la station de
+même numéro —, et « Récupérer » ne confond plus deux stations homonymes de
+serveurs différents. Les stations envoyées avant cette colonne sont rattachées,
+à l'ouverture, au serveur de la configuration.
 
 Avant d'envoyer une station déjà synchronisée, le plugin **vérifie qu'elle existe
 toujours** sur GeoNature (`GET /occhab/stations/<id>/`) :
@@ -2490,7 +2506,15 @@ dates `%Y-%m-%d`, `observers = [{"id_role": …}]`, habitats imbriqués,
 `id_station`/`id_habitat` préservés pour les mises à jour. Création, mise à jour,
 suppression et récupération (aller-retour) confirmées.
 
-Trois règles du payload ne se devinent pas :
+Quatre règles du payload ne se devinent pas :
+
+- **Un habitat sans `id_habitat` est une création.** GeoNature recrée l'habitat
+  et supprime de la station ceux qu'il ne voit plus revenir (`delete-orphan`).
+  Chaque habitat reçoit donc un `unique_id_sinp_hab` AVANT son premier envoi
+  (GeoNature reprend l'UUID fourni), et son `id_habitat` est relu après l'envoi
+  par cet UUID (`identites_habitats`). Les habitats envoyés par les versions
+  antérieures, sans identité locale, sont rattrapés à la synchro suivante par
+  leur couple (cd_hab, nom cité) lorsqu'il est sans ambiguïté.
 
 - **Effacer n'est possible qu'en mise à jour.** À la création, les clés vides
   sont omises pour laisser jouer les DEFAULT du serveur. En mise à jour, les
@@ -2605,6 +2629,7 @@ occhab/
                       export_dialog.py           # choix export / période / typologie
                       export_layers.py           # couches d'export : bandes, damier, enjeux, PEE
                       flow_layout.py · no_wheel.py           # utilitaires Qt
+                      modal.py                   # dialogues et menus détruits après usage
                       connection_dialog.py
                       map_tools.py               # capture + édition de géométrie, accrochage jointif
                       station_layers.py · server_layers.py   # couches carte

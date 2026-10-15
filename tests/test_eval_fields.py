@@ -413,3 +413,47 @@ def test_une_correspondance_ancienne_perd_son_libelle_pas_son_code():
         ' "nom": "Fourrés ripicoles", "src": "manuel"}}} [/ANA-EVAL]')
     assert codes["corresp"]["EUNIS"] == {"cd_hab": 1778, "code": "F9.1",
                                          "src": "manuel"}
+
+
+class _ListeFactice:
+    """Juste ce que `select_combo_data` demande à un QComboBox."""
+
+    def __init__(self, donnees):
+        self.items = [("— non renseigné —", None)] + [("l%s" % d, d) for d in donnees]
+        self.courant = -1
+
+    def findData(self, code):
+        return next((i for i, (_, d) in enumerate(self.items) if d == code), -1)
+
+    def addItem(self, libelle, donnee):
+        self.items.append((libelle, donnee))
+
+    def count(self):
+        return len(self.items)
+
+    def setCurrentIndex(self, index):
+        self.courant = index
+
+    def currentData(self):
+        return self.items[self.courant][1]
+
+
+def test_valeur_enregistree_absente_de_la_liste_conservee():
+    """Hors connexion, la liste est vide : la valeur ne doit pas être effacée."""
+    liste = _ListeFactice([])
+    ef.select_combo_data(liste, 312, conserver=True)
+    assert liste.currentData() == 312
+    assert "312" in liste.items[liste.courant][0]
+
+
+def test_sans_conserver_une_valeur_inconnue_retombe_sur_le_placeholder():
+    """Les valeurs PAR DÉFAUT d'une saisie neuve gardent l'ancien comportement."""
+    liste = _ListeFactice([1, 2])
+    ef.select_combo_data(liste, 312)
+    assert liste.currentData() is None
+
+
+def test_valeur_presente_selectionnee_sans_ajout():
+    liste = _ListeFactice([1, 2])
+    ef.select_combo_data(liste, 2, conserver=True)
+    assert liste.currentData() == 2 and liste.count() == 3

@@ -55,6 +55,13 @@ class StationForm(QWidget):
         self.config = config
         self.nomenclatures = nomenclatures or {}
         self._defaults = defaults or {}  # id_nomenclature par défaut (instance)
+        # Valeurs enregistrées des champs dont le menu n'est pas créé faute de
+        # liste (type de sol, mosaïque hors connexion) : rendues telles quelles
+        # par `get_data`, au lieu d'un None qui les effaçait.
+        self._sans_menu = {}
+        # Observateurs et leur texte tels qu'enregistrés (cf. `get_data`).
+        self._observateurs_charges = None
+        self._observers_txt_charge = None
         self._observers = observers or []  # [(id_role, nom)]
         self._current_observer = current_observer  # {id_role, observer_name} ou None
         # Reprise de la saisie précédente (création seulement — en édition, les
@@ -423,6 +430,15 @@ class StationForm(QWidget):
     def _select_dataset(self, id_dataset):
         if self.combo_dataset is not None:
             index = self.combo_dataset.findData(id_dataset)
+            if index < 0 and id_dataset:
+                # JDD absent de la liste (devenu inactif, liste non chargée) :
+                # le proposer tel quel. Sans cela le menu restait sur un autre
+                # JDD, et valider la fiche y déplaçait la station sans le dire —
+                # sur GeoNature aussi, à la synchro.
+                self.combo_dataset.addItem(
+                    "JDD %s (inactif ou non chargé)" % id_dataset, id_dataset
+                )
+                index = self.combo_dataset.count() - 1
             if index >= 0:
                 self.combo_dataset.setCurrentIndex(index)
         elif self.spin_dataset is not None:
@@ -475,13 +491,23 @@ class StationForm(QWidget):
             echelle=self.spin_echelle.value() or None,
         )
         observers = self._selected_observers()
+        observers_txt = ", ".join(o["observer_name"] for o in observers) or None
+        if (
+            self._observers_txt_charge
+            and [o["id_role"] for o in observers] == self._observateurs_charges
+        ):
+            # Observateurs inchangés : garder le texte tel qu'enregistré. Le
+            # recalculer depuis la seule liste des utilisateurs effaçait les
+            # observateurs externes ou saisis en texte libre (stations venues du
+            # serveur, instances en OBSERVER_AS_TXT), ici puis sur GeoNature.
+            observers_txt = self._observers_txt_charge
         return {
             "id_dataset": self._id_dataset(),
             "validation_status": self.combo_statut.currentData() or BROUILLON,
             "station_name": self.edit_name.text().strip() or None,
             "date_min": self.date_min.date().toString("yyyy-MM-dd"),
             "date_max": self.date_max.date().toString("yyyy-MM-dd"),
-            "observers_txt": ", ".join(o["observer_name"] for o in observers) or None,
+            "observers_txt": observers_txt,
             "_observers": observers,  # géré à part (cor_station_observer)
             "altitude_min": self.spin_alt_min.value() or None,
             "altitude_max": self.spin_alt_max.value() or None,
@@ -492,10 +518,12 @@ class StationForm(QWidget):
             "id_nomenclature_area_surface_calculation": self.combo_surface_method.currentData(),
             "id_nomenclature_geographic_object": self.combo_geo_object.currentData(),
             "id_nomenclature_type_sol": (
-                self.combo_type_sol.currentData() if self.combo_type_sol else None
+                self.combo_type_sol.currentData() if self.combo_type_sol
+                else self._sans_menu.get("id_nomenclature_type_sol")
             ),
             "id_nomenclature_type_mosaique_habitat": (
-                self.combo_mosaique.currentData() if self.combo_mosaique else None
+                self.combo_mosaique.currentData() if self.combo_mosaique
+                else self._sans_menu.get("id_nomenclature_type_mosaique_habitat")
             ),
             "comment": comment or None,
             "geom": self._geom_wkt,
@@ -519,6 +547,8 @@ class StationForm(QWidget):
             self._select_dataset(int(station["id_dataset"]))
         self.edit_name.setText(station.get("station_name") or "")
         self._apply_observers(station.get("observers", []))
+        self._observateurs_charges = [id_role for id_role, _nom in self._selected]
+        self._observers_txt_charge = station.get("observers_txt")
         # Dates de la station : sans cela le formulaire garderait la date du jour
         # et l'enregistrement écraserait la date d'observation d'origine.
         self._charger_dates(
@@ -536,20 +566,29 @@ class StationForm(QWidget):
             self.spin_depth_max.setValue(int(station["depth_max"]))
         if station.get("area"):
             self.spin_area.setValue(int(station["area"]))
-        select_combo_data(self.combo_exposure, station.get("id_nomenclature_exposure"))
+        # `conserver` : une valeur absente de la liste (hors connexion, valeur
+        # devenue inactive) est gardée, et non effacée (cf. `select_combo_data`).
+        select_combo_data(
+            self.combo_exposure, station.get("id_nomenclature_exposure"), conserver=True
+        )
         select_combo_data(
             self.combo_surface_method,
             station.get("id_nomenclature_area_surface_calculation"),
+            conserver=True,
         )
         select_combo_data(
-            self.combo_geo_object, station.get("id_nomenclature_geographic_object")
+            self.combo_geo_object, station.get("id_nomenclature_geographic_object"),
+            conserver=True,
         )
-        if self.combo_type_sol:
-            select_combo_data(self.combo_type_sol, station.get("id_nomenclature_type_sol"))
-        if self.combo_mosaique:
-            select_combo_data(
-                self.combo_mosaique, station.get("id_nomenclature_type_mosaique_habitat")
-            )
+        self._sans_menu = {}
+        for cle, combo in (
+            ("id_nomenclature_type_sol", self.combo_type_sol),
+            ("id_nomenclature_type_mosaique_habitat", self.combo_mosaique),
+        ):
+            if combo:
+                select_combo_data(combo, station.get(cle), conserver=True)
+            else:
+                self._sans_menu[cle] = station.get(cle)
         comment = station.get("comment") or ""
         self.text_comment.setPlainText(strip_eval(comment))
         codes = decode_eval(comment)

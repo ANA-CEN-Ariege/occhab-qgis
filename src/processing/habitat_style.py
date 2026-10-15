@@ -839,14 +839,20 @@ def palette(features, typologie=None):
             libelle_classe(classe),
             [(cle, habitats[cle][0], couleur) for cle, couleur in zip(cles, couleurs)],
         ))
-        couleur_par_cle.update(zip(cles, couleurs))
+        # Par (milieu, clé) et non par clé seule : deux homonymes HABREF
+        # rattachés à deux milieux (« Mentho-Juncion » en E3.44 et en D5.2)
+        # partagent leur clé ; la dernière classe repeignait l'autre.
+        couleur_par_cle.update(((classe, cle), c) for cle, c in zip(cles, couleurs))
 
     # La couleur est reportée sur chaque entité : le rendu des habitats
     # secondaires la lit en attribut, ce qui évite une règle par habitat ET par
     # rang dans la mosaïque.
     for feature in features or []:
         props = _proprietes(feature)
-        couleur = couleur_par_cle.get(props.get(CHAMP_CLE))
+        couleur = couleur_par_cle.get((
+            props.get(CHAMP_CLASSE) or CLASSE_INCONNUE,
+            props.get(CHAMP_CLE) or CLASSE_INCONNUE,
+        ))
         if couleur:
             props[CHAMP_COULEUR] = couleur
     return resultat

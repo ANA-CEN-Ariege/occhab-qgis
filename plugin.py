@@ -4,10 +4,10 @@
 """Classe principale du plugin OccHab."""
 from pathlib import Path
 
-from qgis.PyQt.QtCore import Qt
+from qgis.PyQt.QtCore import Qt, QTimer
 from qgis.PyQt.QtGui import QIcon
 from qgis.PyQt.QtWidgets import QAction
-from qgis.core import QgsApplication
+from qgis.core import QgsApplication, QgsProject
 
 from .src.utils.config import Config
 from .src.utils.logger import setup_logger
@@ -43,10 +43,19 @@ class OccHabPlugin:
         self.action.triggered.connect(self.toggle_dock)
         self.iface.addToolBarIcon(self.action)
         self.iface.addPluginToMenu("OccHab", self.action)
+        # Ici et non dans le panneau, créé seulement au premier clic sur le
+        # bouton : un projet ouvert puis fermé sans l'avoir affiché doit être
+        # réparé lui aussi, ou QGIS plante à sa fermeture.
+        QgsProject.instance().readProject.connect(self._reparer_mises_en_page)
+        self._reparer_mises_en_page()  # projet déjà ouvert (extension activée en cours de route)
         self.logger.info("Interface initialisée")
 
     def unload(self):
         """Nettoyer à la désactivation du plugin. Appelé par QGIS."""
+        try:
+            QgsProject.instance().readProject.disconnect(self._reparer_mises_en_page)
+        except (TypeError, RuntimeError):
+            pass
         if self.dock_widget is not None:
             self.dock_widget.shutdown()
             self.iface.removeDockWidget(self.dock_widget)
@@ -57,6 +66,34 @@ class OccHabPlugin:
             self.iface.removeToolBarIcon(self.action)
             self.action = None
         self.logger.info("Plugin OccHab déchargé")
+
+    def _reparer_mises_en_page(self, *_args):
+        """Remplacer les cadres recopiés par les versions précédentes (cf.
+        `print_layout.reparer_cadres_orphelins`) : ils font planter QGIS à la
+        fermeture du projet."""
+        if not QgsProject.instance().layoutManager().printLayouts():
+            return  # cas courant : rien à examiner, rien à importer
+        try:
+            from .src.ui.print_layout import reparer_cadres_orphelins
+
+            nombre = reparer_cadres_orphelins()
+        except Exception as exc:  # noqa: BLE001 - ne jamais bloquer l'ouverture
+            self.logger.warning("Mises en page non vérifiées : %s", exc)
+            return
+        if not nombre:
+            return
+        self.logger.info("%d cadre(s) de mise en page orphelin(s) réparé(s)", nombre)
+        # QGIS remet le drapeau « modifié » à faux juste APRÈS `readProject` :
+        # le reposer au tour suivant, pour qu'il propose d'enregistrer la
+        # réparation à la fermeture.
+        QTimer.singleShot(0, lambda: QgsProject.instance().setDirty(True))
+        self.iface.messageBar().pushWarning(
+            "OccHab",
+            "%d cadre(s) recopié(s) sur une page de légende par une version "
+            "précédente du plugin ont été réparés (ils faisaient planter QGIS à "
+            "la fermeture du projet). Enregistrez le projet pour conserver la "
+            "correction." % nombre,
+        )
 
     # -------------------------------------------------------------- actions
     def toggle_dock(self, checked=None):

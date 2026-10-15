@@ -61,11 +61,13 @@ from ..database.sqlite_local import BROUILLON, VALIDE
 from ..processing import champs as ch
 from ..processing import correspondances as corresp
 from ..processing.correspondances import Catalogue
+from ..processing.eval_fields import LIBELLE_VALEUR_CONSERVEE
 from ..processing.grille import Grille
 from ..processing.referentiels import TYPOLOGIES_CORRESPONDANCE, label_for
 from ..processing.tableur import tsv
 from .dialog_size import ajuster_a_l_ecran, borner_largeur_combos
 from .habref_widget import HabrefLineEdit, HabrefSearchEdit
+from .modal import executer
 from .no_wheel import FiltreMolette, proteger_du_defilement
 
 #: Catalogue vide, passé explicitement aux champs qui n'écrivent que le nom cité
@@ -463,6 +465,17 @@ class ChampDelegate(QStyledItemDelegate):
         valeur = index.data(Qt.ItemDataRole.EditRole)
         if isinstance(editor, QComboBox):
             position = editor.findData(valeur if champ.type != ch.BOOLEEN else bool(valeur))
+            if position < 0 and champ.type != ch.BOOLEEN and valeur not in (None, ""):
+                # Valeur enregistrée absente de la liste (liste non chargée hors
+                # connexion, nomenclature ou JDD devenus inactifs) : la proposer
+                # telle quelle. Retomber sur « non renseigné » l'effaçait dès
+                # qu'on quittait la cellule, et la synchro l'effaçait ensuite
+                # sur GeoNature.
+                libelle = self.contexte.libelle(champ, valeur)
+                if libelle == str(valeur):
+                    libelle = LIBELLE_VALEUR_CONSERVEE % valeur
+                editor.addItem(libelle, valeur)
+                position = editor.count() - 1
             editor.setCurrentIndex(position if position >= 0 else 0)
         elif isinstance(editor, QDateEdit):
             date = QDate.fromString((valeur or "")[:10], "yyyy-MM-dd")
@@ -497,9 +510,15 @@ class ChampDelegate(QStyledItemDelegate):
             # encore être en train d'y réécrire le libellé préfixé de la
             # typologie, qui n'est pas le nom cité.
             nom = editor.nom_choisi or editor.text().strip() or None
+            # La ligne SOURCE se lit AVANT d'écrire le nom : la table est triable
+            # et filtrable, et le proxy re-trie ou re-filtre dès ce `setData`. Lu
+            # après, `index` désignait la ligne venue prendre la place de
+            # l'habitat corrigé — trié sur « Nom cité » ou filtré par texte, le
+            # cd_hab partait sur un AUTRE habitat, sans rien en laisser voir.
+            source, ligne = self._ligne_source(model, index)
             model.setData(index, nom, Qt.ItemDataRole.EditRole)
             if editor.cd_choisi is not None and editor.nom_choisi:
-                self._ecrire_cd_hab(model, index, editor.cd_choisi)
+                self._ecrire_cd_hab(source, ligne, editor.cd_choisi)
             return
         if isinstance(editor, QComboBox):
             valeur = editor.currentData()
@@ -513,24 +532,30 @@ class ChampDelegate(QStyledItemDelegate):
                 valeur = [p.strip() for p in texte.split(";") if p.strip()] or None
             else:
                 valeur = texte or None
+        if valeur is None and not champ.effacable:
+            # Colonne NOT NULL sur GeoNature : « non renseigné » n'efface rien
+            # (la station serait rejetée), on garde la valeur en place.
+            return
         model.setData(index, valeur, Qt.ItemDataRole.EditRole)
 
     @staticmethod
-    def _ecrire_cd_hab(model, index, cd_hab):
-        """Poser le cd_hab de la MÊME ligne, à travers le filtre s'il y en a un.
+    def _ligne_source(model, index):
+        """(modèle source, ligne source) de `index`, à travers le filtre s'il y en a un.
 
         Le modèle vu par la vue est le proxy de filtrage : ses numéros de ligne
         ne sont pas ceux de la grille. Écrire sans repasser par `mapToSource`
         aurait posé le code sur l'habitat d'une autre ligne dès qu'un filtre est
         actif — soit exactement quand on corrige une détermination en série.
         """
-        source = model
-        row = index.row()
         if hasattr(model, "mapToSource"):
-            row = model.mapToSource(index).row()
-            source = model.sourceModel()
+            return model.sourceModel(), model.mapToSource(index).row()
+        return model, index.row()
+
+    @staticmethod
+    def _ecrire_cd_hab(source, ligne, cd_hab):
+        """Poser le cd_hab de la ligne `ligne` du modèle SOURCE."""
         if hasattr(source, "definir_par_cle"):
-            source.definir_par_cle(row, ch.HABITAT, "cd_hab", cd_hab)
+            source.definir_par_cle(ligne, ch.HABITAT, "cd_hab", cd_hab)
 
 
 class _ObservateursEdit(QListWidget):
@@ -1115,11 +1140,22 @@ class AttributeTableDialog(QDialog):
         groupes = JEUX_COLONNES.get(self.jeu_courant)
         colonnes = [c for c in ch.CHAMPS if groupes is None or c.groupe in groupes]
         self.colonnes = colonnes
+        # Les précédents sont détruits une fois remplacés : ils restaient sinon
+        # enfants de la fenêtre — chaque modèle avec une copie complète des
+        # stations — à chaque rafraîchissement du panneau, table ouverte. Le
+        # délégué par défaut appartient à la vue : seul le nôtre est détruit.
+        anciens = [getattr(self, "proxy", None), getattr(self, "model", None),
+                   self.table.selectionModel()]
+        if isinstance(self.table.itemDelegate(), ChampDelegate):
+            anciens.append(self.table.itemDelegate())
         self.model = GrilleModel(self.grille, colonnes, self.contexte, self)
         self.proxy = GrilleProxy(self)
         self.proxy.setSourceModel(self.model)
         self.table.setModel(self.proxy)
         self.table.setItemDelegate(ChampDelegate(colonnes, self.contexte, self))
+        for ancien in anciens:
+            if ancien is not None:
+                ancien.deleteLater()
         for index, champ in enumerate(colonnes):
             self.table.setColumnWidth(index, champ.largeur)
         # Le modèle et son modèle de sélection sont neufs après chaque
@@ -1289,7 +1325,7 @@ class AttributeTableDialog(QDialog):
         menu.addAction("Copier tout le tableau (avec en-têtes)").triggered.connect(
             self.copier_tout
         )
-        menu.exec(self.table.viewport().mapToGlobal(position))
+        executer(menu, self.table.viewport().mapToGlobal(position))
 
     def a_des_modifications(self):
         return self.grille.a_des_modifications()
@@ -1323,7 +1359,7 @@ class AttributeTableDialog(QDialog):
                   for h in habitats
                   if h.get(ch.HABREF) or h.get("nom_cite")},
         )
-        if not dialogue.exec():
+        if not executer(dialogue):
             return
         valeurs = dialogue.valeurs()
         if not valeurs:
@@ -1391,6 +1427,7 @@ class AttributeTableDialog(QDialog):
         sauvegarde = (self._sauvegarder_base()
                       if len(modifiees) >= self.SEUIL_SAUVEGARDE else None)
         ecrites = echecs = disparues = 0
+        self._a_supprimer_gardees = 0  # compté par `_ecrire_station`
         for station in modifiees:
             try:
                 if self._ecrire_station(station):
@@ -1414,6 +1451,12 @@ class AttributeTableDialog(QDialog):
         if disparues:
             message += ("\n%d station(s) ont été supprimées depuis l'ouverture de "
                         "la table : leurs modifications sont abandonnées." % disparues)
+        if self._a_supprimer_gardees:
+            message += ("\n%d station(s) restent « à supprimer » : leurs "
+                        "modifications sont enregistrées en local, et elles seront "
+                        "supprimées de GeoNature à la prochaine synchronisation "
+                        "(clic droit → Supprimer pour l'annuler)."
+                        % self._a_supprimer_gardees)
         if echecs:
             message += " %d échec(s) — voir le journal." % echecs
         if sauvegarde:
@@ -1431,29 +1474,46 @@ class AttributeTableDialog(QDialog):
         faite dans le formulaire, et surtout l'`id_station` posé par une synchro,
         dont la perte faisait recréer un doublon sur GeoNature au prochain envoi.
         """
-        if not self.db.station_exists(station["id"]):
+        # Relue en base : la table garde sa copie tant qu'elle a des
+        # modifications, et une autre fenêtre a pu écrire entre-temps. On n'y
+        # reporte que les champs modifiés ICI (cf. `reporter_modifications`) :
+        # remplacer les habitats en bloc depuis la copie effaçait un habitat
+        # ajouté dans la fiche, et réécrire le commentaire entier ramenait
+        # l'ancien texte.
+        fraiche = self.db.get_station(station["id"])
+        if fraiche is None:
             if self.logger:
                 self.logger.warning("Station %s supprimée entre-temps : ignorée",
                                     station.get("id"))
             return False
-        etait_en_conflit = station.get("sync_status") == "conflict"
-        champs = {
-            cle: station.get(cle) for cle in self.grille.colonnes_modifiees(station)
-        }
+        etait_en_conflit = fraiche.get("sync_status") == "conflict"
+        colonnes, colonnes_habitats = self.grille.reporter_modifications(
+            station, fraiche
+        )
+        champs = {cle: fraiche.get(cle) for cle in colonnes}
         if "observers" in champs:
             # Ni une colonne ni un champ envoyé tel quel : la liste vit dans une
             # table à part, et sa version texte alimente la liste du dock,
             # l'export et le payload GeoNature.
             champs.pop("observers")
-            observateurs = station.get("observers") or []
+            observateurs = fraiche.get("observers") or []
             champs["observers_txt"] = ", ".join(
                 o.get("observer_name") or "" for o in observateurs
             ) or None
             self.db.replace_observers(station["id"], observateurs)
-        champs["sync_status"] = "pending"  # toute édition remet en attente d'envoi
+        if fraiche.get("sync_status") == "to_delete":
+            # Une modification en lot n'annule pas une suppression demandée :
+            # la station était sinon renvoyée au lieu d'être supprimée, sans
+            # que personne l'ait décidé. Le bilan le signale.
+            champs["sync_status"] = "to_delete"
+            self._a_supprimer_gardees = getattr(self, "_a_supprimer_gardees", 0) + 1
+        else:
+            champs["sync_status"] = "pending"  # toute édition remet en attente d'envoi
         self.db.update_station(station["id"], **champs)
-        if self.grille.habitats_modifies(station):
-            self.db.replace_habitats(station["id"], station.get("habitats") or [])
+        habitats_frais = {h.get("id"): h for h in fraiche.get("habitats") or []}
+        for id_habitat, cles in colonnes_habitats.items():
+            habitat = habitats_frais[id_habitat]
+            self.db.update_habitat(id_habitat, **{c: habitat.get(c) for c in cles})
         if etait_en_conflit:
             # Conflit résolu côté local : oublier l'empreinte pour que la
             # prochaine synchro impose cette version (cf. édition unitaire).
@@ -1558,7 +1618,19 @@ class AttributeTableDialog(QDialog):
                 self.logger.warning("Purge des sauvegardes impossible : %s", exc)
 
     # ------------------------------------------------------------- fermeture
-    def closeEvent(self, event):
+    def reject(self):
+        """Fermeture par « Fermer », par la croix ou par Échap.
+
+        La garde vit ici et non dans `closeEvent` : Échap appelle `reject()`
+        directement, sans `closeEvent`, et fermait la table en perdant les
+        modifications sans rien demander. `QDialog.closeEvent` appelle lui-même
+        `reject()` — et laisse la fenêtre ouverte si elle l'est restée —, donc les
+        trois chemins passent par cette garde, une seule fois.
+        """
+        # Une cellule encore en cours d'édition n'est validée qu'à la perte du
+        # focus : sans cela, fermer par la croix testait les modifications AVANT
+        # elle, et sa valeur partait avec la fenêtre sans question.
+        self.table.setFocus()
         if self.grille.a_des_modifications():
             reponse = QMessageBox.question(
                 self, "Modifications non enregistrées",
@@ -1566,14 +1638,24 @@ class AttributeTableDialog(QDialog):
                 "même ?" % len(self.grille.modifications()),
             )
             if reponse != QMessageBox.StandardButton.Yes:
-                event.ignore()
                 return  # fermeture annulée : on RESTE abonné à la carte
+        self._desabonner_de_la_carte()
+        # `finished` part d'ici : le dock oublie la fenêtre et la détruit.
+        super().reject()
+
+    def liberer(self):
+        """Fermer sans rien demander ni rien émettre (déchargement de l'extension).
+
+        Ni question — une boîte modale pendant que QGIS se ferme —, ni
+        `finished` : le dock rafraîchirait couches et tableau au milieu du
+        déchargement.
+        """
+        self._desabonner_de_la_carte()
+        self.hide()
+        self.deleteLater()
+
+    def _desabonner_de_la_carte(self):
         if self.layers is not None:
             # Une fenêtre fermée ne doit plus réagir aux sélections carte, sinon
             # on manipulerait des widgets détruits.
             self.layers.remove_selection_listener(self._on_map_selection_changed)
-        # Indispensable : c'est `QDialog.closeEvent` qui appelle `reject()`, donc
-        # qui émet `finished`. Un simple `event.accept()` masquait la fenêtre sans
-        # prévenir personne : le dock gardait sa référence et le bouton
-        # « Tableau » ne rouvrait plus rien.
-        super().closeEvent(event)

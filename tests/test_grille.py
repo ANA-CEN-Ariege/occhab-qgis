@@ -383,3 +383,53 @@ def test_id_station_non_editable():
     assert not grille.editable(grille.lignes[0], champ)
     assert not grille.definir(grille.lignes[0], champ, 99)
     assert grille.colonnes_modifiees(grille.stations[0]) == set()
+
+
+# ----------------------------------------- enregistrement sur une base qui a bougé
+# La table est non modale : entre son ouverture et « Enregistrer », la fiche, un
+# collage ou « Alléger » ont pu modifier la même station. Seuls les champs
+# modifiés DANS LA TABLE doivent être reportés sur la version relue en base.
+
+
+def test_un_habitat_ajoute_ailleurs_survit_a_l_enregistrement_de_la_table():
+    grille = gr.Grille(_stations())
+    grille.definir(grille.lignes[0], _champ(ch.HABITAT, "nom_cite"), "Fruticées 2")
+
+    fraiche = _stations()[0]
+    fraiche["habitats"].append({"id": 12, "cd_hab": 4030, "nom_cite": "Ajouté ailleurs"})
+    colonnes, colonnes_habitats = grille.reporter_modifications(
+        grille.modifications()[0], fraiche
+    )
+
+    assert [h["nom_cite"] for h in fraiche["habitats"]] == [
+        "Fruticées 2", "Pelouse", "Ajouté ailleurs"]
+    assert colonnes == set()
+    assert colonnes_habitats == {10: {"nom_cite"}}
+
+
+def test_le_commentaire_repris_ailleurs_garde_son_texte():
+    """Un champ du bloc ANA-EVAL changé ici ; le texte, lui, changé ailleurs."""
+    grille = gr.Grille(_stations())
+    grille.definir(grille.lignes[0], _champ(ch.STATION, "zone_humide"), "oui")
+
+    fraiche = _stations()[0]
+    fraiche["comment"] = "Texte repris dans la fiche"
+    colonnes, _ = grille.reporter_modifications(grille.modifications()[0], fraiche)
+
+    assert colonnes == {"comment"}
+    assert ch.lire(fraiche, _champ(ch.STATION, "comment")) == "Texte repris dans la fiche"
+    assert ch.lire(fraiche, _champ(ch.STATION, "zone_humide")) == "oui"
+
+
+def test_un_habitat_supprime_ailleurs_n_est_pas_recree():
+    grille = gr.Grille(_stations())
+    grille.definir(grille.lignes[1], _champ(ch.HABITAT, "nom_cite"), "Pelouse 2")
+
+    fraiche = _stations()[0]
+    fraiche["habitats"] = [h for h in fraiche["habitats"] if h["id"] != 11]
+    _, colonnes_habitats = grille.reporter_modifications(
+        grille.modifications()[0], fraiche
+    )
+
+    assert colonnes_habitats == {}
+    assert [h["id"] for h in fraiche["habitats"]] == [10]

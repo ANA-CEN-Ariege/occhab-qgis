@@ -507,6 +507,8 @@ s'affiche sous son **nom** (ou « (station sans habitat) » si le nom est vide).
 Ouvrez une station de plusieurs façons : **« Éditer »** (barre au-dessus du
 tableau), **double-clic** sur la ligne, **clic-droit → Éditer**, ou — directement
 sur la carte — **double-clic** / clic avec l'outil **Identifier des entités**.
+Pendant que vous tracez ou modifiez une géométrie, le double-clic reste à l'outil
+de dessin (il ajoute un sommet) et n'ouvre pas la station.
 
 - **Attributs / habitats** : modifiez la station, ajoutez/retirez des habitats.
 - **Géométrie** : bouton **« Géométrie ▾ »** (ou clic-droit → *Modifier la
@@ -823,6 +825,25 @@ journal.
 > récapitulatif l'indique — « dont N géométrie(s) corrigée(s) ». Votre
 > **géométrie précédente n'est pas touchée** : *Rétablir la géométrie précédente*
 > reste ce que vous, vous aviez fait.
+
+> **Stations « à supprimer » modifiées.** Modifier la fiche ou la géométrie
+> d'une station marquée *À supprimer* pose la question : annuler la suppression
+> et l'envoyer modifiée, ou la laisser à supprimer. Une modification en lot
+> (table attributaire, collage, allègement) ne l'annule jamais : le bilan
+> indique les stations restées à supprimer.
+
+> **Altitude hors connexion.** Sans connexion, l'altitude d'un nouveau tracé ne
+> peut pas être calculée. La station est marquée, et la synchronisation la
+> recalcule avant l'envoi. Une altitude saisie à la main dans la fiche n'est
+> jamais remplacée.
+
+> **Plusieurs serveurs GeoNature.** Chaque station retient le serveur auquel
+> elle a été envoyée. Connecté à un autre serveur (une instance de test, par
+> exemple), le plugin **n'y envoie ni n'y supprime** ces stations : leur numéro
+> y désignerait une autre station. Le récapitulatif les compte comme
+> « ignorée(s) : rattachée(s) à un autre serveur » ; reconnectez-vous à leur
+> serveur pour les synchroniser. Les stations jamais envoyées partent sur le
+> serveur connecté.
 
 ### « Cette station n'existe plus sur GeoNature »
 

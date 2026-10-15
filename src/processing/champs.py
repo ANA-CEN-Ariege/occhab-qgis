@@ -135,8 +135,9 @@ CHAMPS = [
     # ---------------------------------------------------------- station
     _champ("station_name", STATION, "Nom de la station", TEXTE, COLONNE, G_STATION,
            largeur=160),
+    # NOT NULL sur GeoNature : vider le JDD faisait rejeter toute la station.
     _champ("id_dataset", STATION, "Jeu de données", JDD, COLONNE, G_STATION,
-           largeur=150),
+           effacable=False, largeur=150),
     _champ("date_min", STATION, "Date début", DATE, COLONNE, G_STATION, largeur=95),
     _champ("date_max", STATION, "Date fin", DATE, COLONNE, G_STATION, largeur=95),
     # Liste multi-valuée : intenable dans une cellule, mais modifiable en masse —

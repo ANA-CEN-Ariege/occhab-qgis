@@ -129,3 +129,41 @@ def test_restaurer_deux_fois_est_sans_effet():
     aide.restaurer()
 
     assert not QgsProject.instance().isDirty()
+
+
+def test_couche_retiree_pendant_la_saisie_n_est_pas_rendue():
+    """Une couche détruite pendant la saisie ne doit pas revenir dans les réglages.
+
+    `QgsSnappingConfig` range ses réglages sous l'ADRESSE de chaque couche. Rendre
+    la copie prise en début de saisie réinstallait celle d'une couche détruite
+    entre-temps — la couche serveur, rechargée par une synchronisation — et QGIS
+    plantait au prochain accrochage ou à l'enregistrement du projet. Sans le
+    correctif, ce test fait d'ailleurs planter l'interpréteur à la lecture des
+    réglages : c'est le défaut lui-même.
+    """
+    QgsProject.instance().clear()
+    stations, serveur = _couche(), _couche("serveur")
+    aide = AideAuTrace(None)
+    aide.appliquer([stations])
+
+    QgsProject.instance().removeMapLayer(serveur.id())
+    aide.restaurer()
+
+    reglages = QgsProject.instance().snappingConfig().individualLayerSettings()
+    assert len(reglages) == 1
+    assert [couche.id() for couche in reglages] == [stations.id()]
+
+
+def test_couche_ajoutee_pendant_la_saisie_garde_son_reglage():
+    """Une couche chargée pendant la saisie ne doit pas perdre son réglage."""
+    QgsProject.instance().clear()
+    stations = _couche()
+    aide = AideAuTrace(None)
+    aide.appliquer([stations])
+
+    nouvelle = _couche("chargée pendant la saisie")
+    aide.restaurer()
+
+    assert QgsProject.instance().snappingConfig().individualLayerSettings(
+        nouvelle
+    ).valid()

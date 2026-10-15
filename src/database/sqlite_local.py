@@ -58,6 +58,8 @@ CREATE TABLE IF NOT EXISTS t_stations (
     updated_by TEXT,
     mine INTEGER DEFAULT 1,
     server_snapshot TEXT,
+    serveur TEXT,
+    altitude_a_recalculer INTEGER DEFAULT 0,
     UNIQUE(unique_id_sinp_station)
 );
 
@@ -152,7 +154,7 @@ class OccHabDatabase:
         "id_nomenclature_type_sol", "id_nomenclature_area_surface_calculation",
         "id_nomenclature_type_mosaique_habitat",
         "created_by", "updated_by", "sync_status", "validation_status",
-        "mine", "server_snapshot",
+        "mine", "server_snapshot", "serveur", "altitude_a_recalculer",
     }
     HABITAT_COLS = {
         "id_habitat", "unique_id_sinp_hab", "cd_hab", "nom_cite", "determiner",
@@ -201,6 +203,16 @@ class OccHabDatabase:
         if "server_snapshot" not in cols:
             self.connection.execute(
                 "ALTER TABLE t_stations ADD COLUMN server_snapshot TEXT"
+            )
+        if "serveur" not in cols:
+            # Serveur GeoNature auquel la station est rattachée (`cle_serveur`) :
+            # sans lui, un `id_station` ne disait pas DE QUEL serveur il venait.
+            self.connection.execute("ALTER TABLE t_stations ADD COLUMN serveur TEXT")
+        if "altitude_a_recalculer" not in cols:
+            # Géométrie changée sans que l'altitude ait pu être calculée (hors
+            # connexion) : la synchronisation la recalcule avant l'envoi.
+            self.connection.execute(
+                "ALTER TABLE t_stations ADD COLUMN altitude_a_recalculer INTEGER DEFAULT 0"
             )
         if "prev_geom" not in cols:
             self.connection.execute("ALTER TABLE t_stations ADD COLUMN prev_geom TEXT")
@@ -274,13 +286,28 @@ class OccHabDatabase:
         self.disconnect()
         return station
 
-    def find_by_id_station(self, id_station):
-        """Station locale ayant cet id_station GeoNature, ou None."""
+    def find_by_id_station(self, id_station, serveur=None):
+        """Station locale ayant cet id_station GeoNature, ou None.
+
+        `serveur` : ne retenir que les stations de ce serveur (`cle_serveur`).
+        Deux serveurs numérotent leurs stations chacun de leur côté : sans ce
+        filtre, la station 42 d'une instance de test passait pour la 42 de la
+        production.
+        """
         if not id_station:
             return None
         self.connect()
         cursor = self.connection.cursor()
-        cursor.execute("SELECT * FROM t_stations WHERE id_station = ?", (id_station,))
+        if serveur:
+            cursor.execute(
+                "SELECT * FROM t_stations WHERE id_station = ? "
+                "AND (serveur = ? OR serveur IS NULL)",
+                (id_station, serveur),
+            )
+        else:
+            cursor.execute(
+                "SELECT * FROM t_stations WHERE id_station = ?", (id_station,)
+            )
         row = cursor.fetchone()
         self.disconnect()
         return dict(row) if row else None
@@ -469,6 +496,54 @@ class OccHabDatabase:
         finally:
             self.disconnect()
 
+    def update_habitat(self, habitat_id, **fields):
+        """Écrire les seules colonnes données d'un habitat local (par son `id`)."""
+        data = {
+            k: v for k, v in fields.items()
+            if k in self.HABITAT_COLS and k != "sync_status"
+        }
+        if not data:
+            return
+        self.connect()
+        try:
+            cursor = self.connection.cursor()
+            assignments = ", ".join("%s = ?" % k for k in data)
+            # Colonnes issues d'une whitelist figée (HABITAT_COLS) ; valeurs
+            # paramétrées (?). Aucune donnée utilisateur dans le SQL.
+            cursor.execute(
+                "UPDATE t_habitats SET %s WHERE id = ?" % assignments,  # nosec B608
+                list(data.values()) + [habitat_id],
+            )
+            self.connection.commit()
+        finally:
+            self.disconnect()
+
+    def definir_ids_serveur_habitats(self, identites):
+        """Écrire l'identité GeoNature d'habitats locaux, en une transaction.
+
+        `identites` : `{id local de l'habitat: (id_habitat, unique_id_sinp_hab)}`
+        (cf. `payload.identites_habitats`). Sans elle, chaque mise à jour
+        renvoyait les habitats comme des créations, et GeoNature les recréait
+        sous de nouveaux identifiants SINP.
+        """
+        if not identites:
+            return
+        self.connect()
+        try:
+            cursor = self.connection.cursor()
+            for id_local, (id_habitat, uuid_hab) in identites.items():
+                cursor.execute(
+                    "UPDATE t_habitats SET id_habitat = ?, unique_id_sinp_hab = ? "
+                    "WHERE id = ?",
+                    (id_habitat, uuid_hab, id_local),
+                )
+            self.connection.commit()
+        except Exception:
+            self.connection.rollback()
+            raise
+        finally:
+            self.disconnect()
+
     # ------------------------------------------------------- observateurs
     def replace_observers(self, id_station_local, observers):
         """Remplacer les observateurs d'une station (suppression puis ré-insertion)."""
@@ -566,6 +641,29 @@ class OccHabDatabase:
         """Mémoriser l'empreinte serveur connue d'une station (détection de conflit)."""
         self.update_station(station_id, server_snapshot=snapshot)
 
+    def adopter_serveur(self, serveur):
+        """Rattacher à `serveur` les stations synchronisées qui n'en ont pas.
+
+        Pour les bases antérieures à la colonne : leurs stations ont été
+        envoyées au serveur de la configuration, le seul qu'on connaisse. Sans
+        effet sur une station déjà rattachée ou jamais envoyée. Renvoie le
+        nombre de stations rattachées.
+        """
+        if not serveur:
+            return 0
+        self.connect()
+        try:
+            cursor = self.connection.cursor()
+            cursor.execute(
+                "UPDATE t_stations SET serveur = ? "
+                "WHERE serveur IS NULL AND id_station IS NOT NULL",
+                (serveur,),
+            )
+            self.connection.commit()
+            return cursor.rowcount
+        finally:
+            self.disconnect()
+
     def detach_from_server(self, station_id):
         """Oublier les identifiants serveur d'une station (et de ses habitats).
 
@@ -579,7 +677,7 @@ class OccHabDatabase:
         cursor = self.connection.cursor()
         cursor.execute(
             "UPDATE t_stations SET id_station = NULL, unique_id_sinp_station = NULL,"
-            " server_snapshot = NULL WHERE id = ?",
+            " server_snapshot = NULL, serveur = NULL WHERE id = ?",
             (station_id,),
         )
         cursor.execute(
@@ -591,7 +689,7 @@ class OccHabDatabase:
         self.disconnect()
 
     def mark_station_synced(self, station_id, id_station, status="synced",
-                            server_snapshot=None):
+                            server_snapshot=None, serveur=None):
         fields = {
             "id_station": id_station,
             "sync_status": status,
@@ -603,6 +701,8 @@ class OccHabDatabase:
         }
         if server_snapshot is not None:
             fields["server_snapshot"] = server_snapshot
+        if serveur:
+            fields["serveur"] = serveur
         self.update_station(station_id, **fields)
         self.connect()
         cursor = self.connection.cursor()
@@ -639,12 +739,17 @@ class OccHabDatabase:
         géométrie) repasse une station en 'pending', donc 'synced' = non modifiée
         depuis la synchro. Ancienneté mesurée sur `date_update` (dernière écriture
         locale), comparée sur la date seule.
+
+        Et seulement si elle porte un `id_station` : la purge promet que la
+        station « reste sur GeoNature ». Sans identifiant, rien ne le garantit,
+        et rien ne permettrait de la récupérer.
         """
         cutoff = _date_months_ago(months)
         self.connect()
         cursor = self.connection.cursor()
         cursor.execute(
             "SELECT id FROM t_stations WHERE sync_status = 'synced' "
+            "AND id_station IS NOT NULL "
             "AND substr(COALESCE(date_update, date_creation), 1, 10) <= ?",
             (cutoff,),
         )

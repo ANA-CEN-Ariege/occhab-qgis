@@ -14,6 +14,8 @@ pourrait diverger — le cas échéant, comparer avec un GET /occhab/stations/<i
 """
 import hashlib
 import json
+from collections import Counter
+from urllib.parse import urlsplit
 
 try:  # importable dans le paquet (plugin) comme en isolation (tests)
     from ..processing.eval_fields import decode_eval, merge_eval
@@ -126,10 +128,12 @@ def combler_defauts_serveur(locale, serveur):
 
 
 #: Couples min/max contraints côté GeoNature (`t_stations_altitude_max`,
-#: `t_stations_depth_max`) : un maximum inférieur au minimum y est rejeté.
+#: `t_stations_depth_max`, `t_stations_date_max`) : un maximum inférieur au
+#: minimum y est rejeté. Les dates se comparent en ISO, sur le jour seul.
 COUPLES_MIN_MAX = (
     ("altitude_min", "altitude_max", "altitude"),
     ("depth_min", "depth_max", "profondeur"),
+    ("date_min", "date_max", "dates"),
 )
 
 
@@ -142,6 +146,9 @@ def mesures_incoherentes(station):
     fautifs = []
     for cle_min, cle_max, libelle in COUPLES_MIN_MAX:
         mini, maxi = station.get(cle_min), station.get(cle_max)
+        if cle_min == "date_min" and mini and maxi:
+            # « 2026-06-12 » et « 2026-06-12 00:00:00 » désignent le même jour.
+            mini, maxi = str(mini)[:10], str(maxi)[:10]
         if mini is not None and maxi is not None and mini > maxi:
             fautifs.append("%s (min %s > max %s)" % (libelle, mini, maxi))
     return fautifs
@@ -265,8 +272,14 @@ def _habitat_payload(habitat):
 
 
 def extract_id_station(response):
-    """Extraire l'id_station renvoyé par l'API (formats JSON ou GeoJSON)."""
-    if not isinstance(response, dict):
+    """Extraire l'id_station renvoyé par l'API (formats JSON ou GeoJSON).
+
+    Une seule station, ou rien. Une LISTE (FeatureCollection) n'est pas la
+    réponse d'une création — par exemple un POST changé en GET par une
+    redirection : en prendre le premier élément liait la station locale à une
+    station tierce, que les envois suivants écrasaient.
+    """
+    if not isinstance(response, dict) or "features" in response:
         return None
     if response.get("id_station"):
         return response["id_station"]
@@ -275,9 +288,6 @@ def extract_id_station(response):
     props = response.get("properties")
     if isinstance(props, dict) and props.get("id_station"):
         return props["id_station"]
-    features = response.get("features")
-    if isinstance(features, list) and features:
-        return extract_id_station(features[0])
     return None
 
 
@@ -426,3 +436,108 @@ def server_fingerprint(station, habitats, observers):
         sort_keys=True, ensure_ascii=False, default=str,
     )
     return hashlib.sha256(blob.encode("utf-8")).hexdigest()
+
+
+def _uuid_normalise(valeur):
+    """UUID comparable, quelle que soit sa casse ou son type (texte / uuid.UUID)."""
+    return str(valeur).strip().lower() if valeur else None
+
+
+def apparier_habitats(locaux, serveur, par_contenu=False):
+    """Retrouver, pour chaque habitat local, son habitat sur GeoNature.
+
+    Renvoie `{index dans locaux: habitat serveur}`. Critères, dans l'ordre : même
+    `unique_id_sinp_hab`, puis même `id_habitat`, puis — si `par_contenu` — même
+    couple (cd_hab, nom cité), pour les seuls habitats locaux SANS `id_habitat`
+    et seulement si le couple est unique des deux côtés : deux habitats
+    identiques ne se distinguent pas, mieux vaut alors n'en rattacher aucun.
+    Un habitat serveur ne sert qu'une fois.
+    """
+    paires = {}
+    libres = list(range(len(serveur or [])))
+
+    criteres = (
+        lambda h: _uuid_normalise(h.get("unique_id_sinp_hab")),
+        lambda h: h.get("id_habitat") or None,
+    )
+    for critere in criteres:
+        par_cle = {}
+        for j in libres:
+            cle = critere(serveur[j])
+            if cle is not None:
+                par_cle.setdefault(cle, j)
+        for i, habitat in enumerate(locaux or []):
+            if i in paires:
+                continue
+            cle = critere(habitat)
+            j = par_cle.get(cle) if cle is not None else None
+            if j is not None and j in libres:
+                paires[i] = serveur[j]
+                libres.remove(j)
+
+    if par_contenu:
+        def contenu(h):
+            return (h.get("cd_hab"), (h.get("nom_cite") or "").strip())
+
+        candidats = [
+            i for i, h in enumerate(locaux or [])
+            if i not in paires and not h.get("id_habitat")
+        ]
+        compte_locaux = Counter(contenu(locaux[i]) for i in candidats)
+        compte_serveur = Counter(contenu(serveur[j]) for j in libres)
+        for i in candidats:
+            cle = contenu(locaux[i])
+            if compte_locaux.get(cle) != 1 or compte_serveur.get(cle) != 1:
+                continue
+            j = next(j for j in libres if contenu(serveur[j]) == cle)
+            paires[i] = serveur[j]
+            libres.remove(j)
+    return paires
+
+
+def identites_habitats(locaux, serveur, par_contenu=False, nouvel_uuid=None):
+    """Identité GeoNature de chaque habitat local : `{id local: (id_habitat, uuid)}`.
+
+    GeoNature traite un habitat sans `id_habitat` comme une CRÉATION, et supprime
+    de la station ceux qu'il ne voit plus revenir. Sans identité, chaque mise à
+    jour effaçait donc tous les habitats et les recréait, sous de nouveaux
+    identifiants SINP.
+
+    Un habitat retrouvé sur le serveur (cf. `apparier_habitats`) prend son
+    identifiant et son UUID ; les autres gardent les leurs, et reçoivent un UUID
+    neuf par `nouvel_uuid()` s'ils n'en ont pas : GeoNature reprend tel quel un
+    UUID fourni, c'est par lui qu'on retrouve l'habitat après l'envoi. Les
+    habitats sans identifiant local (`id`) sont ignorés.
+    """
+    paires = apparier_habitats(locaux, serveur, par_contenu=par_contenu)
+    identites = {}
+    for i, habitat in enumerate(locaux or []):
+        if habitat.get("id") is None:
+            continue
+        retrouve = paires.get(i) or {}
+        id_habitat = retrouve.get("id_habitat") or habitat.get("id_habitat")
+        uuid_hab = (
+            retrouve.get("unique_id_sinp_hab") or habitat.get("unique_id_sinp_hab")
+        )
+        if not uuid_hab and nouvel_uuid is not None:
+            uuid_hab = nouvel_uuid()
+        identites[habitat["id"]] = (id_habitat, str(uuid_hab) if uuid_hab else None)
+    return identites
+
+
+def cle_serveur(api_url):
+    """Identité d'un serveur GeoNature, stable d'une saisie de l'URL à l'autre.
+
+    Hôte en minuscules, port par défaut omis, chemin sans « / » final, schéma
+    ignoré : « https://Geo.exemple.fr:443/geonature/api/ » et
+    « http://geo.exemple.fr/geonature/api » désignent le même serveur — passer
+    en HTTPS ne doit pas couper une base de ses stations. None si l'URL est vide.
+    """
+    texte = (api_url or "").strip()
+    if not texte:
+        return None
+    morceaux = urlsplit(texte if "://" in texte else "//" + texte)
+    hote = (morceaux.hostname or "").lower()
+    if morceaux.port and morceaux.port not in (80, 443):
+        hote = "%s:%d" % (hote, morceaux.port)
+    return (hote + morceaux.path.rstrip("/")) or None
