@@ -3939,6 +3939,15 @@ class OccHabDockWidget(QDockWidget):
                 else:  # première synchro → création
                     response = self.client.create_station(payload)
                     id_station = extract_id_station(response)
+                    if not id_station:
+                        # Marquée « synchronisée » sans identifiant, la station
+                        # n'était plus jamais renvoyée, puis la purge l'effaçait.
+                        raise GeoNatureAPIError(
+                            "réponse de création sans identifiant de station. La "
+                            "station a pu être créée sur GeoNature : vérifiez-le "
+                            "avant de relancer la synchronisation, sous peine de "
+                            "doublon."
+                        )
                 # Relire la station envoyée (best-effort) : rafraîchit l'empreinte
                 # pour les conflits futurs, et récupère au passage les valeurs que
                 # GeoNature a posées lui-même sur les champs que nous n'envoyons

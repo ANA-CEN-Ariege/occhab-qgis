@@ -687,12 +687,17 @@ class OccHabDatabase:
         géométrie) repasse une station en 'pending', donc 'synced' = non modifiée
         depuis la synchro. Ancienneté mesurée sur `date_update` (dernière écriture
         locale), comparée sur la date seule.
+
+        Et seulement si elle porte un `id_station` : la purge promet que la
+        station « reste sur GeoNature ». Sans identifiant, rien ne le garantit,
+        et rien ne permettrait de la récupérer.
         """
         cutoff = _date_months_ago(months)
         self.connect()
         cursor = self.connection.cursor()
         cursor.execute(
             "SELECT id FROM t_stations WHERE sync_status = 'synced' "
+            "AND id_station IS NOT NULL "
             "AND substr(COALESCE(date_update, date_creation), 1, 10) <= ?",
             (cutoff,),
         )

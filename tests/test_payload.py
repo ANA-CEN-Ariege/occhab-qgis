@@ -176,7 +176,8 @@ def test_extract_id_station():
     assert p.extract_id_station({"id_station": 7}) == 7
     assert p.extract_id_station({"id": 8}) == 8
     assert p.extract_id_station({"properties": {"id_station": 9}}) == 9
-    assert p.extract_id_station({"features": [{"id_station": 10}]}) == 10
+    # Une liste n'est pas la réponse d'une création : ne rien en déduire.
+    assert p.extract_id_station({"features": [{"id_station": 10}]}) is None
     assert p.extract_id_station("pas un dict") is None
 
 
@@ -455,3 +456,12 @@ def test_l_uuid_fourni_part_dans_le_payload_d_un_habitat_neuf():
     habitat = payload["properties"]["habitats"][0]
     assert habitat["unique_id_sinp_hab"] == "u-1"
     assert "id_habitat" not in habitat
+
+
+def test_mesures_incoherentes_couvre_les_dates():
+    """GeoNature refuse date_min > date_max (`t_stations_date_max`) en erreur 500."""
+    assert p.mesures_incoherentes({"date_min": "2026-06-13", "date_max": "2026-06-12"})
+    assert p.mesures_incoherentes(
+        {"date_min": "2026-06-12 00:00:00", "date_max": "2026-06-12"}
+    ) == []
+    assert p.mesures_incoherentes({"date_min": "2026-06-12", "date_max": None}) == []

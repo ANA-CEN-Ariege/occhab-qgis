@@ -208,9 +208,11 @@ def test_purge_synced_stations_policy(tmp_path):
     recent = datetime.now().isoformat()
 
     old_synced = db.create_station(id_dataset=3, station_name="vieille synced")
-    _set_row(db, old_synced, sync_status="synced", date_update=old)
+    _set_row(db, old_synced, sync_status="synced", date_update=old, id_station=101)
     recent_synced = db.create_station(id_dataset=3, station_name="récente synced")
-    _set_row(db, recent_synced, sync_status="synced", date_update=recent)
+    _set_row(db, recent_synced, sync_status="synced", date_update=recent, id_station=102)
+    sans_id = db.create_station(id_dataset=3, station_name="vieille synced sans id")
+    _set_row(db, sans_id, sync_status="synced", date_update=old)
     old_pending = db.create_station(id_dataset=3, station_name="vieille pending")
     _set_row(db, old_pending, sync_status="pending", date_update=old)
     old_conflict = db.create_station(id_dataset=3, station_name="vieille conflict")
@@ -225,6 +227,7 @@ def test_purge_synced_stations_policy(tmp_path):
     assert recent_synced in remaining           # trop récente
     assert old_pending in remaining             # jamais : non synchronisée
     assert old_conflict in remaining            # jamais : en conflit
+    assert sans_id in remaining                 # jamais : rien ne la retrouverait
 
 
 def test_purge_cascades_and_reports_zero(tmp_path):
@@ -232,7 +235,8 @@ def test_purge_cascades_and_reports_zero(tmp_path):
     sid = db.create_station(id_dataset=3)
     db.add_habitat(sid, cd_hab=10, nom_cite="h")
     db.add_observer(sid, observer_name="R", id_role=1)
-    _set_row(db, sid, sync_status="synced", date_update="2019-06-01T00:00:00")
+    _set_row(db, sid, sync_status="synced", date_update="2019-06-01T00:00:00",
+             id_station=101)
 
     assert db.purge_synced_stations(months=6) == 1
     assert db.get_station(sid) is None                 # station + cascade partis

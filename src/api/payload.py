@@ -127,10 +127,12 @@ def combler_defauts_serveur(locale, serveur):
 
 
 #: Couples min/max contraints côté GeoNature (`t_stations_altitude_max`,
-#: `t_stations_depth_max`) : un maximum inférieur au minimum y est rejeté.
+#: `t_stations_depth_max`, `t_stations_date_max`) : un maximum inférieur au
+#: minimum y est rejeté. Les dates se comparent en ISO, sur le jour seul.
 COUPLES_MIN_MAX = (
     ("altitude_min", "altitude_max", "altitude"),
     ("depth_min", "depth_max", "profondeur"),
+    ("date_min", "date_max", "dates"),
 )
 
 
@@ -143,6 +145,9 @@ def mesures_incoherentes(station):
     fautifs = []
     for cle_min, cle_max, libelle in COUPLES_MIN_MAX:
         mini, maxi = station.get(cle_min), station.get(cle_max)
+        if cle_min == "date_min" and mini and maxi:
+            # « 2026-06-12 » et « 2026-06-12 00:00:00 » désignent le même jour.
+            mini, maxi = str(mini)[:10], str(maxi)[:10]
         if mini is not None and maxi is not None and mini > maxi:
             fautifs.append("%s (min %s > max %s)" % (libelle, mini, maxi))
     return fautifs
@@ -266,8 +271,14 @@ def _habitat_payload(habitat):
 
 
 def extract_id_station(response):
-    """Extraire l'id_station renvoyé par l'API (formats JSON ou GeoJSON)."""
-    if not isinstance(response, dict):
+    """Extraire l'id_station renvoyé par l'API (formats JSON ou GeoJSON).
+
+    Une seule station, ou rien. Une LISTE (FeatureCollection) n'est pas la
+    réponse d'une création — par exemple un POST changé en GET par une
+    redirection : en prendre le premier élément liait la station locale à une
+    station tierce, que les envois suivants écrasaient.
+    """
+    if not isinstance(response, dict) or "features" in response:
         return None
     if response.get("id_station"):
         return response["id_station"]
@@ -276,9 +287,6 @@ def extract_id_station(response):
     props = response.get("properties")
     if isinstance(props, dict) and props.get("id_station"):
         return props["id_station"]
-    features = response.get("features")
-    if isinstance(features, list) and features:
-        return extract_id_station(features[0])
     return None
 
 
