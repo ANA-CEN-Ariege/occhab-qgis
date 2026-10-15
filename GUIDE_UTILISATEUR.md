@@ -507,6 +507,8 @@ s'affiche sous son **nom** (ou « (station sans habitat) » si le nom est vide).
 Ouvrez une station de plusieurs façons : **« Éditer »** (barre au-dessus du
 tableau), **double-clic** sur la ligne, **clic-droit → Éditer**, ou — directement
 sur la carte — **double-clic** / clic avec l'outil **Identifier des entités**.
+Pendant que vous tracez ou modifiez une géométrie, le double-clic reste à l'outil
+de dessin (il ajoute un sommet) et n'ouvre pas la station.
 
 - **Attributs / habitats** : modifiez la station, ajoutez/retirez des habitats.
 - **Géométrie** : bouton **« Géométrie ▾ »** (ou clic-droit → *Modifier la

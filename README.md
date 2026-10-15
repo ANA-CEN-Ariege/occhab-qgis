@@ -337,7 +337,8 @@ l'auteur.
 ### Éditer
 Ouvrir une station : **« Éditer »** (barre au-dessus du tableau), **double-clic**
 sur la ligne, **clic-droit → Éditer**, ou — sur la carte — **double-clic / clic
-avec l'outil *Identifier***. Attributs et habitats modifiables (retirer un habitat
+avec l'outil *Identifier*** (pas pendant un tracé ni avec un outil d'édition :
+le double-clic y ajoute un sommet). Attributs et habitats modifiables (retirer un habitat
 demande confirmation). **« Géométrie ▾ »** propose trois entrées :
 *Redessiner / éditer sur la carte* (édition des sommets, ou nouveau tracé si
 aucune géométrie), *Copier la ou les entités sélectionnées d'une autre couche*,
