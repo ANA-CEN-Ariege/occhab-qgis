@@ -163,22 +163,28 @@ l'URL de l'API et la configuration à utiliser, jamais le mot de passe.
 
 Deux cas où la reconnexion n'a pas lieu, et c'est voulu :
 
-- **QGIS protège ses mots de passe par un mot de passe principal** que vous
-  n'avez pas encore saisi dans cette session. Le plugin ne le réclame pas de
-  lui-même — ce serait une fenêtre surgissant au démarrage, sans que vous l'ayez
-  demandée. Cliquez « Connexion GeoNature… » quand vous en avez besoin : QGIS
-  vous le demandera à ce moment-là.
-  *Astuce* : dans **Préférences ▸ Options ▸ Authentification**, QGIS peut retenir
-  ce mot de passe principal dans le trousseau du système ; la reconnexion devient
-  alors totalement automatique.
+- **Le mot de passe principal de QGIS n'est pas disponible.** Par défaut, QGIS
+  le range dans le trousseau du système (**Préférences ▸ Options ▸
+  Authentification**) : le plugin l'y lit tout seul, et la reconnexion est
+  automatique. S'il n'y est pas, le plugin ne le réclame pas de lui-même — ce
+  serait une fenêtre surgissant au démarrage, sans que vous l'ayez demandée.
+  Cliquez « Connexion GeoNature… » quand vous en avez besoin : QGIS vous le
+  demandera à ce moment-là.
 - **Vous êtes hors ligne.** Le plugin démarre alors déconnecté. Vous pouvez
   saisir et synchroniser plus tard, mais avec les limites du §11 : connectez-vous
   une fois avant de partir sur le terrain.
 
+**Session expirée.** GeoNature ferme une session au bout de quelques jours :
+QGIS resté ouvert longtemps, le plugin la rouvre tout seul à la requête suivante.
+S'il n'y parvient pas, il vous demande de vous reconnecter.
+
 Pour désactiver la reconnexion automatique, ajoutez `geonature.reconnexion_auto`
 à `false` dans le fichier `config.json` du plugin (menu **Base locale… ▸ Ouvrir
 le dossier**) : la clé n'y figure pas d'origine, il faut l'écrire à la main dans
-le bloc `geonature`.
+le bloc `geonature`. Vous pouvez modifier ce fichier pendant que QGIS tourne : le
+plugin le relit avant chaque écriture. S'il devient illisible (une virgule de
+trop), le plugin le dit, repart des réglages par défaut et garde votre fichier
+sous `config.json.illisible`.
 
 ### Ouvrir le plugin
 
@@ -198,7 +204,8 @@ passe).
 
 1. Cliquez sur **« Connexion GeoNature… »** dans le dock.
 2. Renseignez l'**URL de l'API** GeoNature (ex.
-   `https://votre-serveur/geonature/api`).
+   `https://votre-serveur/geonature/api`). Le champ est vide au départ :
+   demandez l'adresse de votre instance à son administrateur.
 3. En face d'**Authentification QGIS**, cliquez sur **« + »** pour créer une
    configuration :
    - **Type** : *Authentification de base* (*Basic*).
@@ -472,6 +479,18 @@ ajouter, dans le formulaire :
   **critère d'évaluation** qui le justifie et les **PEE** (plantes exotiques
   envahissantes, 3 taxons au plus séparés par « ; »).
 
+> **500 caractères au plus.** GeoNature range la précision technique, l'enjeu,
+> l'état, le critère, la remarque, les PEE et les correspondances dans un seul
+> champ de 500 caractères. Au-delà, le formulaire refuse l'habitat et dit quoi
+> raccourcir — sans ce contrôle, GeoNature refusait la station entière à la
+> synchronisation.
+
+> **Fermer sans perdre.** Échap, la croix ou « Annuler » demandent confirmation
+> dès qu'il y a quelque chose à perdre (un tracé neuf, une fiche modifiée).
+> Entrée dans un champ ne valide plus la fiche : cliquez **OK**. Une fiche
+> validée sans aucun changement n'est pas réécrite et ne repasse pas « À
+> synchroniser ».
+
 Le formulaire compte **trois sections repliables**, et non une seule :
 
 - **« ▸ Correspondances (CORINE, EUNIS, Natura 2000) »** — les équivalences dans
@@ -622,7 +641,8 @@ décodés), chargée en **couche QGIS en lecture seule**.
    > disparaissent de la fenêtre — ils n'auraient rien à colorier. Une fois la
    > couche chargée : clic droit ▸ **Exporter ▸ Sauvegarder les entités sous…** ▸
    > **GeoPackage** (plutôt que Shapefile, qui raccourcit les noms de colonnes à
-   > 10 caractères). Pour faire une **carte**, revenez à l'export complet.
+   > 10 caractères). Pour faire une **carte**, revenez à l'export complet. Ce
+   > gabarit est en **Lambert 93** : la couche est déclarée comme telle.
 2. Le **jeu de données** est rappelé, sans être modifiable : c'est celui du
    panneau (voir l'encadré ci-dessus).
 3. Choisissez la **période**. Par défaut **l'année en cours** (1ᵉʳ janvier →
@@ -630,6 +650,13 @@ décodés), chargée en **couche QGIS en lecture seule**.
    tout rapatrier. Sont retenues les stations dont les dates de début **et** de
    fin tombent dans l'intervalle.
 4. Choisissez la **typologie de la carte** — voir juste en dessous.
+
+> **Points, lignes et polygones.** Une couche QGIS n'a qu'un type de
+> géométrie : un export qui mêle des stations ponctuelles et surfaciques arrive
+> donc en **deux ou trois couches** — « … (points) », « … (lignes) » au-dessus
+> des polygones. Et si le serveur rend moins de lignes qu'il n'en annonce, un
+> bandeau orange le dit (« INCOMPLET : N chargée(s) sur M ») au lieu de laisser
+> croire à l'export entier.
 
 > **Poser une correspondance sur trente polygones d'un coup.** Les quatre
 > typologies figurent dans le **tableau des stations** (colonnes « CORINE
@@ -818,11 +845,18 @@ Cliquez **« Synchroniser »** (vous devez être connecté). Le plugin :
 1. **applique les suppressions** marquées *À supprimer* (`DELETE` sur GeoNature) ;
 2. **envoie les créations et modifications** (les stations *À synchroniser*).
 
+Une **fenêtre de progression** suit l'envoi ; **« Arrêter »** l'interrompt, et
+ce qui n'a pas été traité reste *À synchroniser*. Le plugin s'arrête aussi de
+lui-même si le réseau tombe (deux échecs d'affilée) ou si la session a expiré
+sans pouvoir être rouverte, au lieu d'insister station après station.
+
 Un **récapitulatif** s'affiche (« X envoyée(s), Y supprimée(s), Z échec(s) »), et
-la couche serveur est rechargée. **Si des stations ont échoué**, une fenêtre
-liste chacune avec le **motif renvoyé par le serveur** (les dix premières, puis
-« … (+N) ») : c'est là qu'on lit la vraie cause d'un refus, plutôt que dans le
-journal.
+la couche serveur est rechargée. **Si des stations ont échoué** — envois,
+suppressions ou récupérations —, une fenêtre liste chacune avec le **motif
+renvoyé par le serveur** (les dix premières, puis « … (+N) ») : c'est là qu'on
+lit la vraie cause d'un refus, plutôt que dans le journal. Certains refus sont
+détectés avant même l'envoi, avec un motif clair : une station **sans
+géométrie**, un texte **trop long** pour GeoNature.
 
 > **Synchroniser une seule station.** Le **clic droit** sur une ligne du tableau
 > propose **« Synchroniser cette station »** (ou « Synchroniser ces N stations »
@@ -844,6 +878,12 @@ journal.
 > et l'envoyer modifiée, ou la laisser à supprimer. Une modification en lot
 > (table attributaire, collage, allègement) ne l'annule jamais : le bilan
 > indique les stations restées à supprimer.
+
+> **Conflit.** Une station *Conflit* a été modifiée sur GeoNature depuis votre
+> dernière synchronisation. Pour imposer votre version, retouchez-la — fiche,
+> table, géométrie ou collage de renseignements — puis synchronisez ; pour
+> prendre celle du serveur, *Récupérez-la*. Une modification dont la réponse
+> s'est perdue en route n'est plus prise pour un conflit.
 
 > **Altitude hors connexion.** Sans connexion, l'altitude d'un nouveau tracé ne
 > peut pas être calculée. La station est marquée, et la synchronisation la
@@ -881,7 +921,11 @@ Pour éviter les effacements accidentels en masse :
 - confirmation listant le **nombre** et les **libellés** des stations à supprimer ;
 - au-delà de **3 suppressions**, il faut **taper `SUPPRIMER`** (en majuscules) ;
 - seules **vos** données peuvent être supprimées côté serveur (selon vos
-  permissions GeoNature).
+  permissions GeoNature) ;
+- si la station a été **modifiée sur GeoNature** depuis votre dernière
+  synchronisation — par un collègue, peut-être —, le plugin le signale et
+  demande avant de la supprimer. « Non » la laisse *À supprimer* : récupérez-la
+  pour voir ce qui a changé.
 
 ---
 
@@ -977,10 +1021,12 @@ Bouton **« Base locale… »** (en bas du dock) :
   > — préférez le **GeoPackage** si le destinataire l'accepte.
 - **Nettoyer les stations synchronisées anciennes…** — retire de votre base
   **locale** les stations **déjà synchronisées et non modifiées depuis plus de
-  6 mois**, pour garder la liste « Mes stations » courte et rapide. Elles
-  **restent sur GeoNature** et sont récupérables via *Récupérer une station du
-  serveur*. Les stations **À synchroniser**, **en conflit** ou **à supprimer** ne
-  sont **jamais** touchées. Le plugin affiche le nombre concerné et **demande
+  6 mois**, pour garder la liste « Mes stations » courte et rapide. Il faut être
+  **connecté** : le plugin vérifie d'abord que chacune est **toujours sur
+  GeoNature** (une station effacée du serveur, ou un serveur restauré depuis une
+  sauvegarde, garde ici sa seule copie : elle n'est pas retirée). Les autres
+  restent récupérables via *Récupérer une station du serveur*. Les stations **À
+  synchroniser**, **en conflit** ou **à supprimer** ne sont **jamais** touchées. Le plugin affiche le nombre concerné et **demande
   confirmation** ; après une synchronisation, un rappel discret apparaît si
   beaucoup de stations anciennes se sont accumulées.
 - **Alléger les correspondances anciennes…** — les correspondances enregistrées
@@ -1157,7 +1203,14 @@ cellules modifiées apparaissent en orangé. À l'enregistrement, le plugin :
    marche arrière en cas de fausse manœuvre. **Attention : cette copie n'est
    faite qu'à partir de 5 stations modifiées.** En dessous, il n'y a pas de
    marche arrière : relisez avant d'enregistrer ;
-4. écrit les modifications et repasse les stations en « À synchroniser ».
+4. écrit les modifications et repasse les stations en « À synchroniser ». Une
+   station en échec garde ses modifications dans la table ; les autres sont
+   enregistrées.
+
+**Fermer QGIS avec la table modifiée** pose la question : enregistrer, ne pas
+enregistrer, ou annuler la fermeture. En lot, le **nom cité** se choisit dans la
+liste des propositions — c'est ce choix qui pose aussi le code ; un nom tapé sans
+être choisi est refusé. Nom cité, cd_hab et statut ne peuvent pas être vidés.
 
 Une station **validée** que vous retouchez dans la table **repasse en brouillon**
 automatiquement : y revenir, c'est que le travail n'était pas fini.
@@ -1180,7 +1233,9 @@ déjà : vous ne renseignez que ce qui change.
    cliquez **« Dossier… »** : le chemin est retenu pour les fois suivantes.
    *Carte seule pleine page A4* pour une carte simple, *A3* quand la légende est
    longue, *carte rapport* pour l'insérer dans un document.
-2. **Titre** — c'est lui qui s'affiche dans le bandeau vert.
+2. **Titre** — c'est lui qui s'affiche dans le bandeau vert. Si une planche porte
+   déjà ce titre, le plugin propose de la **remplacer** ; en garder deux ferait
+   imprimer « Titre (2) » dans le bandeau.
 3. **Sous-titre** — jeu de données, année, nom du projet. Laissez vide si vous
    n'en voulez pas : le texte d'exemple du gabarit est effacé de toute façon.
 4. **Couche à cartographier** — c'est celle que la **légende** détaille. La carte,

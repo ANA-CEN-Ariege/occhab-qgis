@@ -487,10 +487,14 @@ locale… »** :
   **GeoPackage** *et* **Shapefile** (une couche / un fichier par type de géométrie).
 - **Nettoyer les stations synchronisées anciennes** : retire du local les stations
   **synchronisées et non modifiées depuis plus de 6 mois** (`RETENTION_MONTHS`),
-  puis `VACUUM`. Elles restent sur GeoNature et sont récupérables ; les stations
-  **non synchronisées / en conflit / à supprimer** ne sont **jamais** touchées.
-  Confirmation demandée, et rappel discret après une synchro si beaucoup
-  s'accumulent. But : garder la liste locale courte et rapide.
+  puis `VACUUM`. Connexion exigée : leur présence sur GeoNature est **vérifiée**
+  d'abord, par une requête par JDD (`stations_purgeables` puis
+  `purge_synced_stations(ids=…)`) — une station effacée du serveur, ou d'un
+  serveur restauré, garde ici sa seule copie ; une station d'un autre serveur
+  n'est pas vérifiable, donc gardée. Les stations **non synchronisées / en
+  conflit / à supprimer** ne sont **jamais** touchées. Confirmation demandée, et
+  rappel discret après une synchro si beaucoup s'accumulent. But : garder la
+  liste locale courte et rapide.
 
 ---
 
@@ -1018,8 +1022,10 @@ SELECT
     eh.j ->> 'typicite'                                         AS habitat_typicite,
     eh.j ->> 'critere'                                          AS habitat_critere,
     eh.j ->> 'remarque'                                         AS habitat_remarque,
-    -- PEE : 3 taxons au plus, restitués en une chaîne « a, b, c ».
-    (SELECT string_agg(t, ', ') FROM jsonb_array_elements_text(
+    -- PEE : 3 taxons au plus, restitués en une chaîne « a ; b ; c » — le
+    -- point-virgule de la saisie : un nom d'auteur porte souvent une virgule
+    -- (« Reynoutria japonica Houtt., 1876 »).
+    (SELECT string_agg(t, ' ; ') FROM jsonb_array_elements_text(
         CASE WHEN jsonb_typeof(eh.j -> 'pee') = 'array'
              THEN eh.j -> 'pee' ELSE '[]'::jsonb END) AS t)     AS habitat_pee,
     -- Détermination hors HABREF : renseignée SEULEMENT quand `cd_hab` est une
@@ -2575,7 +2581,7 @@ avancés (non exposés dans l'UI) :
 
 | Clé | Défaut | Rôle |
 |---|---|---|
-| `geonature.api_url` | `https://geonature.fr/geonature/api` | URL de l'API (mémorisée à la connexion ; le défaut n'est qu'un gabarit) |
+| `geonature.api_url` | `""` | URL de l'API (mémorisée à la connexion). Vide par défaut : pré-remplie avec l'adresse d'un serveur réel, un premier « Se connecter » y envoyait les identifiants |
 | `geonature.authcfg` | — | id de config d'auth QGIS (mémorisée) |
 | `geonature.verify_ssl` | `true` | Vérifier le certificat SSL |
 | `geonature.id_application` | `0` | `id_application` au login (0 = auto) |
@@ -2595,6 +2601,14 @@ avancés (non exposés dans l'UI) :
 > `last_entry.*` et `numerisation.jointif` figurent dans `DEFAULT_CONFIG`, donc
 > dans un `config.json` neuf. Les autres n'existent que comme valeur de repli passée à l'appel : pour
 > les régler, il faut **les ajouter à la main**.
+
+> **Modifier le fichier à la main, QGIS ouvert.** Chaque réglage relit le
+> fichier avant de l'écrire (`Config.set`) : une clé ajoutée à la main, ou
+> écrite par un second QGIS, n'est plus écrasée par la copie lue au lancement.
+> Le fichier est lu en `utf-8-sig` (le Bloc-notes l'enregistre avec un BOM).
+> Illisible, il est copié en `config.json.illisible`, l'utilisateur est prévenu
+> (`Config.avertissement`, affiché au chargement de l'extension), et les
+> défauts s'appliquent.
 
 > **Clés retirées en 0.12.0** : `database` (host/port/database/user),
 > `auto_sync_interval` et `projection`. Aucune n'était lue nulle part, et

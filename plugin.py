@@ -4,13 +4,32 @@
 """Classe principale du plugin OccHab."""
 from pathlib import Path
 
-from qgis.PyQt.QtCore import Qt, QTimer
-from qgis.PyQt.QtGui import QIcon
-from qgis.PyQt.QtWidgets import QAction
+from qgis.PyQt.QtCore import Qt, QTimer, QUrl
+from qgis.PyQt.QtGui import QDesktopServices, QIcon
+from qgis.PyQt.QtWidgets import QAction, QMessageBox
 from qgis.core import QgsApplication, QgsProject
 
 from .src.utils.config import Config
 from .src.utils.logger import setup_logger
+
+try:  # QGIS ≥ 3.16
+    from qgis.gui import QgsApplicationExitBlockerInterface
+except ImportError:  # pragma: no cover
+    QgsApplicationExitBlockerInterface = None
+
+if QgsApplicationExitBlockerInterface is not None:
+    class _GardeFermeture(QgsApplicationExitBlockerInterface):
+        """Consultée par QGIS AVANT de se fermer, quand il est encore temps de
+        demander quelque chose (cf. `OccHabPlugin.peut_fermer`)."""
+
+        def __init__(self, plugin):
+            super().__init__()
+            self._plugin = plugin
+
+        def allowExit(self):
+            return self._plugin.peut_fermer("QGIS va se fermer.")
+else:  # pragma: no cover
+    _GardeFermeture = None
 
 
 class OccHabPlugin:
@@ -23,6 +42,7 @@ class OccHabPlugin:
         self.logger = setup_logger("occhab", self.config)
         self.dock_widget = None
         self.action = None
+        self._garde_fermeture = None
         self.logger.info("Plugin OccHab initialisé")
 
     # ------------------------------------------------------------------ GUI
@@ -43,12 +63,34 @@ class OccHabPlugin:
         self.action.triggered.connect(self.toggle_dock)
         self.iface.addToolBarIcon(self.action)
         self.iface.addPluginToMenu("OccHab", self.action)
+        if self.config.avertissement:
+            self.iface.messageBar().pushWarning("OccHab", self.config.avertissement)
+        self.config.signaler = lambda message: self.iface.messageBar().pushWarning(
+            "OccHab", message)
         # Ici et non dans le panneau, créé seulement au premier clic sur le
         # bouton : un projet ouvert puis fermé sans l'avoir affiché doit être
         # réparé lui aussi, ou QGIS plante à sa fermeture.
         QgsProject.instance().readProject.connect(self._reparer_mises_en_page)
         self._reparer_mises_en_page()  # projet déjà ouvert (extension activée en cours de route)
+        if _GardeFermeture is not None:
+            # Fermer QGIS avec le tableau modifié et non enregistré perdait
+            # tout : le déchargement ne peut plus rien demander. QGIS consulte
+            # cette garde avant, et renonce à se fermer si on annule.
+            self._garde_fermeture = _GardeFermeture(self)
+            self.iface.registerApplicationExitBlocker(self._garde_fermeture)
         self.logger.info("Interface initialisée")
+
+    def peut_fermer(self, raison, annulable=True):
+        """Le tableau a-t-il des modifications à sauver ? Demande si oui."""
+        dock = self.dock_widget
+        tableau = getattr(dock, "_table_dialog", None) if dock is not None else None
+        if tableau is None:
+            return True
+        try:
+            return tableau.proposer_enregistrement(raison, annulable=annulable)
+        except Exception as exc:  # noqa: BLE001 - ne jamais empêcher QGIS de se fermer
+            self.logger.warning("Garde de fermeture ignorée : %s", exc)
+            return True
 
     def unload(self):
         """Nettoyer à la désactivation du plugin. Appelé par QGIS."""
@@ -56,6 +98,17 @@ class OccHabPlugin:
             QgsProject.instance().readProject.disconnect(self._reparer_mises_en_page)
         except (TypeError, RuntimeError):
             pass
+        self.config.signaler = None
+        if self._garde_fermeture is not None:
+            try:
+                self.iface.unregisterApplicationExitBlocker(self._garde_fermeture)
+            except (AttributeError, RuntimeError, TypeError):
+                pass
+            self._garde_fermeture = None
+        # Extension rechargée, mise à jour ou désactivée : à la fermeture de
+        # QGIS la garde a déjà posé la question, il ne reste donc rien ici.
+        self.peut_fermer("L'extension OccHab va être déchargée (mise à jour, "
+                         "désactivation ou rechargement).", annulable=False)
         if self.dock_widget is not None:
             self.dock_widget.shutdown()
             self.iface.removeDockWidget(self.dock_widget)
@@ -102,7 +155,12 @@ class OccHabPlugin:
             # Import différé : évite de charger l'UI (et ses deps) au démarrage.
             from .src.ui.dock_widget import OccHabDockWidget
 
-            self.dock_widget = OccHabDockWidget(self.iface, self.config, self.logger)
+            try:
+                dock = OccHabDockWidget(self.iface, self.config, self.logger)
+            except Exception as exc:  # noqa: BLE001 - base illisible, clé USB absente…
+                self._ouverture_impossible(exc)
+                return
+            self.dock_widget = dock
             self.dock_widget.visibilityChanged.connect(self._on_visibility)
             self.iface.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.dock_widget)
             # Largeur initiale raisonnable (l'utilisateur peut ensuite redimensionner).
@@ -114,6 +172,36 @@ class OccHabPlugin:
                 self.logger.debug("Largeur initiale du dock non appliquée : %s", exc)
         else:
             self.dock_widget.setVisible(not self.dock_widget.isVisible())
+
+    def _ouverture_impossible(self, exc):
+        """Dire pourquoi le panneau ne s'ouvre pas, et où regarder.
+
+        Une base locale illisible (copie interrompue, conflit de synchronisation
+        d'un dossier cloud) ou un chemin indisponible (clé USB, partage réseau)
+        faisait lever une erreur Python brute à chaque clic, l'icône restait
+        enfoncée, et « Ouvrir le dossier » était inaccessible — il est dans le
+        panneau.
+        """
+        if self.action is not None:
+            self.action.setChecked(False)
+        chemin = str(self.config.get("local_db.path") or "")
+        self.logger.error("Panneau OccHab non ouvert (base %s) : %s", chemin, exc)
+        boite = QMessageBox(self.iface.mainWindow())
+        boite.setIcon(QMessageBox.Icon.Critical)
+        boite.setWindowTitle("OccHab")
+        boite.setText(
+            "Le panneau OccHab ne peut pas s'ouvrir : la base locale est illisible "
+            "ou inaccessible.\n\nBase : %s\nCause : %s\n\nVérifiez que le disque "
+            "ou la clé qui la porte est branché. Si le fichier est abîmé, "
+            "remplacez-le par une sauvegarde (« occhab_local_backup… »)."
+            % (chemin or "?", exc)
+        )
+        dossier = boite.addButton("Ouvrir le dossier", QMessageBox.ButtonRole.ActionRole)
+        boite.addButton(QMessageBox.StandardButton.Close)
+        boite.exec()
+        if boite.clickedButton() is dossier and chemin:
+            QDesktopServices.openUrl(QUrl.fromLocalFile(str(Path(chemin).parent)))
+        boite.deleteLater()
 
     def _on_visibility(self, visible):
         if self.action is not None:

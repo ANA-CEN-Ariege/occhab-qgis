@@ -90,3 +90,43 @@ def _nombre(valeur):
     texte = "%.9f" % valeur
     texte = texte.rstrip("0").rstrip(".")
     return texte or "0"
+
+
+#: Familles de géométrie d'une couche OGR : (type OGR du filtre `geometrytype`,
+#: types GeoJSON qu'il retient, suffixe du nom de couche). Polygones d'abord :
+#: c'est la couche principale, qui porte les représentations de mosaïque.
+FAMILLES = (
+    ("Polygon", ("Polygon", "MultiPolygon"), ""),
+    ("LineString", ("LineString", "MultiLineString"), "lignes"),
+    ("Point", ("Point", "MultiPoint"), "points"),
+)
+
+
+def familles_geometriques(features):
+    """[(type OGR, suffixe)] des familles présentes dans ces entités GeoJSON.
+
+    Une couche OGR n'a qu'UN type de géométrie, deviné sur la première entité :
+    dans un fichier qui mêle points et polygones, les entités de l'autre type
+    étaient comptées, listées en légende… et jamais dessinées. Plus d'une
+    famille, c'est donc une couche par famille.
+    """
+    types = {((f or {}).get("geometry") or {}).get("type") for f in features or []}
+    return [(ogr, suffixe) for ogr, membres, suffixe in FAMILLES
+            if types & set(membres)]
+
+
+def membre_crs(srid):
+    """Membre `crs` d'une FeatureCollection pour ce SRID, ou None pour WGS84.
+
+    Sans lui, OGR suppose EPSG:4326. Le gabarit à colonnes plates rend ses
+    géométries en Lambert 93 (`geom_local`) : la couche était déclarée en
+    degrés avec des coordonnées en mètres — invisible, et le GeoPackage livré
+    faux chez le destinataire.
+    """
+    try:
+        srid = int(srid)
+    except (TypeError, ValueError):
+        return None
+    if srid in (0, 4326):
+        return None
+    return {"type": "name", "properties": {"name": "urn:ogc:def:crs:EPSG::%d" % srid}}

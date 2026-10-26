@@ -6,7 +6,7 @@ import os
 import re
 import uuid
 
-from qgis.PyQt.QtCore import QItemSelection, QItemSelectionModel, Qt, QUrl
+from qgis.PyQt.QtCore import QItemSelection, QItemSelectionModel, Qt, QTimer, QUrl
 from qgis.PyQt.QtGui import QDesktopServices
 from qgis.core import QgsProject
 from qgis.PyQt.QtWidgets import (
@@ -48,6 +48,7 @@ from ..processing.geometry import (
 from .connection_dialog import ConnectionDialog
 from .flow_layout import widget_reflowable
 from .modal import executer
+from .progression import Progression
 from .station_dialog import StationDialog
 from .station_form import current_user
 from .export_layers import ExportLayerManager
@@ -146,6 +147,69 @@ def _meme_geometrie(wkt_a, wkt_b):
     return not a.isNull() and not b.isNull() and a.isGeosEqual(b)
 
 
+_MESSAGE_HORS_DOMAINE = (
+    "Les coordonnées de la couche « %s » sortent du domaine WGS84 (longitude "
+    "±180, latitude ±90) : elle est déclarée en degrés mais contient sans doute "
+    "des mètres (shapefile sans fichier .prj, par exemple). Corrigez son SCR "
+    "(Propriétés ▸ Source) puis recommencez."
+)
+
+
+#: Motifs d'arrêt anticipé d'une synchronisation (cf. `_arret_sur_erreur`).
+_ARRET_DEMANDE = "arrêt demandé"
+_ARRET_RESEAU = "réseau perdu"
+_ARRET_SESSION = "session expirée : reconnectez-vous (« Connexion GeoNature… »)"
+#: Erreurs réseau consécutives au-delà desquelles on cesse d'insister.
+_ERREURS_RESEAU_MAX = 2
+
+
+def _arret_sur_erreur(exc, reseau_ko):
+    """(nouveau compte d'erreurs réseau consécutives, motif d'arrêt ou None).
+
+    Une panne systématique ne doit pas se payer station par station : sur un
+    réseau coupé, chacune attendait son délai complet ; avec une session
+    expirée, chacune échouait en « HTTP 401 ». Le lot s'arrête donc à la
+    deuxième erreur réseau d'affilée, ou dès un 401 que la reconnexion
+    automatique n'a pas su lever.
+    """
+    if getattr(exc, "status_code", None) == 401:
+        return reseau_ko, _ARRET_SESSION
+    if getattr(exc, "reseau", False):
+        reseau_ko += 1
+        return reseau_ko, (_ARRET_RESEAU if reseau_ko >= _ERREURS_RESEAU_MAX else None)
+    return 0, None
+
+
+def _conflit_leve(station):
+    """Colonnes qui lèvent un conflit quand l'utilisateur retouche la station.
+
+    Retoucher une station en conflit, c'est imposer sa version : on oublie
+    l'empreinte serveur, sans quoi la synchro suivante redétectait le conflit
+    et la modification ne partait jamais. La fiche et la table le faisaient ;
+    la géométrie, « Rétablir » et le collage, non.
+    """
+    if (station or {}).get("sync_status") == "conflict":
+        return {"server_snapshot": None}
+    return {}
+
+
+def _rang_au_clic(geom, centre):
+    """Clé de tri des stations proches d'un clic : la plus petite l'emporte.
+
+    D'abord un point ou une ligne à portée du clic (le plus proche), puis le
+    polygone qui CONTIENT le clic — le plus petit, pour l'îlot posé dans une
+    station plus grande —, enfin un polygone seulement frôlé.
+    """
+    from qgis.core import QgsWkbTypes
+
+    types = getattr(QgsWkbTypes, "GeometryType", QgsWkbTypes)
+    if geom.type() != types.PolygonGeometry:
+        return (0, geom.distance(centre))
+    if geom.contains(centre):
+        return (1, geom.area())
+    return (2, geom.distance(centre))
+
+
 def _outil_d_edition(outil):
     """L'outil de carte modifie-t-il des entités (sommets, ajout, découpe…) ?"""
     if outil is None:
@@ -169,7 +233,6 @@ class OccHabDockWidget(QDockWidget):
         self.logger = logger
         self.db = OccHabDatabase(config.get("local_db.path"))
         self.client = None
-        self._adopter_serveur_configure()
         self._user_label = None
         # Créée avec le menu « Nouvelle station », donc après le branchement du
         # signal de sélection du tableau : déclarée ici pour rester interrogeable.
@@ -210,15 +273,29 @@ class OccHabDockWidget(QDockWidget):
         # Géométries réparées lors de la reprise en cours : comptées ici pour
         # n'avertir qu'une fois par lot (cf. `_signaler_geoms_corrigees`).
         self._geoms_corrigees = 0
+        # Entités écartées de la reprise : coordonnées hors du domaine WGS84.
+        self._geoms_hors_domaine = 0
         self._map_filter_installed = False
         self._server_prompt = None
         self._occhab_layers_notice_shown = False
         # Listes de référence absentes : signalé une seule fois par session, à
         # l'ouverture d'un formulaire (cf. `_avertir_listes_absentes`).
         self._listes_notice_shown = False
+        # Panne réseau rencontrée pendant le chargement des listes : on cesse
+        # alors d'interroger le serveur (cf. `_appel_reference`).
+        self._panne_reseau = False
+        # Couches à reposer après l'ouverture d'un projet (une seule fois).
+        self._couches_a_reposer = False
+        # Traitement long en cours (synchro, export, lot) : pas de second.
+        self._traitement_en_cours = None
+        # Le trousseau n'a pas rendu le mot de passe principal : ne pas
+        # redemander à chaque ouverture du panneau.
+        self._trousseau_essaye = False
         self._build_ui()
         self._install_map_interaction()
         QgsProject.instance().removeAll.connect(self._sur_vidage_projet)
+        QgsProject.instance().readProject.connect(self._sur_projet_lu)
+        QgsProject.instance().cleared.connect(self._sur_projet_change)
         self._oublier_ancien_cache_habref()
         self.refresh()
         self._reconnecter()
@@ -678,10 +755,13 @@ class OccHabDockWidget(QDockWidget):
         correction sur une station demandait donc de neutraliser les autres à la
         main, ce qui n'est pas une manœuvre à faire faire à un botaniste.
         """
-        selection = self._selected_station_ids()
+        selection = set(self._selected_station_ids())
+        # « À supprimer » compte aussi : la synchro l'applique, et sans cela on
+        # ne pouvait pas éprouver UNE suppression sans tout envoyer.
         en_attente = [
             s["id"] for s in (self.db.get_pending_stations() or [])
-            if s["id"] in set(selection)
+            + (self.db.get_all_stations(sync_status="to_delete") or [])
+            if s["id"] in selection
         ]
         libelle = ("Synchroniser cette station" if len(selection) <= 1
                    else "Synchroniser ces %d stations" % len(selection))
@@ -823,11 +903,12 @@ class OccHabDockWidget(QDockWidget):
         Trois garde-fous, parce qu'un plugin qui parle au réseau à l'ouverture
         de QGIS se fait vite détester :
 
-        - **rien sans mot de passe principal déjà donné.** Lire une
-          configuration d'authentification le réclame ; le demander de nous-même
-          au démarrage ferait surgir une fenêtre que personne n'a appelée. S'il
-          n'est pas encore saisi, on ne tente rien : le bouton « Connexion »
-          reste là, et c'est lui qui le demandera, au moment choisi ;
+        - **le mot de passe principal vient du trousseau du système**, où QGIS
+          le range par défaut (cf. `_mot_de_passe_principal_disponible`). Si
+          le trousseau ne le rend pas, QGIS le demande — une seule fois par
+          session, et seulement parce qu'on vient d'ouvrir le panneau OccHab :
+          « Annuler » laisse le panneau déconnecté, et le bouton « Connexion »
+          reste là ;
         - **aucun message en cas d'échec.** Hors ligne — le cas d'usage même de
           cette extension — la tentative échoue, et c'est normal : le plugin
           démarre déconnecté, comme avant ;
@@ -866,30 +947,81 @@ class OccHabDockWidget(QDockWidget):
             self.logger.info("Reconnexion automatique impossible : %s", exc)
             return
 
-        self.client = client
-        self._user_label = libelle_utilisateur(client.user)
+        self._installer_client(client, libelle_utilisateur(client.user))
         self.logger.info("Reconnecté à %s en tant que %s", api_url, self._user_label)
         self._load_datasets()
         self._load_reference_data()
         self._update_conn_summary()
 
-    @staticmethod
-    def _mot_de_passe_principal_disponible():
-        """QGIS peut-il relire ses configurations sans rien demander ?"""
+    def _mot_de_passe_principal_disponible(self):
+        """QGIS peut-il relire ses configurations sans rien demander ?
+
+        Avec le trousseau du système — le réglage par défaut de QGIS —, le mot
+        de passe principal y est rangé, mais QGIS ne l'y lit qu'à la première
+        demande : `masterPasswordIsSet()` restait faux au démarrage, et la
+        reconnexion automatique promise par le guide ne se faisait jamais. On
+        le fait lire ici. Si le trousseau ne répond pas, QGIS le demande dans une
+        fenêtre : une fois par session au plus, à l'ouverture du panneau.
+        """
         try:
             from qgis.core import QgsApplication
 
             manager = QgsApplication.authManager()
-            return bool(manager) and manager.masterPasswordIsSet()
+            if not manager:
+                return False
+            if manager.masterPasswordIsSet():
+                return True
+            if (not self._trousseau_essaye and manager.passwordHelperEnabled()
+                    and manager.masterPasswordHashInDatabase()):
+                self._trousseau_essaye = True
+                return bool(manager.setMasterPassword(True)) and manager.masterPasswordIsSet()
+            return False
         except Exception:  # noqa: BLE001
             return False
+
+    def _installer_client(self, client, libelle):
+        """Adopter un client GeoNature fraîchement connecté."""
+        self.client = client
+        self._user_label = libelle
+        # Session expirée en cours de route : le client la rouvre lui-même.
+        client.reconnexion = self._rouvrir_session
+        # Ici, après une connexion RÉUSSIE, et non à l'ouverture du panneau : on
+        # connaît alors le vrai serveur. Avec l'URL de la configuration, une
+        # configuration perdue (ou jamais faite) rattachait les stations à
+        # l'adresse par défaut, et la synchro les écartait ensuite pour de bon
+        # comme « rattachées à un autre serveur ».
+        self._adopter_serveur_configure()
+
+    def _rouvrir_session(self):
+        """Rouvrir une session GeoNature expirée, sans fenêtre de connexion.
+
+        Appelé par le client sur un « HTTP 401 » (cf. `GeoNatureAPIClient.
+        reconnexion`). True si la session est rouverte.
+        """
+        authcfg = self.config.get("geonature.authcfg")
+        if self.client is None or not authcfg:
+            return False
+        from .connection_dialog import ConnectionDialog
+
+        login, password = ConnectionDialog.credentials_from_authcfg(authcfg)
+        if not login:
+            return False
+        try:
+            self.client.login(
+                login, password,
+                id_application=int(self.config.get("geonature.id_application", 0) or 0),
+            )
+        except Exception as exc:  # noqa: BLE001 - le 401 d'origine sera affiché
+            self.logger.info("Session GeoNature non rouverte : %s", exc)
+            return False
+        self.logger.info("Session GeoNature expirée : rouverte.")
+        return True
 
     def open_connection(self):
         dialog = ConnectionDialog(self.config, parent=self)
         if not executer(dialog):
             return
-        self.client = dialog.client
-        self._user_label = dialog.user_label()
+        self._installer_client(dialog.client, dialog.user_label())
         self.logger.info(
             "Connecté à %s en tant que %s",
             self.config.get("geonature.api_url"),
@@ -910,6 +1042,7 @@ class OccHabDockWidget(QDockWidget):
         """
         if self.client is None:
             return
+        self._panne_reseau = False  # une nouvelle série d'appels commence ici
         module_code = (
             self.config.get("geonature.occhab_module_code", "OCCHAB") or "OCCHAB"
         ).upper()
@@ -962,11 +1095,10 @@ class OccHabDockWidget(QDockWidget):
 
     def _fetch_datasets(self, params):
         """Appel bas-niveau à /meta/datasets, tolérant au format (liste ou {data:[...]})."""
-        try:
-            response = self.client.get_datasets(params=params)
-        except Exception as exc:  # noqa: BLE001
-            self.logger.warning("JDD non chargés (params=%s) : %s", params, exc)
-            return []
+        response = self._appel_reference(
+            lambda: self.client.get_datasets(params=params), [],
+            "Jeux de données (%s)" % params,
+        )
         if isinstance(response, dict):
             response = response.get("data", [])
         return response if isinstance(response, list) else []
@@ -980,46 +1112,67 @@ class OccHabDockWidget(QDockWidget):
         )
 
     # --------------------------------------------------- données de référence
+    def _appel_reference(self, appel, defaut, quoi):
+        """Charger une liste de référence ; après une panne réseau, ne plus insister.
+
+        Les listes se chargent l'une après l'autre, dans le fil de l'interface :
+        seize appels à la connexion. Sur un réseau muet, chacun attendait son
+        délai et QGIS restait figé des minutes. Au premier échec RÉSEAU, les
+        suivants ne partent plus ; un refus du serveur (404 : nomenclature
+        absente de cette instance), lui, n'arrête rien.
+        """
+        if self._panne_reseau:
+            return defaut
+        try:
+            return appel()
+        except Exception as exc:  # noqa: BLE001
+            if getattr(exc, "reseau", False):
+                self._panne_reseau = True
+                self.logger.warning(
+                    "Serveur injoignable (%s) : les listes restantes ne sont pas "
+                    "demandées. %s", quoi, exc,
+                )
+            elif getattr(exc, "status_code", None) == 404 or "404" in str(exc):
+                # Ex. TYPE_SOL sur une version antérieure : attendu, le champ
+                # sera juste masqué.
+                self.logger.info("%s : absent(e) de cette instance (champ masqué).", quoi)
+            else:
+                self.logger.warning("%s non chargé(e)(s) : %s", quoi, exc)
+            return defaut
+
     def _load_reference_data(self):
         """Précharger toutes les nomenclatures des formulaires (station + habitat)."""
         self.nomenclatures = {}
         codes = set(STATION_NOMENCLATURES.values()) | set(HABITAT_NOMENCLATURES.values())
         for code in sorted(codes):
-            try:
-                self.nomenclatures[code] = self.client.get_nomenclature_values(code)
-            except Exception as exc:  # noqa: BLE001
-                self.nomenclatures[code] = []
-                # 404 = type de nomenclature absent de cette instance (ex. TYPE_SOL
-                # sur une version antérieure) : attendu, le champ sera juste masqué.
-                if "404" in str(exc):
-                    self.logger.info(
-                        "Nomenclature %s absente de cette instance (champ masqué).", code
-                    )
-                else:
-                    self.logger.warning("Nomenclature %s non chargée : %s", code, exc)
+            self.nomenclatures[code] = self._appel_reference(
+                lambda code=code: self.client.get_nomenclature_values(code), [],
+                "Nomenclature %s" % code,
+            ) or []
         self.logger.info(
             "Nomenclatures chargées : %s",
             {k: len(v) for k, v in self.nomenclatures.items()},
         )
-        try:
-            defaults = self.client.get_default_nomenclatures()
-            self.default_nomenclatures = defaults if isinstance(defaults, dict) else {}
-        except Exception as exc:  # noqa: BLE001
-            self.logger.warning("Nomenclatures par défaut non chargées : %s", exc)
-            self.default_nomenclatures = {}
-        try:
-            self.typologies = self.client.get_habref_typologies()
-        except Exception as exc:  # noqa: BLE001
-            self.logger.warning("Typologies HABREF non chargées : %s", exc)
-            self.typologies = []
+        defaults = self._appel_reference(
+            self.client.get_default_nomenclatures, {}, "Nomenclatures par défaut"
+        )
+        self.default_nomenclatures = defaults if isinstance(defaults, dict) else {}
+        self.typologies = self._appel_reference(
+            self.client.get_habref_typologies, [], "Typologies HABREF"
+        ) or []
         self.logger.info("Typologies HABREF chargées : %d", len(self.typologies))
         list_id = self.config.get("geonature.observer_list_id", 1) or 1
-        try:
-            self.observers = self.client.get_observers(list_id)
-        except Exception as exc:  # noqa: BLE001
-            self.logger.warning("Observateurs non chargés : %s", exc)
-            self.observers = []
+        self.observers = self._appel_reference(
+            lambda: self.client.get_observers(list_id), [], "Observateurs"
+        ) or []
         self.logger.info("Observateurs chargés : %d", len(self.observers))
+        if self._panne_reseau:
+            self.iface.messageBar().pushWarning(
+                "OccHab",
+                "Connecté, mais le serveur ne répond plus : les listes (JDD, "
+                "nomenclatures, observateurs) n'ont pas toutes été chargées. "
+                "Reconnectez-vous quand le réseau sera revenu.",
+            )
 
     def _observers_items(self):
         """Liste (id_role, nom_complet) des observateurs de la liste OccHab."""
@@ -1396,6 +1549,19 @@ class OccHabDockWidget(QDockWidget):
         if ids is not None:
             voulus = set(ids)
             stations = [s for s in stations if s["id"] in voulus]
+        else:
+            # Toute la base : pas les stations d'un collègue récupérées pour
+            # consultation, ni celles d'un autre serveur. Renvoyées, les
+            # premières passaient à NOTRE nom sur GeoNature (il réattribue le
+            # numérisateur à chaque mise à jour) ; les secondes ne partiraient
+            # de toute façon pas. Les sélectionner reste possible.
+            serveur = self._serveur_courant()
+            stations = [
+                s for s in stations
+                if s.get("mine", 1) != 0
+                and not (s.get("id_station") and s.get("serveur")
+                         and s["serveur"] != serveur)
+            ]
         a_faire = [
             (station, habitat)
             for station in stations
@@ -1742,6 +1908,7 @@ class OccHabDockWidget(QDockWidget):
             )
 
         imported, restored, skipped, failed = 0, 0, 0, 0
+        motifs = []  # (id_station, motif) : montrés, pas seulement journalisés
         for id_station in ids:
             existing = self.db.find_by_id_station(id_station, serveur)
             if existing and not overwrite:
@@ -1789,6 +1956,7 @@ class OccHabDockWidget(QDockWidget):
             except Exception as exc:  # noqa: BLE001
                 failed += 1
                 self.logger.error("Récupération station %s échouée : %s", id_station, exc)
+                motifs.append((id_station, str(exc)))
         self.refresh()
         parts = ["%d importée(s)" % imported]
         if restored:
@@ -1797,7 +1965,16 @@ class OccHabDockWidget(QDockWidget):
             parts.append("%d ignorée(s) (déjà locale)" % skipped)
         if failed:
             parts.append("%d échec(s)" % failed)
-        self.iface.messageBar().pushInfo("OccHab", "Récupération : %s." % ", ".join(parts))
+        bilan = "Récupération : %s." % ", ".join(parts)
+        if not motifs:
+            self.iface.messageBar().pushInfo("OccHab", bilan)
+            return
+        # « 1 échec(s) » sans la raison ne laissait rien à faire : station
+        # supprimée sur le serveur, droits insuffisants, réponse illisible…
+        listing = "\n".join("• station %s : %s" % m for m in motifs[:10])
+        if len(motifs) > 10:
+            listing += "\n… (+%d)" % (len(motifs) - 10)
+        QMessageBox.warning(self, "OccHab", "%s\n\n%s" % (bilan, listing))
 
     # -------------------------------------------------- saisie + géométrie
     def _begin_new_station(self, template=None):
@@ -1907,10 +2084,12 @@ class OccHabDockWidget(QDockWidget):
             return
         self._charger_export(dialog.id_export(), dialog.libelle_export(),
                              dialog.filtres(), dialog.mode(), dialog.libelle_mode(),
-                             dialog.typologie(), dialog.libelle_typologie())
+                             dialog.typologie(), dialog.libelle_typologie(),
+                             srid=dialog.srid())
 
     def _charger_export(self, id_export, libelle, filtres, mode=None,
-                        libelle_mode=None, typologie=None, libelle_typologie=None):
+                        libelle_mode=None, typologie=None, libelle_typologie=None,
+                        srid=None):
         """Rapatrier toutes les pages d'un export et le poser en couche."""
         from qgis.PyQt.QtCore import Qt as _Qt
         from qgis.PyQt.QtWidgets import QApplication
@@ -1949,7 +2128,7 @@ class OccHabDockWidget(QDockWidget):
             )
             return
         layer, count = self.export_layers.show(nom_couche, features, mode=mode,
-                                               typologie=typologie)
+                                               typologie=typologie, srid=srid)
         if layer is None:
             QMessageBox.warning(
                 self, "OccHab",
@@ -1961,9 +2140,19 @@ class OccHabDockWidget(QDockWidget):
             "Export %s chargé : %d entité(s) (annoncées : %s filtrées sur %s au total)",
             id_export, count, total_filtre, total,
         )
-        self.iface.messageBar().pushInfo(
-            "OccHab", "Export « %s » : %d entité(s) chargée(s)." % (nom_couche, count)
-        )
+        if total_filtre and count < total_filtre:
+            # Pages plafonnées par l'instance, lignes sans géométrie écartées
+            # par le serveur… : une couche incomplète ne doit pas passer pour
+            # l'export entier.
+            self.iface.messageBar().pushWarning(
+                "OccHab",
+                "Export « %s » INCOMPLET : %d entité(s) chargée(s) sur %d annoncée(s) "
+                "par le serveur." % (nom_couche, count, total_filtre),
+            )
+        else:
+            self.iface.messageBar().pushInfo(
+                "OccHab", "Export « %s » : %d entité(s) chargée(s)." % (nom_couche, count)
+            )
         self._avertir_filtres_ignores(total_filtre, total, filtres)
 
     def _avertir_filtres_ignores(self, total_filtre, total, filtres):
@@ -2057,9 +2246,11 @@ class OccHabDockWidget(QDockWidget):
             try:
                 # `validation_status` n'est pas dans `fields` (écarté par le
                 # modèle de duplication) : le statut de la cible reste le sien.
-                statut = _statut_en_lot(self.db.get_station(station_id))
+                cible = self.db.get_station(station_id)
+                statut = _statut_en_lot(cible)
                 a_supprimer += statut == "to_delete"
-                self.db.update_station(station_id, sync_status=statut, **fields)
+                self.db.update_station(station_id, sync_status=statut,
+                                       **dict(fields, **_conflit_leve(cible)))
                 self.db.replace_habitats(station_id, [dict(h) for h in habitats])
                 self.db.replace_observers(station_id, observers)
                 colles += 1
@@ -2146,6 +2337,14 @@ class OccHabDockWidget(QDockWidget):
         self._create_stations_from_geometries(geoms)
 
     def _create_stations_from_geometries(self, geoms):
+        if not self._commencer_traitement("la création des stations"):
+            return
+        try:
+            self._creer_stations(geoms)
+        finally:
+            self._traitement_en_cours = None
+
+    def _creer_stations(self, geoms):
         """Créer une station par géométrie en partageant les métadonnées d'un formulaire.
 
         Le nom reste vide (propre à chaque station) ; surface et altitude sont
@@ -2162,8 +2361,14 @@ class OccHabDockWidget(QDockWidget):
                     "altitude_min", "altitude_max"):
             shared.pop(key, None)
         created = failed = 0
-        for wkt, geom_type in geoms:
-            metrics = self._geo_metrics(wkt, geom_type)
+        lot, arretee = {}, False
+        progression = Progression(self, "Création des stations…", len(geoms))
+        for rang, (wkt, geom_type) in enumerate(geoms):
+            if not progression.avancer(
+                    rang, "Création des stations — %d / %d" % (rang + 1, len(geoms))):
+                arretee = True
+                break
+            metrics = self._geo_metrics(wkt, geom_type, lot=lot)
             fields = dict(shared)
             fields.update(
                 geom=wkt,
@@ -2188,10 +2393,19 @@ class OccHabDockWidget(QDockWidget):
             except Exception as exc:  # noqa: BLE001
                 failed += 1
                 self.logger.error("Échec création station (lot) : %s", exc)
+        progression.fermer()
         self.logger.info(
             "Création depuis sélection : %d station(s) créée(s), %d échec(s)",
             created, failed,
         )
+        if lot.get("altitudes_manquees"):
+            self.iface.messageBar().pushWarning(
+                "OccHab",
+                "Altitude non calculée pour %d station(s)%s : elle le sera à la "
+                "synchronisation." % (lot["altitudes_manquees"],
+                                      " (réseau indisponible)" if lot.get("sans_altitude")
+                                      else ""),
+            )
         if created:
             self._remember_last_entry(
                 shared, observers, dialog.habref_cd_typo, habitats=habitats
@@ -2201,6 +2415,8 @@ class OccHabDockWidget(QDockWidget):
             parts.append("%d habitat(s) chacune" % len(habitats))
         if failed:
             parts.append("%d échec(s)" % failed)
+        if arretee:
+            parts.append("arrêt demandé : %d non créée(s)" % (len(geoms) - created - failed))
         self.iface.messageBar().pushInfo("OccHab", "Sélection : %s." % ", ".join(parts))
         self.refresh()
 
@@ -2280,12 +2496,28 @@ class OccHabDockWidget(QDockWidget):
             assainie, corrigee = assainir_geometrie(geom)
             if corrigee:
                 self._geoms_corrigees += 1
+            # GeoNature n'accepte que du 2D : une couche 3D (BD TOPO…) laissait
+            # son altitude dans chaque sommet, et la station était refusée.
+            abstraite = assainie.get()
+            if abstraite is not None:
+                abstraite.dropZValue()
+                abstraite.dropMValue()
             wkt = assainie.asWkt()
         except GeometrieIrreparable as exc:
             self.logger.warning("Reprise de géométrie : entité écartée : %s", exc)
             return None
         except Exception as exc:  # noqa: BLE001
             self.logger.warning("Reprise de géométrie : reprojection échouée : %s", exc)
+            return None
+        if wkt and not wkt_en_degres_plausibles(wkt):
+            # Couche DÉCLARÉE en EPSG:4326 mais en mètres (shapefile sans .prj) :
+            # aucune reprojection, donc aucun contrôle — la station était créée
+            # et ne pouvait jamais être envoyée. Le tracé, lui, refuse ce cas.
+            self._geoms_hors_domaine += 1
+            self.logger.warning(
+                "Reprise de géométrie : entité écartée, coordonnées hors du domaine "
+                "WGS84 (SCR de la couche à vérifier)."
+            )
             return None
         return (wkt, geom_type) if wkt else None
 
@@ -2311,9 +2543,12 @@ class OccHabDockWidget(QDockWidget):
             transform = self._layer_transform_to_4326(layer)
         except CrsIndetermine as exc:
             return None, None, str(exc)
-        self._geoms_corrigees = 0
+        self._geoms_corrigees = self._geoms_hors_domaine = 0
         result = self._feature_geometry_wkt(features[0], transform)
         if result is None:
+            if self._geoms_hors_domaine:
+                self._geoms_hors_domaine = 0
+                return None, None, _MESSAGE_HORS_DOMAINE % layer.name()
             return None, None, (
                 "Géométrie inexploitable : entité sans géométrie, de type non géré "
                 "(ni point/ligne/polygone), tracé irrécupérable ou reprojection "
@@ -2344,13 +2579,16 @@ class OccHabDockWidget(QDockWidget):
             transform = self._layer_transform_to_4326(layer)
         except CrsIndetermine as exc:
             return [], str(exc)
-        self._geoms_corrigees = 0
+        self._geoms_corrigees = self._geoms_hors_domaine = 0
         geoms = []
         for feature in features:
             result = self._feature_geometry_wkt(feature, transform)
             if result is not None:
                 geoms.append(result)
         if not geoms:
+            if self._geoms_hors_domaine:
+                self._geoms_hors_domaine = 0
+                return [], _MESSAGE_HORS_DOMAINE % layer.name()
             return [], (
                 "Aucune géométrie exploitable dans la sélection (entités vides, de "
                 "type non géré ou tracés irrécupérables)."
@@ -2360,6 +2598,14 @@ class OccHabDockWidget(QDockWidget):
 
     def _signaler_geoms_corrigees(self):
         """Un seul avertissement pour tout le lot repris, puis remise à zéro."""
+        hors_domaine, self._geoms_hors_domaine = self._geoms_hors_domaine, 0
+        if hors_domaine:
+            self.iface.messageBar().pushWarning(
+                "OccHab",
+                "%d entité(s) écartée(s) : coordonnées hors du domaine WGS84 "
+                "(couche déclarée en degrés mais probablement en mètres — vérifiez "
+                "son SCR)." % hors_domaine,
+            )
         nombre, self._geoms_corrigees = self._geoms_corrigees, 0
         if not nombre:
             return
@@ -2553,6 +2799,7 @@ class OccHabDockWidget(QDockWidget):
             "sync_status": self._statut_apres_modification(current),
             "prev_geom": current.get("geom") if current else None,
             "prev_geom_type": current.get("geom_type") if current else None,
+            **_conflit_leve(current),
         }
         for key in ("area", "altitude_min", "altitude_max"):
             if (metrics or {}).get(key) is not None:
@@ -2592,6 +2839,7 @@ class OccHabDockWidget(QDockWidget):
             "geom": prev, "geom_type": prev_type,
             "sync_status": self._statut_apres_modification(full),
             "prev_geom": full.get("geom"), "prev_geom_type": full.get("geom_type"),
+            **_conflit_leve(full),
         }
         for key in ("area", "altitude_min", "altitude_max"):
             if (metrics or {}).get(key) is not None:
@@ -2611,8 +2859,15 @@ class OccHabDockWidget(QDockWidget):
         self.refresh()
         self.iface.messageBar().pushInfo("OccHab", "Géométrie précédente rétablie.")
 
-    def _geo_metrics(self, wkt, geom_type):
-        """Surface (m², polygone) et altitude min/max (MNT serveur si connecté)."""
+    def _geo_metrics(self, wkt, geom_type, lot=None):
+        """Surface (m², polygone) et altitude min/max (MNT serveur si connecté).
+
+        `lot` : état partagé d'une création en lot (dict). Au premier échec
+        RÉSEAU, l'altitude n'est plus demandée pour le reste du lot — chaque
+        appel attendait sinon son délai, quarante fois de suite, et laissait
+        chacun son bandeau. Elle le sera à la synchronisation
+        (`altitude_a_recalculer`), et un seul bandeau le dit, à la fin.
+        """
         metrics = {"area": None, "altitude_min": None, "altitude_max": None}
         if not wkt:
             return metrics
@@ -2631,7 +2886,9 @@ class OccHabDockWidget(QDockWidget):
             return metrics
         if geom_type == "polygon":
             metrics["area"] = self._surface_m2(wkt)
-        if self.client is not None and self.client.is_authenticated:
+        if lot is not None and lot.get("sans_altitude"):
+            lot["altitudes_manquees"] = lot.get("altitudes_manquees", 0) + 1
+        elif self.client is not None and self.client.is_authenticated:
             try:
                 from ..processing.geometry import wkt_to_geojson
 
@@ -2646,10 +2903,14 @@ class OccHabDockWidget(QDockWidget):
                 # calcul d'altitude sur le serveur pendant des mois sans que
                 # personne, sur le terrain, sache que sa station était en cause.
                 self.logger.warning("Altitude non calculée : %s", exc)
-                self.iface.messageBar().pushWarning(
-                    "OccHab",
-                    "Altitude non calculée pour cette station : %s" % exc,
-                )
+                if lot is not None:
+                    lot["altitudes_manquees"] = lot.get("altitudes_manquees", 0) + 1
+                    lot["sans_altitude"] = bool(getattr(exc, "reseau", False))
+                else:
+                    self.iface.messageBar().pushWarning(
+                        "OccHab",
+                        "Altitude non calculée pour cette station : %s" % exc,
+                    )
         return metrics
 
     def _surface_m2(self, wkt):
@@ -2708,10 +2969,14 @@ class OccHabDockWidget(QDockWidget):
                 self.logger.debug("removeEventFilter ignoré : %s", exc)
             self._map_filter_installed = False
         self._clear_server_prompt()
-        try:
-            QgsProject.instance().removeAll.disconnect(self._sur_vidage_projet)
-        except (TypeError, RuntimeError):
-            pass
+        projet = QgsProject.instance()
+        for signal, slot in ((projet.removeAll, self._sur_vidage_projet),
+                             (projet.readProject, self._sur_projet_lu),
+                             (projet.cleared, self._sur_projet_change)):
+            try:
+                signal.disconnect(slot)
+            except (TypeError, RuntimeError):
+                pass
         # Annuler une saisie rappelle `_recharger_serveur_reporte` : pas de
         # requête réseau ni de couche neuve pendant le déchargement.
         self._serveur_en_attente = False
@@ -2738,6 +3003,41 @@ class OccHabDockWidget(QDockWidget):
             self._capture.abandonner()
         if self._geom_editor is not None:
             self._geom_editor.abandonner()
+
+    def _sur_projet_change(self, *_args):
+        """Projet ouvert ou nouveau projet : reposer les couches OccHab.
+
+        Sans cela, après « Projet ▸ Ouvrir », les couches de stations ne
+        revenaient qu'au rafraîchissement suivant (« Zoom » répondait « aucune
+        géométrie », la surbrillance ne faisait plus rien) ; et en rouvrant le
+        même projet, la sélection sur la carte ne remontait plus jusqu'à la
+        liste. Différé : QGIS finit d'installer le projet après ce signal.
+        """
+        self.layers.oublier_couches()
+        self.server_layers.oublier()
+
+    def _sur_projet_lu(self, *_args):
+        """Projet ouvert : oublier les couches connues, puis les reposer.
+
+        Une seule fois par ouverture : QGIS vide le projet deux fois en
+        l'ouvrant (`cleared`), et reposer les couches à chacun de ces signaux
+        rechargeait trois fois les stations du serveur — dans le projet en
+        cours de fermeture compris. Un nouveau projet vide (`cleared` seul) ne
+        reçoit rien : y ajouter des couches le marquerait « modifié ».
+        """
+        self._sur_projet_change()
+        if not self._couches_a_reposer:
+            self._couches_a_reposer = True
+            QTimer.singleShot(0, self._reposer_couches)
+
+    def _reposer_couches(self):
+        self._couches_a_reposer = False
+        try:
+            self.refresh()
+            if self.client is not None and self.client.is_authenticated:
+                self._load_server_stations()
+        except RuntimeError:  # panneau détruit entre-temps (QGIS qui se ferme)
+            pass
 
     def _last_observers(self):
         """Observateurs de la dernière saisie, pour pré-remplir la suivante."""
@@ -2958,6 +3258,14 @@ class OccHabDockWidget(QDockWidget):
         dialog = self._make_station_dialog(station=full)
         if not executer(dialog):
             return
+        if not dialog.modifiee() and not was_conflict:
+            # Ouvrir une fiche pour la lire puis cliquer OK la remettait « à
+            # synchroniser » : renvoyée sans raison, et en conflit si un
+            # collègue l'avait modifiée sur GeoNature entre-temps. Sauf en
+            # conflit : valider la fiche, même inchangée, c'est le geste qui
+            # impose la version locale — le bandeau de synchro le dit.
+            self.iface.messageBar().pushInfo("OccHab", "Fiche inchangée.")
+            return
         station, habitats = dialog.get_result()
         observers = station.pop("_observers", [])
         # L'éditeur devient updated_by ; created_by (créateur d'origine) reste inchangé.
@@ -3173,6 +3481,11 @@ class OccHabDockWidget(QDockWidget):
             return "%s (+%d)" % (first, extra) if extra > 0 else first
         return station.get("station_name") or "(station sans habitat)"
 
+    def _libelle_station(self, station):
+        """`_station_label` d'une station lue sans ses habitats (liste, synchro)."""
+        full = self.db.get_station(station["id"]) if station.get("id") else None
+        return self._station_label(station, full["habitats"] if full else [])
+
     def _selected_station_id(self):
         """Station visée par une action à station unique (Éditer, Géométrie…).
 
@@ -3260,6 +3573,8 @@ class OccHabDockWidget(QDockWidget):
                 QgsCoordinateReferenceSystem,
                 QgsCoordinateTransform,
                 QgsFeatureRequest,
+                QgsGeometry,
+                QgsPointXY,
                 QgsProject,
                 QgsRectangle,
             )
@@ -3270,6 +3585,7 @@ class OccHabDockWidget(QDockWidget):
             rect = QgsRectangle(
                 point.x() - tol, point.y() - tol, point.x() + tol, point.y() + tol
             )
+            centre = QgsGeometry.fromPointXY(QgsPointXY(point))
             canvas_crs = canvas.mapSettings().destinationCrs()
             if canvas_crs.isValid() and canvas_crs.authid() != "EPSG:4326":
                 transform = QgsCoordinateTransform(
@@ -3278,14 +3594,29 @@ class OccHabDockWidget(QDockWidget):
                     QgsProject.instance(),
                 )
                 rect = transform.transformBoundingBox(rect)
+                centre.transform(transform)
+            # Test EXACT, et la station réellement sous le clic. Le filtre seul
+            # ne compare que les emprises : dans une mosaïque, double-cliquer
+            # dans le creux d'une station en L ouvrait sa voisine — la plus
+            # récente, première servie —, et la fiche corrigée était la sienne.
+            exact = getattr(QgsFeatureRequest, "ExactIntersect", None)
+            if exact is None:  # pragma: no cover - énumérations scopées seules
+                from qgis.core import Qgis
+
+                exact = Qgis.FeatureRequestFlag.ExactIntersect
+            requete = QgsFeatureRequest().setFilterRect(rect).setFlags(exact)
+            candidats = []
             for layer in self.layers.existing_layers():
                 if layer.fields().indexOf("id") < 0:
                     continue
-                for feature in layer.getFeatures(QgsFeatureRequest().setFilterRect(rect)):
+                for feature in layer.getFeatures(requete):
                     value = feature["id"]
-                    if value is not None:
-                        self._edit_station_by_id(int(value))
-                        return
+                    geom = feature.geometry()
+                    if value is None or geom is None or geom.isEmpty():
+                        continue
+                    candidats.append((_rang_au_clic(geom, centre), int(value)))
+            if candidats:
+                self._edit_station_by_id(min(candidats)[1])
         except Exception as exc:  # noqa: BLE001
             self.logger.warning("Ouverture depuis la carte échouée : %s", exc)
 
@@ -3302,23 +3633,52 @@ class OccHabDockWidget(QDockWidget):
         Confirmation explicite + compte-rendu.
         """
         months = self.db.RETENTION_MONTHS
-        count = self.db.count_purgeable_stations()
-        if count == 0:
+        candidates = self.db.stations_purgeables()
+        if not candidates:
             QMessageBox.information(
                 self, "OccHab",
                 "Aucune station synchronisée de plus de %d mois à nettoyer." % months,
             )
             return
+        if self.client is None or not self.client.is_authenticated:
+            QMessageBox.information(
+                self, "OccHab",
+                "Connectez-vous à GeoNature : le nettoyage vérifie d'abord que "
+                "chaque station y est toujours. Sans cette vérification, une "
+                "station effacée du serveur (ou un serveur restauré depuis une "
+                "sauvegarde) perdrait ici sa seule copie.",
+            )
+            return
+        sures, absentes, non_verifiees = self._stations_presentes_sur_le_serveur(
+            candidates
+        )
+        if not sures:
+            QMessageBox.information(
+                self, "OccHab",
+                "Aucune station à nettoyer : %d absente(s) de GeoNature (gardées, "
+                "c'est leur seule copie), %d non vérifiée(s)."
+                % (len(absentes), len(non_verifiees)),
+            )
+            return
+        reserve = ""
+        if absentes:
+            reserve += ("\n\n%d station(s) n'existent plus sur GeoNature : elles "
+                        "sont gardées, c'est leur seule copie." % len(absentes))
+        if non_verifiees:
+            reserve += ("\n\n%d station(s) n'ont pas pu être vérifiées (autre "
+                        "serveur, ou jeu de données inaccessible) : elles sont "
+                        "gardées." % len(non_verifiees))
         confirm = QMessageBox.question(
             self, "Nettoyer la base locale",
             "%d station(s) synchronisée(s) et non modifiée(s) depuis plus de %d mois "
             "vont être retirées de la base LOCALE.\n\n"
-            "Elles restent sur GeoNature et pourront être récupérées via "
-            "« Récupérer une station du serveur ». Continuer ?" % (count, months),
+            "Leur présence sur GeoNature vient d'être vérifiée : elles pourront être "
+            "récupérées via « Récupérer une station du serveur ». Continuer ?%s"
+            % (len(sures), months, reserve),
         )
         if confirm != QMessageBox.StandardButton.Yes:
             return
-        removed = self.db.purge_synced_stations()
+        removed = self.db.purge_synced_stations(ids=[c["id"] for c in sures])
         self.logger.info("Purge rétention : %d station(s) retirée(s) du local", removed)
         self.iface.messageBar().pushInfo(
             "OccHab",
@@ -3326,6 +3686,50 @@ class OccHabDockWidget(QDockWidget):
             "(toujours sur GeoNature)." % removed,
         )
         self.refresh()
+
+    def _stations_presentes_sur_le_serveur(self, stations):
+        """Répartir `stations` en (présentes, absentes, non vérifiées) sur GeoNature.
+
+        Une requête par jeu de données (la liste du JDD), pas une par station.
+        Une station d'un autre serveur, ou d'un JDD que la requête n'a pas pu
+        lister, est « non vérifiée » : dans le doute, on la garde.
+        """
+        serveur = self._serveur_courant()
+        sures, absentes, non_verifiees = [], [], []
+        a_verifier = {}
+        for station in stations:
+            if station.get("serveur") and station["serveur"] != serveur:
+                non_verifiees.append(station)
+            else:
+                a_verifier.setdefault(station.get("id_dataset"), []).append(station)
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        panne = False
+        try:
+            for jdd, lot in a_verifier.items():
+                if panne:  # réseau perdu : les JDD restants ne sont pas vérifiés
+                    non_verifiees.extend(lot)
+                    continue
+                try:
+                    fc = self.client.get_stations(params={"id_dataset": jdd},
+                                                  geojson=True)
+                    features = fc.get("features") if isinstance(fc, dict) else None
+                    if features is None:
+                        raise ValueError("réponse inexploitable")
+                except Exception as exc:  # noqa: BLE001 - invérifiable : gardé
+                    self.logger.warning("Nettoyage : JDD %s non vérifié : %s", jdd, exc)
+                    non_verifiees.extend(lot)
+                    panne = bool(getattr(exc, "reseau", False))
+                    continue
+                presentes = {
+                    str((f.get("properties") or {}).get("id_station") or f.get("id"))
+                    for f in features
+                }
+                for station in lot:
+                    (sures if str(station["id_station"]) in presentes
+                     else absentes).append(station)
+        finally:
+            QApplication.restoreOverrideCursor()
+        return sures, absentes, non_verifiees
 
     def _backup_db(self):
         import shutil
@@ -3399,6 +3803,17 @@ class OccHabDockWidget(QDockWidget):
             self.config.set(CLE_DOSSIER, dialogue.dossier())
 
         choix = dialogue.parametres()
+        titre = choix.get("titre") or "Carte des habitats"
+        decision = self._place_pour_la_planche(titre)
+        if decision is None:
+            return
+        # La planche à remplacer est seulement MISE DE CÔTÉ (renommée) : elle
+        # n'est retirée qu'une fois la nouvelle créée. Retirée d'abord, un
+        # gabarit illisible ou un partage réseau débranché la faisait perdre,
+        # retouches comprises, sans rien à sa place.
+        ancienne = decision if decision is not True else None
+        if ancienne is not None:
+            ancienne.setName(self._nom_de_cote(titre))
         canevas = self.iface.mapCanvas()
         emprise = canevas.extent() if choix.pop("emprise_vue") else None
         try:
@@ -3415,11 +3830,15 @@ class OccHabDockWidget(QDockWidget):
                 **choix
             )
         except (GabaritIntrouvable, GabaritIllisible) as exc:
+            if ancienne is not None:
+                ancienne.setName(titre)
             QMessageBox.warning(
                 self, "Mise en page",
                 "Ce gabarit n'a pas pu être ouvert : %s" % exc
             )
             return
+        if ancienne is not None:
+            QgsProject.instance().layoutManager().removeLayout(ancienne)
 
         jdd = self.combo_jdd.currentData() if self.combo_jdd.isEnabled() else None
         en_attente = self._stations_en_attente(jdd)
@@ -3432,6 +3851,53 @@ class OccHabDockWidget(QDockWidget):
         for message in avertissements:
             self.iface.messageBar().pushWarning("OccHab — mise en page", message)
         self.iface.openLayoutDesigner(mise)
+
+    def _place_pour_la_planche(self, titre):
+        """Une planche porte déjà ce titre : la remplacer, ou garder les deux ?
+
+        Le bandeau des gabarits affiche le NOM de la planche (`@layout_name`) :
+        refaire une carte du même titre — le geste ordinaire, on recadre, on
+        change de fond — imprimait « Titre (2) » dans le bandeau du PDF.
+
+        Renvoie None si l'utilisateur renonce, True pour créer la planche (à
+        côté de l'ancienne, ou sans concurrente), ou la planche à remplacer —
+        que l'appelant ne retire qu'une fois la nouvelle créée.
+        """
+        from qgis.core import QgsProject
+
+        gestionnaire = QgsProject.instance().layoutManager()
+        existante = gestionnaire.layoutByName(titre)
+        if existante is None:
+            return True
+        boite = QMessageBox(self)
+        boite.setWindowTitle("Mise en page")
+        boite.setText(
+            "Une planche « %s » existe déjà.\n\nLe bandeau imprime le nom de la "
+            "planche : en garder deux, la nouvelle s'appellerait « %s (2) », et "
+            "c'est ce « (2) » qui sortirait sur la carte." % (titre, titre)
+        )
+        remplacer = boite.addButton("Remplacer l'ancienne", QMessageBox.ButtonRole.AcceptRole)
+        garder = boite.addButton("Garder les deux", QMessageBox.ButtonRole.ActionRole)
+        boite.addButton(QMessageBox.StandardButton.Cancel)
+        boite.setDefaultButton(remplacer)
+        executer(boite)
+        clique = boite.clickedButton()
+        if clique is remplacer:
+            return existante
+        return True if clique is garder else None
+
+    @staticmethod
+    def _nom_de_cote(titre):
+        """Nom provisoire, encore libre, pour la planche qu'on remplace."""
+        from qgis.core import QgsProject
+
+        pris = {m.name() for m in QgsProject.instance().layoutManager().layouts()}
+        numero = 1
+        while True:
+            nom = "%s (ancienne%s)" % (titre, " %d" % numero if numero > 1 else "")
+            if nom not in pris:
+                return nom
+            numero += 1
 
     def _stations_en_attente(self, id_dataset=None):
         """Stations locales pas encore parties, dans ce jeu de données.
@@ -3493,8 +3959,46 @@ class OccHabDockWidget(QDockWidget):
 
         return "ANA-CEN Ariège — %s" % date.today().strftime("%d/%m/%Y")
 
+    def _station_pour_export(self, id_station, parse_server_station):
+        """(station, habitats, observateurs) d'une station du serveur, ou None."""
+        try:
+            detail = self.client.get_station(id_station)
+            station, habitats, observers = parse_server_station(detail)
+        except Exception as exc:  # noqa: BLE001
+            self.logger.warning("Station %s non exportée : %s", id_station, exc)
+            return None
+        # `parse_server_station` écarte le numérisateur — il ne sert pas à
+        # l'import local —, et la colonne `numerisateur` de l'export sortait
+        # vide sur toutes les lignes.
+        props = (detail.get("properties") or {}) if isinstance(detail, dict) else {}
+        return dict(station, id_digitiser=props.get("id_digitiser")), habitats, observers
+
     def export_jdd_cartography(self):
         """Exporter la cartographie d'habitats du JDD (serveur) : 1 ligne / habitat."""
+        if not self._commencer_traitement("l'export de la cartographie"):
+            return
+        try:
+            self._exporter_cartographie()
+        finally:
+            self._traitement_en_cours = None
+
+    def _commencer_traitement(self, nom):
+        """Refuser un second traitement long pendant qu'un premier tourne.
+
+        La fenêtre de progression ne devient modale qu'au bout d'un instant,
+        et elle laisse passer les événements : un double-clic sur
+        « Synchroniser » relançait la synchronisation DANS la première — tout
+        partait deux fois, les questions et le bilan aussi.
+        """
+        if self._traitement_en_cours:
+            self.iface.messageBar().pushInfo(
+                "OccHab", "Patientez : %s est en cours." % self._traitement_en_cours
+            )
+            return False
+        self._traitement_en_cours = nom
+        return True
+
+    def _exporter_cartographie(self):
         if self.client is None or not self.client.is_authenticated:
             QMessageBox.information(self, "OccHab", "Connectez-vous à GeoNature d'abord.")
             return
@@ -3530,12 +4034,19 @@ class OccHabDockWidget(QDockWidget):
         from ..processing.export import flatten_cartography
 
         parsed, failed = [], 0
-        for id_station in ids:
-            try:
-                parsed.append(parse_server_station(self.client.get_station(id_station)))
-            except Exception as exc:  # noqa: BLE001
-                failed += 1
-                self.logger.warning("Station %s non exportée : %s", id_station, exc)
+        # Une requête par station, dans le fil de l'interface : sur un JDD de
+        # quelques centaines de stations, QGIS paraissait planté des minutes.
+        with Progression(self, "Export de la cartographie du JDD…", len(ids)) as progression:
+            for rang, id_station in enumerate(ids):
+                if not progression.avancer(
+                        rang, "Lecture des stations — %d / %d" % (rang + 1, len(ids))):
+                    self.iface.messageBar().pushInfo("OccHab", "Export annulé.")
+                    return
+                station = self._station_pour_export(id_station, parse_server_station)
+                if station is None:
+                    failed += 1
+                else:
+                    parsed.append(station)
         if not parsed:
             QMessageBox.warning(self, "OccHab", "Aucune station récupérée pour l'export.")
             return
@@ -3566,10 +4077,11 @@ class OccHabDockWidget(QDockWidget):
             # — le cas courant, la liste ne propose que ça. HABREF n'est sollicité
             # que pour celles arbitrées via « Autre… », et une seule fois chacune.
             fiche = catalogue.fiche_correspondance(cd_hab)
-            code = (fiche or {}).get("code") or (habref_label(cd_hab) or {}).get("code")
-            # Non résolu (hors ligne, ou fiche en 500) : le cd_hab nu plutôt que
-            # rien, pour que la correspondance reste traçable dans l'export.
-            return code or str(cd_hab)
+            # Non résolu (hors ligne, ou fiche en 500) : None, et l'export se
+            # rabat sur le code inscrit dans le bloc (correspondances d'avant
+            # la 0.11.0), puis seulement sur le cd_hab nu. Rendre ici le cd_hab
+            # privait ces correspondances anciennes de leur vrai code.
+            return (fiche or {}).get("code") or (habref_label(cd_hab) or {}).get("code")
 
         rows = flatten_cartography(
             parsed,
@@ -3858,6 +4370,16 @@ class OccHabDockWidget(QDockWidget):
     _DELETE_THRESHOLD = 3  # au-delà : confirmation renforcée
 
     def synchronize(self, ids=None):
+        """Envoyer les stations en attente ; `ids` restreint à celles-là (cf.
+        `_synchroniser`), un seul traitement long à la fois."""
+        if not self._commencer_traitement("la synchronisation"):
+            return
+        try:
+            self._synchroniser(ids)
+        finally:
+            self._traitement_en_cours = None
+
+    def _synchroniser(self, ids=None):
         """Envoyer les stations en attente ; `ids` restreint à celles-là.
 
         Le bouton synchronise tout ; le menu contextuel ne vise que la
@@ -3918,10 +4440,42 @@ class OccHabDockWidget(QDockWidget):
             )
             return
 
+        # Motifs d'échec, montrés en fin de synchro : le client sait produire un
+        # message lisible (proxy coupé, page HTML, corps JSON…) et il finissait
+        # dans un fichier journal que personne n'ouvre, l'utilisateur ne lisant
+        # que « N échec(s) ». Suppressions comprises : un cadre d'acquisition
+        # fermé faisait échouer chaque suppression, synchro après synchro,
+        # sans que la raison apparaisse jamais.
+        echecs = []
+
         # --- Suppressions (avec garde-fous) ---
-        deleted = del_failed = 0
+        deleted = del_failed = del_ecartees = 0
+        a_supprimer = []
         if to_delete and self._confirm_deletions(to_delete):
-            for station in to_delete:
+            a_supprimer, del_ecartees = self._suppressions_sans_conflit(to_delete)
+
+        # Progression APRÈS les questions de confirmation : la fenêtre s'ouvre
+        # d'elle-même au bout d'un instant, elle passerait sinon devant elles.
+        # Sans elle, QGIS paraissait planté pendant tout le lot — des minutes
+        # sur un réseau dégradé —, sans rien pour dire où on en était ni pour
+        # arrêter. Les stations non traitées restent « à synchroniser ».
+        total = len(a_supprimer) + len(pending)
+        progression = Progression(self, "Synchronisation avec GeoNature…", total)
+        fait, reseau_ko, interrompue = 0, 0, None
+        ok = failed = conflicts = 0
+        geoms_corrigees = 0
+        altitudes_recalculees = altitudes_gardees = 0
+        # Stations dont l'id serveur ne correspond plus à rien (supprimées sur
+        # GeoNature) : recréées ou laissées en attente selon la réponse de
+        # l'utilisateur (None = question pas encore posée pour cette synchro).
+        orphans_recreated = orphans_kept = 0
+        try:
+            for station in a_supprimer:
+                if not progression.avancer(
+                        fait, "Suppression sur GeoNature — %d / %d" % (fait + 1, total)):
+                    interrompue = _ARRET_DEMANDE
+                    break
+                fait += 1
                 try:
                     if station.get("id_station"):
                         try:
@@ -3943,232 +4497,254 @@ class OccHabDockWidget(QDockWidget):
                         "Suppression station %s échouée : %s",
                         station.get("id_station"), exc,
                     )
+                    echecs.append((
+                        "suppression de " + self._libelle_station(station), str(exc),
+                    ))
+                    reseau_ko, interrompue = _arret_sur_erreur(exc, reseau_ko)
+                    if interrompue:
+                        break
+                else:
+                    reseau_ko = 0
 
-        # --- Créations / mises à jour ---
-        ok = failed = conflicts = 0
-        # Motifs d'échec, montrés en fin de synchro : le client sait produire un
-        # message lisible (proxy coupé, page HTML, corps JSON…) et il finissait
-        # dans un fichier journal que personne n'ouvre, l'utilisateur ne lisant
-        # que « N échec(s) ».
-        echecs = []
-        geoms_corrigees = 0
-        altitudes_recalculees = altitudes_gardees = 0
-        # Stations dont l'id serveur ne correspond plus à rien (supprimées sur
-        # GeoNature) : recréées ou laissées en attente selon la réponse de
-        # l'utilisateur (None = question pas encore posée pour cette synchro).
-        orphans_recreated = orphans_kept = 0
-        recreate_orphans = None
-        tech_default = self._habitat_defaults().get("technique")  # « In situ » (cd 1)
-        for station in pending:
-            full = self.db.get_station(station["id"])
-            if full is None:
-                continue
-            # Habitats saisis hors-ligne : technique restée None → défaut « In situ ».
-            if tech_default:
-                for hab in full["habitats"]:
-                    if not hab.get("id_nomenclature_collection_technique"):
-                        hab["id_nomenclature_collection_technique"] = tech_default
-            # La station existe-t-elle encore côté serveur ? Un id_station mémorisé
-            # peut désigner une station supprimée depuis sur GeoNature : la mise à
-            # jour part alors dans le vide et le serveur répond HTTP 500. On
-            # interroge donc le serveur AVANT d'envoyer quoi que ce soit.
-            # Fail-open : si le contrôle échoue (réseau…), on synchronise quand même.
-            current = None
-            recreated = False  # station orpheline renvoyée comme une création
-            if full.get("id_station"):
-                try:
-                    current = self.client.get_station(full["id_station"])
-                except GeoNatureAPIError as exc:
-                    if exc.status_code != 404:
+            # --- Créations / mises à jour ---
+            recreate_orphans = None
+            tech_default = self._habitat_defaults().get("technique")  # « In situ » (cd 1)
+            for station in pending:
+                if interrompue:
+                    break
+                if not progression.avancer(
+                        fait, "Envoi vers GeoNature — %d / %d" % (fait + 1, total)):
+                    interrompue = _ARRET_DEMANDE
+                    break
+                fait += 1
+                full = self.db.get_station(station["id"])
+                if full is None:
+                    continue
+                # Habitats saisis hors-ligne : technique restée None → défaut « In situ ».
+                if tech_default:
+                    for hab in full["habitats"]:
+                        if not hab.get("id_nomenclature_collection_technique"):
+                            hab["id_nomenclature_collection_technique"] = tech_default
+                # La station existe-t-elle encore côté serveur ? Un id_station mémorisé
+                # peut désigner une station supprimée depuis sur GeoNature : la mise à
+                # jour part alors dans le vide et le serveur répond HTTP 500. On
+                # interroge donc le serveur AVANT d'envoyer quoi que ce soit.
+                # Fail-open : si le contrôle échoue (réseau…), on synchronise quand même.
+                current = None
+                recreated = False  # station orpheline renvoyée comme une création
+                if full.get("id_station"):
+                    try:
+                        current = self.client.get_station(full["id_station"])
+                    except GeoNatureAPIError as exc:
+                        if exc.status_code != 404:
+                            self.logger.warning(
+                                "Contrôle serveur ignoré (station %s) : %s",
+                                full["id_station"], exc,
+                            )
+                        else:
+                            # Identifiant serveur périmé : la seule issue est de
+                            # recréer la station. Question posée UNE fois par synchro.
+                            self.logger.warning(
+                                "Station %s absente du serveur (HTTP 404) : identifiant "
+                                "serveur périmé.", full["id_station"],
+                            )
+                            if recreate_orphans is None:
+                                recreate_orphans = self._ask(
+                                    "Station absente de GeoNature",
+                                    "« %s » n'existe plus sur GeoNature (supprimée côté "
+                                    "serveur) : sa mise à jour est impossible.\n\n"
+                                    "La recréer comme une nouvelle station ?\n\n"
+                                    "(la réponse vaut pour toute cette synchronisation ; "
+                                    "sinon la station reste « à synchroniser » en local)"
+                                    % self._station_label(full, full["habitats"]),
+                                )
+                            if not recreate_orphans:
+                                orphans_kept += 1
+                                continue
+                            self.db.detach_from_server(station["id"])
+                            full["id_station"] = None
+                            full["server_snapshot"] = None
+                            for hab in full["habitats"]:
+                                hab["id_habitat"] = None
+                                hab["unique_id_sinp_hab"] = None
+                            recreated = True
+                    except Exception as exc:  # noqa: BLE001
                         self.logger.warning(
                             "Contrôle serveur ignoré (station %s) : %s",
                             full["id_station"], exc,
                         )
-                    else:
-                        # Identifiant serveur périmé : la seule issue est de
-                        # recréer la station. Question posée UNE fois par synchro.
-                        self.logger.warning(
-                            "Station %s absente du serveur (HTTP 404) : identifiant "
-                            "serveur périmé.", full["id_station"],
-                        )
-                        if recreate_orphans is None:
-                            recreate_orphans = self._ask(
-                                "Station absente de GeoNature",
-                                "« %s » n'existe plus sur GeoNature (supprimée côté "
-                                "serveur) : sa mise à jour est impossible.\n\n"
-                                "La recréer comme une nouvelle station ?\n\n"
-                                "(la réponse vaut pour toute cette synchronisation ; "
-                                "sinon la station reste « à synchroniser » en local)"
-                                % self._station_label(full, full["habitats"]),
-                            )
-                        if not recreate_orphans:
-                            orphans_kept += 1
-                            continue
-                        self.db.detach_from_server(station["id"])
-                        full["id_station"] = None
-                        full["server_snapshot"] = None
-                        for hab in full["habitats"]:
-                            hab["id_habitat"] = None
-                            hab["unique_id_sinp_hab"] = None
-                        recreated = True
-                except Exception as exc:  # noqa: BLE001
-                    self.logger.warning(
-                        "Contrôle serveur ignoré (station %s) : %s",
-                        full["id_station"], exc,
-                    )
-            # Conflit : le serveur a-t-il changé depuis notre dernière synchro de CETTE
-            # station ? (empreinte mémorisée ≠ empreinte serveur actuelle).
-            if current is not None and full.get("server_snapshot"):
-                try:
-                    changed = server_fingerprint(*parse_server_station(current)) != full[
-                        "server_snapshot"
-                    ]
-                except Exception as exc:  # noqa: BLE001
-                    self.logger.warning(
-                        "Contrôle de conflit ignoré (station %s) : %s",
-                        full["id_station"], exc,
-                    )
-                    changed = False
-                if changed:
-                    self.db.update_station(station["id"], sync_status="conflict")
-                    conflicts += 1
-                    continue  # ne pas écraser la version serveur
-            try:
-                # DANS le `try` : `build_station_payload` lève par conception
-                # (domaine WGS84, mesures incohérentes), et l'assainissement lève
-                # sur une géométrie irrécupérable. Hors du `try`, la 3e station
-                # d'un lot de 40 interrompait les 37 suivantes avec une trace
-                # QGIS, sans bilan ni journal — l'inverse de ce que promet la
-                # docstring de `build_station_payload`.
-                geom_wkt, corrigee = assainir_wkt(full.get("geom"))
-                if corrigee:
-                    # Persister : sinon on répare à chaque synchro, la carte
-                    # locale continue d'afficher le polygone cassé, et la surface
-                    # stockée reste celle d'un polygone auto-sécant — c'est-à-dire
-                    # aucune surface. `prev_geom` n'est PAS touché : c'est le
-                    # « rétablir la géométrie précédente » de l'utilisateur, pas
-                    # une corbeille interne. `sync_status` non plus :
-                    # `update_station` n'écrit que les colonnes passées.
-                    champs = {"geom": geom_wkt}
-                    if full.get("geom_type") == "polygon":
-                        surface = self._surface_m2(geom_wkt)
-                        if surface is not None:
-                            champs["area"] = surface
-                            full["area"] = surface
-                    full["geom"] = geom_wkt
-                    self.db.update_station(station["id"], **champs)
-                    geoms_corrigees += 1
-                    self.logger.warning(
-                        "Station %s : géométrie invalide réparée avant envoi.",
-                        station["id"],
-                    )
-                    # L'altitude n'est pas recalculée pour une simple réparation
-                    # (un aller-retour réseau par station en pleine boucle) : la
-                    # forme ne change qu'à la marge.
-                geojson = wkt_to_geojson(geom_wkt) if geom_wkt else None
-                if full.get("altitude_a_recalculer") and geojson:
-                    # Géométrie changée hors connexion : l'altitude stockée est
-                    # celle de l'ANCIENNE géométrie. La recalculer avant l'envoi
-                    # (un appel, pour les seules stations marquées) ; en cas
-                    # d'échec, la valeur stockée part telle quelle et le bilan
-                    # le dit.
+                # Conflit : le serveur a-t-il changé depuis notre dernière synchro de CETTE
+                # station ? (empreinte mémorisée ≠ empreinte serveur actuelle).
+                if current is not None and full.get("server_snapshot"):
                     try:
-                        altitude = self.client.get_altitude(geojson)
+                        changed = server_fingerprint(*parse_server_station(current)) != full[
+                            "server_snapshot"
+                        ]
                     except Exception as exc:  # noqa: BLE001
                         self.logger.warning(
-                            "Altitude non recalculée (station %s) : %s",
-                            station["id"], exc,
+                            "Contrôle de conflit ignoré (station %s) : %s",
+                            full["id_station"], exc,
                         )
-                        altitude = None
-                    if isinstance(altitude, dict) and (
-                        altitude.get("altitude_min") is not None
-                        or altitude.get("altitude_max") is not None
-                    ):
-                        champs = {
-                            "altitude_min": altitude.get("altitude_min"),
-                            "altitude_max": altitude.get("altitude_max"),
-                            "altitude_a_recalculer": 0,
-                        }
-                        self.db.update_station(station["id"], **champs)
-                        full.update(champs)
-                        altitudes_recalculees += 1
-                    else:
-                        altitudes_gardees += 1
-                # Identité GeoNature de chaque habitat AVANT l'envoi : sans
-                # `id_habitat`, GeoNature recrée l'habitat et efface l'ancien.
-                # Retrouvée sur la version serveur lue pour le contrôle de conflit
-                # (y compris, par leur contenu, pour les habitats envoyés avant ce
-                # correctif), sinon UUID neuf : GeoNature le reprend tel quel, et
-                # c'est par lui qu'on retrouve l'habitat après l'envoi.
-                habitats_serveur = []
-                if current is not None:
-                    try:
-                        habitats_serveur = parse_server_station(current)[1]
-                    except Exception:  # noqa: BLE001 - rattrapage best-effort
-                        habitats_serveur = []
-                self._poser_identites_habitats(
-                    full["habitats"],
-                    identites_habitats(
-                        full["habitats"], habitats_serveur, par_contenu=True,
-                        nouvel_uuid=lambda: str(uuid.uuid4()),
-                    ),
-                )
-                payload = build_station_payload(
-                    full, full["habitats"], full["observers"], geojson
-                )
-                if full.get("id_station"):  # déjà synchronisée → mise à jour
-                    self.client.update_station(full["id_station"], payload)
-                    id_station = full["id_station"]
-                else:  # première synchro → création
-                    response = self.client.create_station(payload)
-                    id_station = extract_id_station(response)
-                    if not id_station:
-                        # Marquée « synchronisée » sans identifiant, la station
-                        # n'était plus jamais renvoyée, puis la purge l'effaçait.
-                        raise GeoNatureAPIError(
-                            "réponse de création sans identifiant de station. La "
-                            "station a pu être créée sur GeoNature : vérifiez-le "
-                            "avant de relancer la synchronisation, sous peine de "
-                            "doublon."
-                        )
-                # Relire la station envoyée (best-effort) : rafraîchit l'empreinte
-                # pour les conflits futurs, et récupère au passage les valeurs que
-                # GeoNature a posées lui-même sur les champs que nous n'envoyons
-                # pas (nature de l'objet géographique, type de sol…). Sans cela la
-                # colonne locale reste vide et affiche « non renseigné » alors que
-                # la station en porte une sur le serveur.
-                snapshot, combles, identites = None, {}, {}
+                        changed = False
+                    if changed:
+                        self.db.update_station(station["id"], sync_status="conflict")
+                        conflicts += 1
+                        continue  # ne pas écraser la version serveur
                 try:
-                    srv, srv_habitats, srv_observers = parse_server_station(
-                        self.client.get_station(id_station)
+                    # DANS le `try` : `build_station_payload` lève par conception
+                    # (domaine WGS84, mesures incohérentes), et l'assainissement lève
+                    # sur une géométrie irrécupérable. Hors du `try`, la 3e station
+                    # d'un lot de 40 interrompait les 37 suivantes avec une trace
+                    # QGIS, sans bilan ni journal — l'inverse de ce que promet la
+                    # docstring de `build_station_payload`.
+                    geom_wkt, corrigee = assainir_wkt(full.get("geom"))
+                    if corrigee:
+                        # Persister : sinon on répare à chaque synchro, la carte
+                        # locale continue d'afficher le polygone cassé, et la surface
+                        # stockée reste celle d'un polygone auto-sécant — c'est-à-dire
+                        # aucune surface. `prev_geom` n'est PAS touché : c'est le
+                        # « rétablir la géométrie précédente » de l'utilisateur, pas
+                        # une corbeille interne. `sync_status` non plus :
+                        # `update_station` n'écrit que les colonnes passées.
+                        champs = {"geom": geom_wkt}
+                        if full.get("geom_type") == "polygon":
+                            surface = self._surface_m2(geom_wkt)
+                            if surface is not None:
+                                champs["area"] = surface
+                                full["area"] = surface
+                        full["geom"] = geom_wkt
+                        self.db.update_station(station["id"], **champs)
+                        geoms_corrigees += 1
+                        self.logger.warning(
+                            "Station %s : géométrie invalide réparée avant envoi.",
+                            station["id"],
+                        )
+                        # L'altitude n'est pas recalculée pour une simple réparation
+                        # (un aller-retour réseau par station en pleine boucle) : la
+                        # forme ne change qu'à la marge.
+                    geojson = wkt_to_geojson(geom_wkt) if geom_wkt else None
+                    if full.get("altitude_a_recalculer") and geojson:
+                        # Géométrie changée hors connexion : l'altitude stockée est
+                        # celle de l'ANCIENNE géométrie. La recalculer avant l'envoi
+                        # (un appel, pour les seules stations marquées) ; en cas
+                        # d'échec, la valeur stockée part telle quelle et le bilan
+                        # le dit.
+                        try:
+                            altitude = self.client.get_altitude(geojson)
+                        except Exception as exc:  # noqa: BLE001
+                            self.logger.warning(
+                                "Altitude non recalculée (station %s) : %s",
+                                station["id"], exc,
+                            )
+                            altitude = None
+                        if isinstance(altitude, dict) and (
+                            altitude.get("altitude_min") is not None
+                            or altitude.get("altitude_max") is not None
+                        ):
+                            champs = {
+                                "altitude_min": altitude.get("altitude_min"),
+                                "altitude_max": altitude.get("altitude_max"),
+                                "altitude_a_recalculer": 0,
+                            }
+                            self.db.update_station(station["id"], **champs)
+                            full.update(champs)
+                            altitudes_recalculees += 1
+                        else:
+                            altitudes_gardees += 1
+                    # Identité GeoNature de chaque habitat AVANT l'envoi : sans
+                    # `id_habitat`, GeoNature recrée l'habitat et efface l'ancien.
+                    # Retrouvée sur la version serveur lue pour le contrôle de conflit
+                    # (y compris, par leur contenu, pour les habitats envoyés avant ce
+                    # correctif), sinon UUID neuf : GeoNature le reprend tel quel, et
+                    # c'est par lui qu'on retrouve l'habitat après l'envoi.
+                    habitats_serveur = []
+                    if current is not None:
+                        try:
+                            habitats_serveur = parse_server_station(current)[1]
+                        except Exception:  # noqa: BLE001 - rattrapage best-effort
+                            habitats_serveur = []
+                    self._poser_identites_habitats(
+                        full["habitats"],
+                        identites_habitats(
+                            full["habitats"], habitats_serveur, par_contenu=True,
+                            nouvel_uuid=lambda: str(uuid.uuid4()),
+                        ),
                     )
-                    snapshot = server_fingerprint(srv, srv_habitats, srv_observers)
-                    combles = combler_defauts_serveur(full, srv)
-                    # `id_habitat` des habitats créés par cet envoi, retrouvés
-                    # par l'UUID qu'on leur a donné.
-                    identites = identites_habitats(full["habitats"], srv_habitats)
-                except Exception:  # noqa: BLE001
+                    payload = build_station_payload(
+                        full, full["habitats"], full["observers"], geojson
+                    )
+                    if full.get("id_station"):  # déjà synchronisée → mise à jour
+                        self.client.update_station(full["id_station"], payload)
+                        id_station = full["id_station"]
+                    else:  # première synchro → création
+                        response = self.client.create_station(payload)
+                        id_station = extract_id_station(response)
+                        if not id_station:
+                            # Marquée « synchronisée » sans identifiant, la station
+                            # n'était plus jamais renvoyée, puis la purge l'effaçait.
+                            raise GeoNatureAPIError(
+                                "réponse de création sans identifiant de station. La "
+                                "station a pu être créée sur GeoNature : vérifiez-le "
+                                "avant de relancer la synchronisation, sous peine de "
+                                "doublon."
+                            )
+                    # Relire la station envoyée (best-effort) : rafraîchit l'empreinte
+                    # pour les conflits futurs, et récupère au passage les valeurs que
+                    # GeoNature a posées lui-même sur les champs que nous n'envoyons
+                    # pas (nature de l'objet géographique, type de sol…). Sans cela la
+                    # colonne locale reste vide et affiche « non renseigné » alors que
+                    # la station en porte une sur le serveur.
                     snapshot, combles, identites = None, {}, {}
-                self.db.mark_station_synced(
-                    station["id"], id_station, server_snapshot=snapshot,
-                    serveur=serveur,
-                )
-                self._poser_identites_habitats(full["habitats"], identites)
-                if combles:
-                    # Après `mark_station_synced` : `update_station` ne touche pas
-                    # `sync_status`, la station reste « synchronisée ».
-                    self.db.update_station(station["id"], **combles)
-                ok += 1
-                if recreated:
-                    orphans_recreated += 1
-            except Exception as exc:  # noqa: BLE001
-                failed += 1
-                self.logger.error("Station %s non synchronisée : %s", station["id"], exc)
-                echecs.append(
-                    (self._station_label(full, full["habitats"]), str(exc))
-                )
+                    try:
+                        srv, srv_habitats, srv_observers = parse_server_station(
+                            self.client.get_station(id_station)
+                        )
+                        snapshot = server_fingerprint(srv, srv_habitats, srv_observers)
+                        combles = combler_defauts_serveur(full, srv)
+                        # `id_habitat` des habitats créés par cet envoi, retrouvés
+                        # par l'UUID qu'on leur a donné.
+                        identites = identites_habitats(full["habitats"], srv_habitats)
+                    except Exception:  # noqa: BLE001
+                        snapshot, combles, identites = None, {}, {}
+                    self.db.mark_station_synced(
+                        station["id"], id_station, server_snapshot=snapshot,
+                        serveur=serveur,
+                    )
+                    if snapshot is None:
+                        # Relecture échouée : l'empreinte d'AVANT notre envoi ne
+                        # décrit plus le serveur. La garder faisait prendre notre
+                        # propre modification pour celle d'un collègue, et la
+                        # suivante tombait en conflit.
+                        self.db.set_server_snapshot(station["id"], None)
+                    self._poser_identites_habitats(full["habitats"], identites)
+                    if combles:
+                        # Après `mark_station_synced` : `update_station` ne touche pas
+                        # `sync_status`, la station reste « synchronisée ».
+                        self.db.update_station(station["id"], **combles)
+                    ok += 1
+                    reseau_ko = 0
+                    if recreated:
+                        orphans_recreated += 1
+                except Exception as exc:  # noqa: BLE001
+                    failed += 1
+                    self.logger.error("Station %s non synchronisée : %s", station["id"], exc)
+                    if getattr(exc, "peut_avoir_abouti", False) and full.get("id_station"):
+                        # Mise à jour partie, réponse perdue : GeoNature a sans
+                        # doute appliqué notre version. Garder l'ancienne empreinte
+                        # faisait voir un conflit à la synchro suivante — notre
+                        # propre envoi, pris pour celui d'un collègue.
+                        self.db.set_server_snapshot(station["id"], None)
+                    echecs.append(
+                        (self._station_label(full, full["habitats"]), str(exc))
+                    )
+                    reseau_ko, interrompue = _arret_sur_erreur(exc, reseau_ko)
+        finally:
+            progression.fermer()
 
         parts = []
+        if interrompue:
+            parts.append("INTERROMPUE (%s) : %d station(s) non traitée(s), "
+                         "toujours à synchroniser" % (interrompue, total - fait))
         if ok or failed:
             parts.append("%d envoyée(s), %d échec(s)" % (ok, failed))
         if orphans_recreated:
@@ -4177,6 +4753,11 @@ class OccHabDockWidget(QDockWidget):
             )
         if deleted or del_failed:
             parts.append("%d supprimée(s), %d échec(s)" % (deleted, del_failed))
+        if del_ecartees:
+            parts.append(
+                "%d suppression(s) reportée(s) : station(s) modifiée(s) sur "
+                "GeoNature" % del_ecartees
+            )
         if orphans_kept:
             parts.append(
                 "%d absente(s) du serveur, laissée(s) en attente" % orphans_kept
@@ -4197,7 +4778,7 @@ class OccHabDockWidget(QDockWidget):
         message = " | ".join(parts) or "rien à faire"
         status = (
             "success" if failed == 0 and del_failed == 0 and not orphans_kept
-            else "partial"
+            and not interrompue else "partial"
         )
         self.db.log_sync("upload", status, message, ok + deleted)
         self.logger.info("Synchronisation : %s", message)
@@ -4209,7 +4790,11 @@ class OccHabDockWidget(QDockWidget):
             "« Base locale… »." % purgeable
             if purgeable >= 20 else ""
         )
-        if conflicts:
+        if interrompue:
+            self.iface.messageBar().pushWarning(
+                "OccHab", "Synchronisation : %s." % message
+            )
+        elif conflicts:
             self.iface.messageBar().pushWarning(
                 "OccHab",
                 "Synchronisation : %s. %d station(s) modifiée(s) aussi sur GeoNature : "
@@ -4239,7 +4824,7 @@ class OccHabDockWidget(QDockWidget):
             QMessageBox.warning(
                 self,
                 "OccHab",
-                "%d station(s) n'ont pas pu être envoyées :\n\n%s"
+                "%d opération(s) n'ont pas abouti :\n\n%s"
                 % (len(echecs), listing),
             )
         self.refresh()
@@ -4255,7 +4840,7 @@ class OccHabDockWidget(QDockWidget):
 
     def _adopter_serveur_configure(self):
         """Rattacher les stations envoyées avant que la base ne retienne leur
-        serveur à celui de la configuration — le seul qu'on connaisse."""
+        serveur à celui de la connexion en cours — le seul qu'on connaisse."""
         try:
             nombre = self.db.adopter_serveur(self._serveur_courant())
         except Exception as exc:  # noqa: BLE001 - ne jamais bloquer l'ouverture
@@ -4284,6 +4869,56 @@ class OccHabDockWidget(QDockWidget):
                 habitat["id_habitat"], habitat["unique_id_sinp_hab"] = (
                     identites[habitat["id"]]
                 )
+
+    def _suppressions_sans_conflit(self, stations):
+        """Écarter, sauf confirmation, les stations modifiées sur GeoNature.
+
+        Une suppression partait sans regarder le serveur : marquée « à
+        supprimer » sur un poste, une station complétée entre-temps par un
+        collègue sur un autre poste était effacée, ses ajouts avec, sans un
+        mot. Même empreinte que pour les mises à jour (cf. `synchronize`).
+        Renvoie `(stations à supprimer, nombre d'écartées)`.
+        """
+        from ..api.payload import parse_server_station, server_fingerprint
+
+        modifiees = []
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        try:
+            for station in stations:
+                if not station.get("id_station") or not station.get("server_snapshot"):
+                    continue
+                try:
+                    courante = self.client.get_station(station["id_station"])
+                    if server_fingerprint(*parse_server_station(courante)) != \
+                            station["server_snapshot"]:
+                        modifiees.append(station)
+                except Exception as exc:  # noqa: BLE001 - 404 : déjà partie
+                    self.logger.info(
+                        "Contrôle avant suppression ignoré (station %s) : %s",
+                        station["id_station"], exc)
+                    if getattr(exc, "reseau", False):
+                        # Réseau perdu : ne pas attendre le délai station par
+                        # station. La suppression elle-même échouera, et la
+                        # synchronisation s'interrompra (cf. `_arret_sur_erreur`).
+                        break
+        finally:
+            QApplication.restoreOverrideCursor()
+        if not modifiees:
+            return stations, 0
+        listing = "\n".join(
+            "• %s" % self._libelle_station(s) for s in modifiees[:15]
+        )
+        if self._ask(
+            "Stations modifiées sur GeoNature",
+            "%d station(s) à supprimer ont été modifiées sur GeoNature depuis "
+            "votre dernière synchronisation — peut-être par un collègue :\n\n%s"
+            "\n\nLes supprimer quand même ?\n\n(Non : elles restent « à "
+            "supprimer » en local. « Récupérer du serveur » montre ce qui a "
+            "changé.)" % (len(modifiees), listing),
+        ):
+            return stations, 0
+        ecartees = {s["id"] for s in modifiees}
+        return [s for s in stations if s["id"] not in ecartees], len(modifiees)
 
     def _confirm_deletions(self, to_delete):
         """Confirmer la suppression serveur : nombre + libellés, puis seuil renforcé."""

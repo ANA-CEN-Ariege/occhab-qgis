@@ -9,9 +9,9 @@ chaque chargement produit sa propre couche, nommée d'après l'export et la pér
 demandée, et plusieurs peuvent coexister — comparer deux années est justement
 l'usage.
 
-Le GeoJSON est écrit sur disque puis ouvert via OGR : le fournisseur gère
-nativement les géométries mixtes point/ligne/polygone d'une station OccHab, ce
-qu'une couche mémoire typée ne saurait pas faire.
+Le GeoJSON est écrit sur disque puis ouvert via OGR. Une couche OGR n'a
+qu'UN type de géométrie : un export qui mêle points et polygones donne une
+couche par famille, lues dans le même fichier (`geometrytype=`).
 """
 import json
 import os
@@ -319,7 +319,10 @@ def _wkt(mailles, cote):
     un quart de son poids sur des mosaïques ordinaires.
     """
     if not mailles:
-        return None
+        # Vide, et non NULL : le symbole retombe sur la station ENTIÈRE quand
+        # le champ est NULL (`_EXPRESSION_MAILLES`), et un habitat sans maille
+        # recouvrait alors tous les autres.
+        return "POLYGON EMPTY"
     return QgsGeometry.unaryUnion(mailles).asWkt(_decimales(cote))
 
 
@@ -494,7 +497,7 @@ class ExportLayerManager:
         self._directory = str(directory)
         self.logger = logger
 
-    def show(self, libelle, features, mode=MODE_DEFAUT, typologie=None):
+    def show(self, libelle, features, mode=MODE_DEFAUT, typologie=None, srid=None):
         """Charger `features` (liste GeoJSON) sous le nom `libelle`.
 
         `mode` choisit la représentation des mosaïques (cf. `MODES`), ou vaut
@@ -507,8 +510,13 @@ class ExportLayerManager:
         habitat sans correspondance garde son habitat saisi : une carte ne doit
         pas perdre un polygone parce que HABREF ne sait pas le traduire.
 
+        `srid` : SRID des géométries de l'export (`geometry_srid` du module
+        Exports). Déclaré dans le fichier, sans quoi OGR suppose du WGS84.
+
         Returns:
-            (QgsVectorLayer ou None, nombre d'entités réellement chargées).
+            (QgsVectorLayer ou None, nombre d'entités réellement chargées). Si
+            l'export mêle plusieurs types de géométrie, la couche rendue est la
+            première (polygones d'abord) et le nombre couvre toutes les couches.
         """
         features = [f for f in features or [] if isinstance(f, dict)]
         if not features:
@@ -555,6 +563,9 @@ class ExportLayerManager:
         # fichier. Sans effet sur une couche qui n'est pas le gabarit.
         oc.ordonner(features)
         collection = {"type": "FeatureCollection", "features": features}
+        crs = gw.membre_crs(srid)
+        if crs is not None:
+            collection["crs"] = crs
         try:
             with open(chemin, "w", encoding="utf-8") as handle:
                 json.dump(collection, handle)
@@ -563,17 +574,34 @@ class ExportLayerManager:
                 self.logger.warning("Écriture de l'export impossible : %s", exc)
             return None, 0
 
-        layer = self._charger(chemin, libelle)
-        if layer is None:
+        familles = gw.familles_geometriques(features)
+        if len(familles) <= 1:
+            sources = [(chemin, libelle)]
+        else:
+            sources = [
+                ("%s|geometrytype=%s" % (chemin, ogr),
+                 self._nom_libre("%s (%s)" % (libelle, suffixe)) if suffixe else libelle)
+                for ogr, suffixe in familles
+            ]
+        couches = []
+        # Polygones d'abord : chaque couche est insérée AU-DESSUS des
+        # précédentes, et les points et les lignes doivent rester visibles
+        # par-dessus les surfaces.
+        for source, nom in sources:
+            layer = self._charger(source, nom)
+            if layer is None:
+                continue
+            if not brut:
+                self._styler(layer, palette, mode, especes)
+            QgsProject.instance().addMapLayer(layer, False)
+            # EN TÊTE du groupe, pas à la suite : `addLayer` ajoute en dernier
+            # enfant, c'est-à-dire SOUS les couches déjà là. Un deuxième export
+            # se retrouvait caché par le premier, et on le croyait vide.
+            self._group().insertLayer(0, layer)
+            couches.append(layer)
+        if not couches:
             return None, 0
-        if not brut:
-            self._styler(layer, palette, mode, especes)
-        QgsProject.instance().addMapLayer(layer, False)
-        # EN TÊTE du groupe, pas à la suite : `addLayer` ajoute en dernier
-        # enfant, c'est-à-dire SOUS les couches déjà là. Un deuxième export se
-        # retrouvait caché par le premier, et on le croyait vide.
-        self._group().insertLayer(0, layer)
-        return layer, layer.featureCount()
+        return couches[0], sum(c.featureCount() for c in couches)
 
     def _charger(self, chemin, nom, filtre=None):
         """Couche OGR lecture seule, éventuellement restreinte par `filtre`."""
@@ -716,11 +744,14 @@ def _poser_pee(features, cle_station="id_station"):
     for feature in features or []:
         props = feature.get("properties") or {}
         stations.setdefault(props.get(cle_station), []).append(feature)
+    # Le nom de la règle de légende, quelle que soit la casse de la saisie.
+    representants = pee.representants(features, CHAMP_PEE)
 
     for lot in stations.values():
         noms = []
         for feature in lot:
             for nom in pee.especes(_proprietes(feature).get(CHAMP_PEE)):
+                nom = representants.get(nom.casefold(), nom)
                 if nom not in noms:
                     noms.append(nom)
         porteuse = next(

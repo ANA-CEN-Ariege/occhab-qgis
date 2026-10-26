@@ -41,6 +41,13 @@ STATION_DROP = (
     # par quelqu'un d'autre, il ferait passer pour non supprimable une station
     # que l'on vient soi-même de créer. Le défaut de la base (1) est le bon.
     "mine",
+    # Le serveur d'origine appartient à l'identité serveur : recopié, il
+    # rattachait la station au serveur de sa source (envoi refusé « autre
+    # serveur », ou protection test/production sautée si la source n'en avait
+    # pas). La consigne de recalcul d'altitude suit la géométrie de CETTE
+    # station : recopiée, elle faisait remplacer une altitude saisie à la main
+    # par celle du MNT, ou partir l'altitude d'un ancien tracé.
+    "serveur", "altitude_a_recalculer",
 )
 # Géométrie et valeurs qui en sont déduites : recalculées pour la nouvelle
 # géométrie (une copie garderait la surface et l'altitude de l'original).

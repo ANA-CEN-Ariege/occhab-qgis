@@ -120,6 +120,7 @@ def creer(chemin_gabarit, titre, couche=None, couches_carte=None, emprise=None,
     for nom, valeur in variables.items():
         QgsExpressionContextUtils.setLayoutVariable(mise, nom, valeur)
 
+    _mention_du_fond(mise, fond)
     avertissements += _sans_webkit(mise, fond)
     _habiller_pages_suivantes(mise, fond)
 
@@ -358,6 +359,26 @@ def _webkit_disponible():
         return True
     except ImportError:
         return False
+
+
+def _mention_du_fond(mise, fond):
+    """Réécrire, quand WebKit est là, le cadre HTML qui cite le fond de plan.
+
+    Sans WebKit, la conversion en étiquettes s'en charge (`_texte_html`). Avec
+    lui — QGIS sous Windows —, le cadre restait figé sur le fond du gabarit
+    (SCAN25 dans les nôtres) : la page 1 citait SCAN25 quand on avait choisi la
+    BD ORTHO, alors que la page de légende, réécrite, citait la BD ORTHO.
+    """
+    if not _webkit_disponible():
+        return
+    from qgis.core import QgsLayoutItemHtml
+
+    for multiframe in mise.multiFrames():
+        if not isinstance(multiframe, QgsLayoutItemHtml):
+            continue
+        if (multiframe.html() or "").strip().startswith(gb.DEBUT_MENTION_FOND):
+            multiframe.setHtml(_texte_html(multiframe, fond))
+            multiframe.loadHtml()
 
 
 def _sans_webkit(mise, fond):

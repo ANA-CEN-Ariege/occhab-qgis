@@ -75,3 +75,26 @@ def test_collection():
     ]}
     assert gw.wkt(geom) == (
         "GEOMETRYCOLLECTION (POINT (0 0), LINESTRING (0 0, 1 1))")
+
+
+# --- Couches d'export : familles de géométrie et projection --------------------
+def _f(type_):
+    return {"type": "Feature", "geometry": {"type": type_, "coordinates": []}}
+
+
+def test_une_famille_par_type_polygones_d_abord():
+    """Une couche OGR n'a qu'un type : points et polygones mêlés, l'un des deux
+    disparaissait de la carte."""
+    assert gw.familles_geometriques([_f("Point"), _f("MultiPolygon"), _f("Polygon")]) \
+        == [("Polygon", ""), ("Point", "points")]
+    assert gw.familles_geometriques([_f("MultiPolygon")]) == [("Polygon", "")]
+    assert gw.familles_geometriques([{"geometry": None}]) == []
+
+
+def test_la_projection_est_declaree_hors_wgs84():
+    """Sans membre `crs`, OGR suppose du WGS84 : le gabarit en Lambert 93 était
+    chargé en degrés."""
+    assert gw.membre_crs(2154) == {
+        "type": "name", "properties": {"name": "urn:ogc:def:crs:EPSG::2154"}}
+    for srid in (4326, None, "", "n/a", 0):
+        assert gw.membre_crs(srid) is None
