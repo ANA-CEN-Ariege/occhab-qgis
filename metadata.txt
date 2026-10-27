@@ -3,7 +3,7 @@ name=OccHab GeoNature
 qgisMinimumVersion=3.28
 qgisMaximumVersion=3.99
 description=Data entry for GeoNature's OccHab module (habitat stations) from QGIS, with local SQLite storage and on-demand synchronisation to the GeoNature REST API.
-version=0.16.0
+version=0.16.1
 author=Cédric Roy
 email=it@ariegenature.fr
 license=GPL-3.0-or-later
@@ -34,7 +34,25 @@ icon=resources/icons/occhab.svg
 experimental=True
 deprecated=False
 
-changelog=0.16.0 - Audit par parcours utilisateur : donnees protegees, synchro fiable, cartes justes.
+changelog=0.16.1 - Corrections issues de la relecture de la 0.16.0.
+    - une station en conflit s'impose de nouveau en validant sa fiche, meme
+      inchangee (« Fiche inchangee » la laissait bloquee en conflit) ;
+    - refaire une planche du meme titre : l'ancienne est mise de cote et retiree
+      seulement une fois la nouvelle creee ; un gabarit illisible ne la detruit
+      plus ;
+    - le controle avant suppression et la verification du nettoyage s'arretent
+      au premier echec reseau, au lieu d'attendre un delai par station ou par
+      JDD avant la fenetre de progression ;
+    - ouvrir un projet ne recharge les stations serveur qu'une fois, apres sa
+      lecture ; un nouveau projet vide n'est plus marque modifie ;
+    - synchronisation, export du JDD et creation en lot ne peuvent plus etre
+      relances pendant qu'ils tournent (double-clic) ;
+    - mot de passe principal : le trousseau n'est interroge qu'une fois par
+      session ;
+    - un config.json abime en cours de session est signale aussitot ;
+    - une reponse inexploitable du serveur n'interrompt plus la synchronisation
+      pour « reseau perdu » : seule une vraie panne de connexion le fait.
+    0.16.0 - Audit par parcours utilisateur : donnees protegees, synchro fiable, cartes justes.
     Saisie et table :
     - regression 0.15.0 corrigee : valider une fiche faisait perdre a la table
       une modification d'habitat non enregistree ; les habitats gardent
