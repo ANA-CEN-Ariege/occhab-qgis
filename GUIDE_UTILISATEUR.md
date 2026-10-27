@@ -93,20 +93,17 @@ QGIS.
 
 1. Dans QGIS : menu **Extensions ▸ Installer/Gérer les extensions**.
 2. Onglet **Paramètres**.
-3. Cochez **« Afficher aussi les extensions expérimentales »**. L'extension est
-   marquée expérimentale : sans cette case, elle **n'apparaîtra pas**, même une
-   fois le dépôt ajouté.
-4. Dans la section *Dépôts d'extensions*, cliquez **Ajouter…** et saisissez :
+3. Dans la section *Dépôts d'extensions*, cliquez **Ajouter…** et saisissez :
    - **Nom** : `ANA-CEN Ariège`
    - **URL** : `https://qgisplugins.ariegenature.fr/`
    - **Authentification** : laissez vide.
-5. **OK** : le dépôt apparaît dans la liste, à l'état *connecté*.
+4. **OK** : le dépôt apparaît dans la liste, à l'état *connecté*.
 
 **Ensuite — installer :**
 
-6. Onglet **Toutes**, tapez **`OccHab GeoNature`** dans la recherche.
-7. Sélectionnez-la et cliquez **Installer l'extension**.
-8. Onglet **Installées** : vérifiez qu'elle est **cochée**.
+5. Onglet **Toutes**, tapez **`OccHab GeoNature`** dans la recherche.
+6. Sélectionnez-la et cliquez **Installer l'extension**.
+7. Onglet **Installées** : vérifiez qu'elle est **cochée**.
 
 > **L'URL pointe sur la racine du domaine**, barre oblique finale comprise :
 > c'est là qu'est servi le fichier XML du dépôt. N'ajoutez **pas** `plugins.xml`
@@ -127,9 +124,6 @@ Utile hors ligne, en avant-première, ou si le dépôt n'est pas accessible :
    ZIP**, choisissez le fichier téléchargé, cliquez **Installer l'extension**.
 3. Onglet **Installées** : vérifiez que **OccHab GeoNature** est **coché**.
 
-> Si elle n'apparaît pas, cochez **« Afficher aussi les extensions
-> expérimentales »** dans l'onglet *Paramètres*.
-
 ### Méthode C — copie manuelle du dossier
 
 1. Copiez le dossier **`occhab`** dans le répertoire des extensions de votre
@@ -143,7 +137,7 @@ Utile hors ligne, en avant-première, ou si le dépôt n'est pas accessible :
 
 ### ~~Méthode D — depuis le dépôt officiel plugins.qgis.org~~
 
-> ⏸ **Voie mise en attente le temps de l'expérimentation.**
+> ⏸ **Voie en attente de la mise à jour du dépôt officiel.**
 > ~~L'extension est aussi publiée sur le dépôt officiel des extensions QGIS,
 > présent d'origine dans le gestionnaire.~~
 > La version qui s'y trouve (**0.5.2**) a plusieurs années de retard sur celle du
@@ -151,8 +145,8 @@ Utile hors ligne, en avant-première, ou si le dépôt n'est pas accessible :
 > cartographique, ni le Tableau des alliances et l'arbitrage des
 > correspondances, ni les cartes thématiques (enjeux, plantes exotiques), ni le
 > copier-coller de polygone, ni les corrections de saisie. Utilisez la
-> **méthode A**. Cette voie sera rouverte quand l'extension sortira de sa phase
-> d'expérimentation.
+> **méthode A**. Cette voie sera rouverte quand la version stable y aura été
+> déposée.
 
 ### Rester connecté d'une session à l'autre
 
@@ -1392,13 +1386,9 @@ colonne `corresp_manu` (export du plugin) et `habitat_*_source` (vue serveur).
 ## 17. Dépannage (FAQ)
 
 ### « Je ne vois pas l'extension dans le gestionnaire »
-Deux causes, dans cet ordre (onglet **Paramètres** du gestionnaire) :
-
-1. **« Afficher aussi les extensions expérimentales »** n'est pas coché — sans
-   cette case, l'extension reste invisible, dépôt ajouté ou non.
-2. Le **dépôt de l'ANA** n'est pas dans la liste, ou n'est pas *connecté* :
-   ajoutez `https://qgisplugins.ariegenature.fr/` (§3, méthode A). Un dépôt en
-   erreur se rafraîchit avec **Recharger le dépôt**.
+Le **dépôt de l'ANA** n'est pas dans la liste, ou n'est pas *connecté* (onglet
+**Paramètres** du gestionnaire) : ajoutez `https://qgisplugins.ariegenature.fr/`
+(§3, méthode A). Un dépôt en erreur se rafraîchit avec **Recharger le dépôt**.
 
 Ne cherchez pas l'extension dans le dépôt officiel QGIS : la version qui s'y
 trouve est plus ancienne et cette voie est en attente (§3).

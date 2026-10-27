@@ -2741,7 +2741,7 @@ par un point, les fichiers compilés, les bases et journaux d'exécution, et les
 
 - **Surface / export GeoPackage / affichage des couches** : reposent sur des API
   QGIS qu'aucun test n'exerce (`QgsDistanceArea`, `QgsVectorFileWriter`, OGR) —
-  à confirmer au premier lancement. L'endpoint **altitude** et la synchro sont
+  éprouvées à l'usage, pas par la suite. L'endpoint **altitude** et la synchro sont
   validés en direct. Les parties PyQGIS **qui sont** testées, elles, le sont par
   la suite : réparation topologique et invalidation de l'index d'accrochage
   (cf. §15).

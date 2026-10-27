@@ -3,7 +3,7 @@ name=OccHab GeoNature
 qgisMinimumVersion=3.28
 qgisMaximumVersion=3.99
 description=Data entry for GeoNature's OccHab module (habitat stations) from QGIS, with local SQLite storage and on-demand synchronisation to the GeoNature REST API.
-version=0.16.1
+version=1.0.0
 author=Cédric Roy
 email=it@ariegenature.fr
 license=GPL-3.0-or-later
@@ -31,10 +31,17 @@ tags=geonature,occhab,habitats,saisie,biodiversite,ana,postgis
 category=Database
 icon=resources/icons/occhab.svg
 
-experimental=True
+experimental=False
 deprecated=False
 
-changelog=0.16.1 - Corrections issues de la relecture de la 0.16.0.
+changelog=1.0.0 - Premiere version stable : l'extension n'est plus marquee experimentale.
+    Elle apparait dans le gestionnaire d'extensions sans cocher « Afficher aussi
+    les extensions experimentales ». Cette version reprend les 0.15.0 a 0.16.1,
+    jamais publiees jusqu'ici : fin des plantages de QGIS en saisie, donnees
+    protegees a la saisie et a la synchronisation, cartes et exports justes
+    (detail ci-dessous). Apres la mise a jour, rejouer sql/v_occhab_complet.sql
+    sur la base GeoNature (separateur « ; » des PEE).
+    0.16.1 - Corrections issues de la relecture de la 0.16.0.
     - une station en conflit s'impose de nouveau en validant sa fiche, meme
       inchangee (« Fiche inchangee » la laissait bloquee en conflit) ;
     - refaire une planche du meme titre : l'ancienne est mise de cote et retiree
