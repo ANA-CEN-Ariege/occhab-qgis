@@ -140,13 +140,6 @@ Utile hors ligne, en avant-première, ou si le dépôt n'est pas accessible :
 > ⏸ **Voie en attente de la mise à jour du dépôt officiel.**
 > ~~L'extension est aussi publiée sur le dépôt officiel des extensions QGIS,
 > présent d'origine dans le gestionnaire.~~
-> La version qui s'y trouve (**0.5.2**) a plusieurs années de retard sur celle du
-> dépôt de l'ANA : ne l'installez pas depuis là, vous n'auriez ni la mise en page
-> cartographique, ni le Tableau des alliances et l'arbitrage des
-> correspondances, ni les cartes thématiques (enjeux, plantes exotiques), ni le
-> copier-coller de polygone, ni les corrections de saisie. Utilisez la
-> **méthode A**. Cette voie sera rouverte quand la version stable y aura été
-> déposée.
 
 ### Rester connecté d'une session à l'autre
 
